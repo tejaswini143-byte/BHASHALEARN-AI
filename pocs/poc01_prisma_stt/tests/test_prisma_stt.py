@@ -69,4 +69,8 @@ def test_adapter_mocked_request(tmp_path):
     config = PrismaConfig(url="https://example.test/stt", api_key="test-key")
     result = PrismaSTTAdapter(config, session=FakeSession()).transcribe(file)
     assert result.text == "Explain algorithms"
-\n\ndef test_empty_success_transcript():\n    result = normalize_response({"success": True, "transcript": ""})\n    assert result.text == ""\n
+
+
+def test_empty_success_transcript():
+    result = normalize_response({"success": True, "transcript": ""})
+    assert result.text == ""
