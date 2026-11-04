@@ -56,10 +56,32 @@ If a request fails, the CLI reports a safe error without printing your key.
   `pocs/poc02_timbre_tts/artifacts/telugu.wav`.
 - Audio validation: both files are mono, 48 kHz, 16-bit PCM WAVs with nonzero
   frames. The response used placeholder `0xffffffff` RIFF/data lengths, so the
-  two local output headers were corrected to match their actual file sizes for
-  standard WAV readers. The audio payload was not changed.
-- Offline tests: **13 passed** from both the repository root and this POC
-  directory using the POC `.venv`.
+-  adapter now normalizes those two length fields to match the actual file size
+  for standard WAV readers. The audio payload is unchanged. Regression test:
+  `test_normalize_gnani_sentinel_wav_sizes`.
+- Offline tests before the WAV regression was added: **13 passed** from both
+  the repository root and this POC directory using the POC `.venv`.
+
+### Controlled latency sample (2026-11-04)
+
+Three sequential live requests per language, using the sample utterances above.
+Elapsed time covers the synchronous `synthesize()` call (request, response
+transfer, and response handling). Audio duration is WAV frames divided by
+sample rate; it is not request latency. These are small-sample observations,
+not a service-level latency claim.
+
+| Language | Request | Elapsed time (s) | Audio duration (s) |
+| --- | ---: | ---: | ---: |
+| English (`en-IN`) | 1 | 4.190 | 3.520 |
+| English (`en-IN`) | 2 | 1.767 | 4.000 |
+| English (`en-IN`) | 3 | 1.636 | 3.520 |
+| Telugu (`te-IN`) | 1 | 2.215 | 6.080 |
+| Telugu (`te-IN`) | 2 | 3.204 | 6.080 |
+| Telugu (`te-IN`) | 3 | 3.178 | 6.400 |
+
+Subjective listening quality has not been assessed by the developer. Listen to
+the generated examples linked above and confirm whether pronunciation and
+naturalness are acceptable.
 
 The test module supports pytest launched from either the repository root or
 this POC directory.
@@ -68,7 +90,8 @@ Acceptance:
 - [x] REST request/response fields matched to provided official documentation
 - [x] English/Telugu synthesis implementation and CLI
 - [x] Offline unit tests authored
-- [x] Offline tests executed (13 passed from both supported working directories)
+- [x] Offline tests executed (14 passed after adding WAV-size regression coverage)
 - [x] Live English audio generated and WAV structure validated
 - [x] Live Telugu audio generated and WAV structure validated
-- [ ] Latency and audio quality reviewed
+- [x] Small-sample live latency and generated duration recorded
+- [ ] Subjective audio quality confirmed by user

@@ -46,6 +46,19 @@ def test_write_audio(tmp_path):
     assert path.read_bytes() == audio
 
 
+def test_normalize_gnani_sentinel_wav_sizes(tmp_path):
+    audio = bytearray(sample_wav())
+    audio[4:8] = b"\xff\xff\xff\xff"
+    audio[40:44] = b"\xff\xff\xff\xff"
+    path = write_audio(bytes(audio), tmp_path / "normalized.wav")
+
+    normalized = path.read_bytes()
+    assert int.from_bytes(normalized[4:8], "little") == len(normalized) - 8
+    assert int.from_bytes(normalized[40:44], "little") == len(normalized) - 44
+    with wave.open(str(path), "rb") as wav:
+        assert wav.getnframes() == 160
+
+
 def test_empty_audio(tmp_path):
     with pytest.raises(TTSError, match="audio bytes"):
         write_audio(b"", tmp_path / "out.wav")

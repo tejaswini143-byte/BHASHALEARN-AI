@@ -5,6 +5,7 @@ API: https://docs.gnani.ai/api/TTS/tts-inference.md
 from __future__ import annotations
 
 import os
+import struct
 import wave
 from dataclasses import dataclass
 from pathlib import Path
@@ -53,12 +54,31 @@ def validate_text(text: str) -> str:
     return text.strip()
 
 
+def normalize_wav_lengths(data: bytes) -> bytes:
+    """Repair Gnani's sentinel RIFF/data lengths for ordinary WAV readers."""
+    if len(data) < 44 or data[:4] != b"RIFF" or data[8:12] != b"WAVE":
+        return data
+    if data[12:16] != b"fmt " or data[36:40] != b"data":
+        return data
+    riff_size = int.from_bytes(data[4:8], "little")
+    data_size = int.from_bytes(data[40:44], "little")
+    if riff_size != 0xFFFFFFFF and data_size != 0xFFFFFFFF:
+        return data
+    normalized = bytearray(data)
+    if riff_size == 0xFFFFFFFF:
+        struct.pack_into("<I", normalized, 4, len(data) - 8)
+    if data_size == 0xFFFFFFFF:
+        struct.pack_into("<I", normalized, 40, len(data) - 44)
+    return bytes(normalized)
+
+
 def write_audio(data: bytes, output: str | Path) -> Path:
     if not isinstance(data, bytes) or not data:
         raise TTSError("TTS response did not contain audio bytes.")
     path = Path(output)
     if path.suffix.lower() != ".wav":
         raise TTSError("Output filename must end in .wav.")
+    data = normalize_wav_lengths(data)
     try:
         import io
         with wave.open(io.BytesIO(data), "rb") as wav:
@@ -143,7 +163,7 @@ class TimbreTTSAdapter:
                 raise TTSError("GNANI did not return WAV audio (unexpected content type).")
             if not response.content:
                 raise TTSError("GNANI returned an empty audio response.")
-            return response.content
+            return normalize_wav_lengths(response.content)
         except requests.Timeout as exc:
             raise TTSError("GNANI TTS request timed out.") from exc
         except requests.HTTPError as exc:
