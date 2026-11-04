@@ -4,9 +4,16 @@ import wave
 import pytest
 import requests
 
-from timbre_tts import (
-    ENDPOINT, TimbreConfig, TimbreTTSAdapter, TTSError, validate_text, write_audio,
-)
+try:
+    # Repository-root pytest invocation (namespace package under ``pocs``).
+    from pocs.poc02_timbre_tts.timbre_tts import (
+        ENDPOINT, TimbreConfig, TimbreTTSAdapter, TTSError, validate_text, write_audio,
+    )
+except ModuleNotFoundError:
+    # POC-directory invocation: this directory is pytest's import root.
+    from timbre_tts import (
+        ENDPOINT, TimbreConfig, TimbreTTSAdapter, TTSError, validate_text, write_audio,
+    )
 
 
 def sample_wav():
