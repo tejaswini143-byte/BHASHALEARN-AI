@@ -15,7 +15,7 @@ def sample_wav():
         wav.setnchannels(1)
         wav.setsampwidth(2)
         wav.setframerate(16000)
-        wav.writeframes(b"\\x01\\x00" * 160)
+        wav.writeframes(bytes([1, 0]) * 160)
     return stream.getvalue()
 
 
