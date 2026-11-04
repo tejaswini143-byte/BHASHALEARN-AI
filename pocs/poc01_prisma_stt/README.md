@@ -18,7 +18,7 @@ python -m pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
 
-Open `.env`, set your key and **verified** GNANI Prisma STT HTTPS endpoint from the GNANI developer portal. Never paste your key into chat.
+Open `.env` and set your API key. The documented endpoint is already configured. Never paste your key into chat.
 
 ## Tests
 
@@ -45,9 +45,16 @@ Sample audio files are ignored by Git. Review accuracy for Telugu words, English
 - Prisma v3 model selector: `prisma-v3.0`
 - REST short-clip limit: 30 seconds
 
-## API compatibility note
+## Confirmed REST request schema
 
-**Do not assume the request schema is confirmed.** This POC uses a generic multipart POST with `file`, `model`, `language`, and `format` fields and `X-API-Key-ID` header as initial integration assumptions. GNANI may require different request fields or response keys for your enabled Prisma version. Check the account-specific API documentation and adjust only this adapter. The project deliberately does not hardcode an unverified endpoint.
+- `POST https://api.vachana.ai/stt/v3`
+- Header: `X-API-Key-ID`
+- Multipart file: `audio_file`
+- Form fields: `model=prisma-v3.0`, `language_code=indic-auto`, `format=codemix`
+- Response: `transcript`, optional `detected_language_code`, `request_id`, timings, and optional `truncated`
+- A successful empty transcript (`""`) means no speech was detected, not an API error.
+
+Source: https://docs.gnani.ai/api/STT/speech-to-text.md
 
 ## Acceptance checklist
 
