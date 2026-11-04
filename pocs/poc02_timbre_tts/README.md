@@ -1,38 +1,50 @@
-# POC-02 — GNANI Timbre v2.5 TTS
+# POC-02 — GNANI Timbre v2.5 Text-to-Speech
 
-Goal: synthesize short English and Telugu explanations for BHASHALEARN AI.
+REST endpoint: `POST https://api.vachana.ai/api/v1/tts/inference`.
+Authentication: `X-API-Key-ID`. JSON request; successful response is binary WAV.
+Based on user-provided official [GNANI REST docs](https://docs.gnani.ai/api/TTS/tts-inference.md)
+and [voice catalog](https://docs.gnani.ai/api/TTS/available-voices.md).
 
-**Status: scaffold only.** The supplied GNANI introduction confirms Timbre v2.5
-and the `X-API-Key-ID` authentication header, but not the TTS REST request body,
-voice identifiers, endpoint path, or response encoding. Do not guess these.
-
-## Setup (Windows CMD)
+## Windows CMD quick start
 
 ```cmd
+cd C:\Users\Tejaswini\BHASHALEARN-AI
+git pull
 cd pocs\poc02_timbre_tts
 python -m pip install -r requirements.txt
-copy .env.example .env
+if not exist .env copy .env.example .env
 notepad .env
 python -m pytest -q
+python run.py "Hello, welcome to BHASHALEARN AI." --language en-IN --output english.wav
+python run.py "నమస్కారం! భాషా లెర్న్ ఏఐకి స్వాగతం." --language te-IN --output telugu.wav
 ```
 
-Do not commit or paste API keys into chat. The existing POC-01 HTTP 401 must be
-resolved before assuming the key is valid for TTS.
+Copy your *working* POC-01 key into the local POC-02 `.env` file; never
+share or commit it. If your Windows terminal has trouble with Telugu text,
+save this command in a UTF-8 script or use Windows Terminal.
 
-## Documentation needed
+Play results by double-clicking the WAV files, or run:
+```cmd
+start english.wav
+start telugu.wav
+```
 
-Please provide the cURL/Python example and success response details from
-https://docs.gnani.ai/api/TTS/tts-inference.md and one voice ID from
-https://docs.gnani.ai/api/TTS/available-voices.md.
+English defaults to **Kaveri** (`en-IN`); Telugu defaults to **Suhana**
+(`te-IN`). Use `--voice` to override, e.g. `--voice Lavanya` for Telugu.
+Use `--language auto --voice Suhana` to experiment with mixed text.
 
-Once verified, implement request encoding, audio decoding, playback and
-integration tests. Verify one English and one Telugu utterance with real GNANI
-responses before marking complete.
+## Verification
 
-## Acceptance
-- [ ] Official request/response schema verified
+The tests mock GNANI; they do not call the paid API. A live request needs
+an API key with TTS scope and available credits. The adapter validates
+the response Content-Type and saves only valid, nonempty WAV data.
+If a request fails, the CLI reports a safe error without printing your key.
+
+Acceptance:
+- [x] REST request/response fields matched to provided official documentation
+- [x] English/Telugu synthesis implementation and CLI
+- [x] Offline unit tests authored
 - [ ] Offline tests executed
-- [ ] English speech synthesized and reviewed
-- [ ] Telugu speech synthesized and reviewed
-- [ ] Voice ID and output format recorded
-- [ ] Errors/latency recorded
+- [ ] Live English audio generated and listened to
+- [ ] Live Telugu audio generated and listened to
+- [ ] Latency and audio quality reviewed
