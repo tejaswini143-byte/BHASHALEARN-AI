@@ -31,6 +31,7 @@ class PrismaConfig:
     url: str
     api_key: str
     auth_header: str = "X-API-Key-ID"
+    model: str = "prisma-v3.0"
     language: str = "indic-auto"
     output_format: str = "codemix"
     timeout_seconds: int = 45
@@ -47,6 +48,7 @@ class PrismaConfig:
             url=url,
             api_key=key,
             auth_header=os.getenv("GNANI_AUTH_HEADER", "X-API-Key-ID"),
+            model=os.getenv("GNANI_MODEL", "prisma-v3.0"),
             language=os.getenv("GNANI_LANGUAGE", "indic-auto"),
             output_format=os.getenv("GNANI_OUTPUT_FORMAT", "codemix"),
             timeout_seconds=int(os.getenv("GNANI_TIMEOUT_SECONDS", "45")),
@@ -97,6 +99,7 @@ class PrismaSTTAdapter:
         validate_audio(path)
         headers = {self.config.auth_header: self.config.api_key}
         form = {
+            "model": self.config.model,
             "language": self.config.language,
             "format": self.config.output_format,
         }
