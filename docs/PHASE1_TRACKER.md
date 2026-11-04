@@ -2,8 +2,8 @@
 
 | Task | Status | Completion criterion |
 | --- | --- | --- |
-| POC-01: GNANI Prisma STT | Implemented; live test HTTP 401 (authentication blocked) | Offline tests pass and actual Telugu–English audio is transcribed |
-| POC-02: GNANI Timbre TTS | Scaffold committed; REST schema and live tests pending | Telugu/English generated audio verified |
+| POC-01: GNANI Prisma STT | 8/8 offline tests passed; user reports live STT working; bilingual quality pending | Offline tests pass and actual Telugu–English audio is transcribed |
+| POC-02: GNANI Timbre TTS | REST integration committed; offline/live verification pending | Telugu/English generated audio verified |
 | POC-03: LLM teaching quality | Not started | DSA teaching rubric evaluated |
 | POC-04: Adaptive teaching logic | Not started | Misconception causes measurable strategy change |
 | POC-05: Shared session context | Not started | Voice, visual, chat share one context |
@@ -16,7 +16,7 @@
 - [x] Audio validation and controlled error reporting
 - [x] CLI for a local audio file
 - [x] Offline unit tests authored
-- [ ] Offline tests executed in user's environment
+- [x] Offline tests executed in user's environment (8 passed)
 - [x] REST endpoint/auth/request fields matched to official GNANI Prisma v3 documentation
 - [ ] Live Telugu–English transcription verified
 - [ ] Result accuracy reviewed
@@ -25,5 +25,5 @@ Do not mark POC-01 complete until live verification succeeds.
 
 ## Current blockers
 
-- POC-01 live GNANI REST test returned HTTP 401. Verify the locally stored API key, account permissions and key validity; do not commit or share credentials.
-- POC-02 adapter is deliberately gated until the official Timbre v2.5 REST request and response schema is supplied and verified.
+- POC-01 API key was replaced; user reports successful live transcription. Telugu-English acceptance and accuracy review remain pending.
+- POC-02 REST schema verified against supplied official GNANI documentation; English and Telugu live TTS tests remain pending.
