@@ -38,9 +38,16 @@ python run.py .\sample.wav
 
 Sample audio files are ignored by Git. Review accuracy for Telugu words, English technical terms, code-switching, and missing words. Test at least three clips: Telugu, English, and mixed.
 
+## Confirmed from GNANI API introduction
+
+- Base URL: `https://api.vachana.ai`
+- API key header: `X-API-Key-ID`
+- Prisma v3 model selector: `prisma-v3.0`
+- REST short-clip limit: 30 seconds
+
 ## API compatibility note
 
-**Do not assume the request schema is confirmed.** This POC uses a generic multipart POST with `file`, `language`, and `format` fields and `X-API-Key-ID` header as initial integration assumptions. GNANI may require different fields, authentication or response keys for your enabled Prisma version. Check the account-specific API documentation and adjust only this adapter. The project deliberately does not hardcode an unverified endpoint.
+**Do not assume the request schema is confirmed.** This POC uses a generic multipart POST with `file`, `model`, `language`, and `format` fields and `X-API-Key-ID` header as initial integration assumptions. GNANI may require different request fields or response keys for your enabled Prisma version. Check the account-specific API documentation and adjust only this adapter. The project deliberately does not hardcode an unverified endpoint.
 
 ## Acceptance checklist
 
