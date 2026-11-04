@@ -1,8 +1,6 @@
 """POC-01: replaceable GNANI Prisma REST adapter.
 
-The request schema is deliberately configurable because GNANI API versions
-and account entitlements can differ. Confirm the endpoint and fields in the
-developer portal before a live test.
+Request fields and endpoint follow the GNANI Prisma v3 REST documentation.
 """
 from __future__ import annotations
 
@@ -34,12 +32,12 @@ class PrismaConfig:
     model: str = "prisma-v3.0"
     language: str = "indic-auto"
     output_format: str = "codemix"
-    timeout_seconds: int = 45
+    timeout_seconds: int = 60
 
     @classmethod
     def from_env(cls) -> "PrismaConfig":
         key = os.getenv("GNANI_API_KEY", "").strip()
-        url = os.getenv("GNANI_STT_URL", "").strip()
+        url = os.getenv("GNANI_STT_URL", "https://api.vachana.ai/stt/v3").strip()
         if not key or key == "replace_me":
             raise STTError("Set GNANI_API_KEY in your local .env file.")
         if not url.startswith("https://"):
@@ -51,7 +49,7 @@ class PrismaConfig:
             model=os.getenv("GNANI_MODEL", "prisma-v3.0"),
             language=os.getenv("GNANI_LANGUAGE", "indic-auto"),
             output_format=os.getenv("GNANI_OUTPUT_FORMAT", "codemix"),
-            timeout_seconds=int(os.getenv("GNANI_TIMEOUT_SECONDS", "45")),
+            timeout_seconds=int(os.getenv("GNANI_TIMEOUT_SECONDS", "60")),
         )
 
 
@@ -86,6 +84,8 @@ def normalize_response(payload: Any) -> Transcript:
         if isinstance(text, str) and text.strip():
             language = item.get("detected_language_code") or item.get("language")
             return Transcript(text.strip(), language, payload)
+    if payload.get("success") is True and payload.get("transcript") == "":
+        return Transcript("", payload.get("detected_language_code"), payload)
     raise STTError("GNANI response did not contain a recognized transcript.")
 
 
@@ -100,7 +100,7 @@ class PrismaSTTAdapter:
         headers = {self.config.auth_header: self.config.api_key}
         form = {
             "model": self.config.model,
-            "language": self.config.language,
+            "language_code": self.config.language,
             "format": self.config.output_format,
         }
         try:
@@ -109,7 +109,7 @@ class PrismaSTTAdapter:
                     self.config.url,
                     headers=headers,
                     data=form,
-                    files={"file": (path.name, handle, "audio/wav")},
+                    files={"audio_file": (path.name, handle, "audio/wav")},
                     timeout=self.config.timeout_seconds,
                 )
             response.raise_for_status()
