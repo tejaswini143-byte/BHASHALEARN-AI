@@ -118,6 +118,25 @@ class PrismaSTTAdapter:
             raise STTError("GNANI request timed out.") from exc
         except requests.HTTPError as exc:
             code = exc.response.status_code if exc.response is not None else "unknown"
+            if code in (401, 403):
+                error_code = None
+                try:
+                    body = exc.response.json() if exc.response is not None else {}
+                    detail = body.get("detail", {}) if isinstance(body, dict) else {}
+                    if isinstance(detail, dict):
+                        error_code = detail.get("error_code")
+                except (ValueError, AttributeError):
+                    pass
+                known_codes = {"MISSING_API_KEY", "INVALID_API_KEY", "SCOPE_NOT_ALLOWED"}
+                if error_code not in known_codes:
+                    error_code = "UNSPECIFIED_AUTH_ERROR"
+                hint = {
+                    "MISSING_API_KEY": "Check GNANI_API_KEY in your local .env.",
+                    "INVALID_API_KEY": "The API key was rejected. Verify or regenerate it in GNANI dashboard.",
+                    "SCOPE_NOT_ALLOWED": "Your API key lacks STT access; check its scopes.",
+                    "UNSPECIFIED_AUTH_ERROR": "Verify your key and account permissions in GNANI dashboard.",
+                }[error_code]
+                raise STTError(f"GNANI HTTP {code} ({error_code}). {hint}") from exc
             raise STTError(f"GNANI returned HTTP {code}. Check endpoint, permissions and request schema.") from exc
         except (requests.RequestException, ValueError) as exc:
             raise STTError("GNANI request failed or returned invalid JSON.") from exc
