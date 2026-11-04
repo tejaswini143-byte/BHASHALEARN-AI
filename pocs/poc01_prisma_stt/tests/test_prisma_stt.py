@@ -74,3 +74,22 @@ def test_adapter_mocked_request(tmp_path):
 def test_empty_success_transcript():
     result = normalize_response({"success": True, "transcript": ""})
     assert result.text == ""
+
+
+def test_invalid_api_key_error_does_not_expose_secret(tmp_path):
+    import requests
+
+    class UnauthorizedSession:
+        def post(self, url, **kwargs):
+            response = requests.Response()
+            response.status_code = 401
+            response._content = b'{"detail":{"error_code":"INVALID_API_KEY","message":"Unauthorized"}}'
+            response.url = url
+            raise requests.HTTPError("401", response=response)
+
+    file = tmp_path / "test.wav"
+    make_wav(file)
+    config = PrismaConfig(url="https://example.test/stt", api_key="super-secret")
+    with pytest.raises(STTError, match="INVALID_API_KEY") as err:
+        PrismaSTTAdapter(config, session=UnauthorizedSession()).transcribe(file)
+    assert "super-secret" not in str(err.value)
