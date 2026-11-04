@@ -17,7 +17,7 @@
 - [x] CLI for a local audio file
 - [x] Offline unit tests authored
 - [ ] Offline tests executed in user's environment
-- [ ] API endpoint/auth and request fields confirmed for user's GNANI plan
+- [x] REST endpoint/auth/request fields matched to official GNANI Prisma v3 documentation
 - [ ] Live Telugu–English transcription verified
 - [ ] Result accuracy reviewed
 
