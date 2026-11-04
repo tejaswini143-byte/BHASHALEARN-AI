@@ -1,9 +1,7 @@
-import io
 import wave
 from pathlib import Path
 
 import pytest
-import requests
 
 from prisma_stt import (
     PrismaConfig, PrismaSTTAdapter, STTError,
@@ -60,7 +58,8 @@ class FakeSession:
     def post(self, url, **kwargs):
         assert url == "https://example.test/stt"
         assert kwargs["headers"]["X-API-Key-ID"] == "test-key"
-        assert kwargs["files"]["file"][2] == "audio/wav"
+        assert kwargs["files"]["audio_file"][2] == "audio/wav"
+        assert kwargs["data"] == {"model": "prisma-v3.0", "language_code": "indic-auto", "format": "codemix"}
         return FakeResponse()
 
 
@@ -70,3 +69,4 @@ def test_adapter_mocked_request(tmp_path):
     config = PrismaConfig(url="https://example.test/stt", api_key="test-key")
     result = PrismaSTTAdapter(config, session=FakeSession()).transcribe(file)
     assert result.text == "Explain algorithms"
+\n\ndef test_empty_success_transcript():\n    result = normalize_response({"success": True, "transcript": ""})\n    assert result.text == ""\n
