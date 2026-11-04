@@ -28,7 +28,7 @@ python -m pytest -q
 
 ## Live experiment
 
-Record a clear mono PCM WAV file (suggested 16 kHz, 16-bit, 5–15 seconds, max 30 seconds). Example sentence:
+For the first English smoke test, download the generated `poc01_sample_speech.wav` from the ChatGPT conversation and save it in this folder as `sample.wav`. It is synthetic English speech (22.05 kHz mono PCM, approximately 8.2 seconds), so it checks the upload/transcription pipeline, **not** Telugu–English recognition quality.\n\nFor the later bilingual acceptance test, record a clear mono PCM WAV file (suggested 16 kHz, 16-bit, 5–15 seconds, max 30 seconds). Example sentence:
 
 “Hello, nenu DSA nerchukuntunnanu. Can you explain what is an algorithm?”
 
