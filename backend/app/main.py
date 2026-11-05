@@ -2,6 +2,7 @@
 from fastapi import FastAPI
 
 from .api.auth import router as auth_router
+from .api.courses import router as courses_router
 from .api.students import router as students_router
 from .config import Settings, get_settings
 
@@ -16,6 +17,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.include_router(auth_router, prefix=config.api_prefix)
     app.include_router(students_router, prefix=config.api_prefix)
+    app.include_router(courses_router, prefix=config.api_prefix)
 
     @app.get("/health", tags=["health"])
     def health() -> dict[str, str]:
