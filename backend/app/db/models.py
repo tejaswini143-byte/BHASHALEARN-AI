@@ -70,3 +70,15 @@ class LearningProgress(Base):
     mastery_score: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
     attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+
+class StudentPreferences(Base):
+    """One set of learning preferences per student."""
+    __tablename__ = "student_preferences"
+
+    student_id: Mapped[str] = mapped_column(
+        ForeignKey("students.id", ondelete="CASCADE"), primary_key=True
+    )
+    preferred_language: Mapped[str] = mapped_column(String(16), default="mixed", nullable=False)
+    learning_level: Mapped[str] = mapped_column(String(16), default="beginner", nullable=False)
+    learning_goal: Mapped[str | None] = mapped_column(String(300))
