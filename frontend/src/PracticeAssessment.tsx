@@ -5,7 +5,7 @@ import "./practice-assessment.css";
 type Question = { attempt_id: string; topic: string; question_id: string; prompt: string; options: string[] };
 type Result = { answer: string; is_correct: boolean | null; ambiguous: boolean; feedback: string; mastery_score: number | null; evidence_attempts: number; difficulty: string; strategy: string; recommendation: string; replayed: boolean };
 
-export function PracticeAssessment({ sessionId }: { sessionId: string }) {
+export function PracticeAssessment({ sessionId }: { sessionId: string | null }) {
   const [question, setQuestion] = useState<Question | null>(null);
   const [selected, setSelected] = useState("");
   const [result, setResult] = useState<Result | null>(null);
