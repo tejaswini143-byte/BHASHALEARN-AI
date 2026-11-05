@@ -1,9 +1,11 @@
 """Initial BHASHALEARN relational data model."""
 from datetime import datetime, timezone
+import re
+import unicodedata
 from uuid import uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Integer, Float, String, Text, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import CheckConstraint, JSON, DateTime, ForeignKey, Integer, Float, String, Text, UniqueConstraint
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from .base import Base
 
@@ -62,14 +64,71 @@ class ChatMessage(Base):
 
 class LearningProgress(Base):
     __tablename__ = "learning_progress"
-    __table_args__ = (UniqueConstraint("student_id", "topic", name="uq_progress_student_topic"),)
+    __table_args__ = (
+        UniqueConstraint("student_id", "topic", name="uq_progress_student_topic"),
+        UniqueConstraint("student_id", "topic_key", name="uq_progress_student_topic_key"),
+        CheckConstraint("mastery_score >= 0 AND mastery_score <= 100", name="ck_progress_mastery_bounds"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     student_id: Mapped[str] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), index=True)
     topic: Mapped[str] = mapped_column(String(200), nullable=False)
+    topic_key: Mapped[str] = mapped_column(String(600), nullable=False)
     mastery_score: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
     attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    evidence_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    correct_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    incorrect_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    correct_streak: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    @validates("topic")
+    def set_normalized_topic_key(self, _key: str, value: str) -> str:
+        display = " ".join(value.split()).strip()
+        normalized = unicodedata.normalize("NFKC", display).casefold()
+        self.topic_key = re.sub(r"\s+", " ", normalized).strip()
+        return display
+
+
+class LearningAssessmentAttempt(Base):
+    """Server-issued objective assessment and its idempotently recorded answer."""
+    __tablename__ = "learning_assessment_attempts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    student_id: Mapped[str] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), index=True, nullable=False)
+    session_id: Mapped[str] = mapped_column(ForeignKey("learning_sessions.id", ondelete="CASCADE"), index=True, nullable=False)
+    progress_id: Mapped[str] = mapped_column(ForeignKey("learning_progress.id", ondelete="CASCADE"), index=True, nullable=False)
+    topic: Mapped[str] = mapped_column(String(200), nullable=False)
+    topic_key: Mapped[str] = mapped_column(String(600), nullable=False, index=True)
+    language: Mapped[str] = mapped_column(String(16), nullable=False)
+    question_code: Mapped[str] = mapped_column(String(120), nullable=False)
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    choices: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False)
+    expected_answer: Mapped[str] = mapped_column(String(8), nullable=False)
+    misconception_map: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False, default=dict)
+    submitted_answer: Mapped[str | None] = mapped_column(String(16))
+    outcome: Mapped[str] = mapped_column(String(24), default="pending", nullable=False)
+    misconception_code: Mapped[str | None] = mapped_column(String(100))
+    feedback: Mapped[str | None] = mapped_column(Text)
+    result_mastery_score: Mapped[float | None] = mapped_column(Float)
+    result_evidence_count: Mapped[int | None] = mapped_column(Integer)
+    result_category: Mapped[str | None] = mapped_column(String(40))
+    result_difficulty: Mapped[str | None] = mapped_column(String(24))
+    result_strategy: Mapped[str | None] = mapped_column(String(48))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class LearningProgressLegacyDuplicate(Base):
+    """Migration archive for legacy rows merged by normalized topic key."""
+    __tablename__ = "learning_progress_legacy_duplicates"
+
+    legacy_progress_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    student_id: Mapped[str] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), nullable=False)
+    topic: Mapped[str] = mapped_column(String(200), nullable=False)
+    mastery_score: Mapped[float] = mapped_column(Float, nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class StudentPreferences(Base):

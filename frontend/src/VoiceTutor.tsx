@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { ApiError, clearToken, getCurrentStudent, getToken, request, type Student } from "./auth";
 import { getSharedSessionContext } from "./sessionContext";
 import { SessionModeNav } from "./SessionModeNav";
+import { PracticeAssessment } from "./PracticeAssessment";
 import "./voice.css";
 
 type Language = "english" | "telugu" | "mixed";
@@ -330,7 +331,7 @@ export function VoiceTutor() {
         <label className="vt-autospeak"><input type="checkbox" checked={autoSpeak} onChange={event => setAutoSpeak(event.target.checked)}/> Generate and play tutor replies automatically</label>
         {audioUrl && <div className="vt-playback"><audio ref={audioRef} src={audioUrl} controls onPlay={() => setSpeaking(true)} onPause={() => setSpeaking(false)} onEnded={() => setSpeaking(false)}>Your browser cannot play this WAV audio.</audio><button type="button" onClick={stopPlayback}>Stop audio</button></div>}
         <div className="vt-stage-note">Microphone audio is converted to bounded mono PCM WAV and sent to the authenticated backend. Browser playback uses the WAV returned by Gnani Timbre.</div>
-        <div className="vt-new-topic"><form onSubmit={createSession}><label htmlFor="vt-topic">New learning topic</label><div><input id="vt-topic" value={topic} maxLength={200} onChange={event => setTopic(event.target.value)} placeholder="e.g. Everyday English" required/><button disabled={!topic.trim() || creating || busy || recording}>{creating ? "Creating…" : "+ Create"}</button></div></form></div>
+        <div className="vt-new-topic"><form onSubmit={createSession}><label htmlFor="vt-topic">New learning topic</label><div><input id="vt-topic" value={topic} maxLength={200} onChange={event => setTopic(event.target.value)} placeholder="e.g. Everyday English" required/><button disabled={!topic.trim() || creating || busy || recording}>{creating ? "Creating…" : "+ Create"}</button></div></form></div>{selected && <PracticeAssessment sessionId={selected} language={language}/>}
       </section>
       <section className="vt-chat"><div className="vt-chat-header"><div><span className="vt-eyebrow">CONVERSATION TRANSCRIPT</span><h3>AI Tutor <span>✦</span></h3></div><span className="vt-chat-badge">PRISMA + GEMINI + TIMBRE</span></div>
         <div className="vt-transcript">{historyLoading ? <p className="vt-empty">Loading saved conversation…</p> : messages.length ? messages.map(message => <article key={message.id} className={message.role === "user" ? "vt-message vt-user" : "vt-message vt-ai"}><div className="vt-msg-label"><span>{message.role === "user" ? "YOU" : "✦ AI TUTOR"}</span>{message.role === "assistant" && <button disabled={speechLoading} onClick={() => void generateSpeech(message.content, selected, language)} aria-label="Generate or replay tutor speech">{speechLoading ? "Preparing…" : "▶ Listen / replay"}</button>}</div><p>{message.content}</p></article>) : <div className="vt-empty"><div>✦</div><h3>Your conversation starts here</h3><p>Record your question, review the Prisma transcript, then send it to your AI tutor.</p></div>}{busy && <p className="vt-thinking">✦ Tutor is preparing your reply…</p>}<div ref={scrollBottom}/></div>

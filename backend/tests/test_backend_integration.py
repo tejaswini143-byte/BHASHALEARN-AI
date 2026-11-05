@@ -60,15 +60,23 @@ def test_full_student_journey(client, monkeypatch):
     assert memory.status_code == 201, memory.text
     assert len(client.get("/api/v1/memories", headers=headers).json()) == 1
     progress = client.put("/api/v1/progress", headers=headers, json={"topic": "Greetings", "mastery_score": 60, "attempts": 2})
-    assert progress.status_code == 200, progress.text
-    assert client.get("/api/v1/progress/Greetings", headers=headers).json()["mastery_score"] == 60
+    assert progress.status_code == 405
+    practice_session = client.post("/api/v1/sessions", headers=headers, json={"topic": "Fractions"}).json()
+    issued = client.post(f"/api/v1/tutor/sessions/{practice_session['id']}/assessments", headers=headers)
+    assert issued.status_code == 201
+    scored = client.post(f"/api/v1/tutor/sessions/{practice_session['id']}/assessments/{issued.json()['assessment_id']}/answer", headers=headers, json={"answer": "unsure"})
+    assert scored.status_code == 200 and scored.json()["outcome"] == "ambiguous"
+    fractions_progress = client.get("/api/v1/progress/Fractions", headers=headers)
+    assert fractions_progress.status_code == 200
+    assert fractions_progress.json()["mastery_score"] is None
+    assert fractions_progress.json()["evidence_count"] == 0
 
 def test_cross_student_journey_isolation(client, monkeypatch):
     first = login(client, "firstjourney@example.com")
     second = login(client, "secondjourney@example.com")
     session_id = client.post("/api/v1/sessions", headers=first, json={"topic": "Private"}).json()["id"]
     memory_id = client.post("/api/v1/memories", headers=first, json={"topic": "Private", "note": "Keep private"}).json()["id"]
-    client.put("/api/v1/progress", headers=first, json={"topic": "Private", "mastery_score": 55, "attempts": 1})
+    assert client.put("/api/v1/progress", headers=first, json={"topic": "Private", "mastery_score": 55, "attempts": 1}).status_code == 405
     monkeypatch.setattr("backend.app.api.tutor.generate_tutor_reply", lambda *args: "reply")
     assert client.post(f"/api/v1/tutor/sessions/{session_id}/chat", headers=second, json={"message": "hello"}).status_code == 404
     assert client.get(f"/api/v1/sessions/{session_id}/messages", headers=second).status_code == 404

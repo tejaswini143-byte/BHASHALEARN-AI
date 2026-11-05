@@ -2,6 +2,7 @@
 import pytest
 from alembic import command
 from alembic.config import Config
+import sqlalchemy as sa
 from sqlalchemy import create_engine, inspect, select
 from sqlalchemy.orm import Session
 
@@ -35,9 +36,39 @@ def test_alembic_upgrade_and_downgrade(tmp_path, monkeypatch):
     db_file = tmp_path / "migrated.db"
     monkeypatch.setenv("BHASHALEARN_DATABASE_URL", f"sqlite:///{db_file.as_posix()}")
     cfg = Config("backend/alembic.ini")
+    command.upgrade(cfg, "0005_session_visual_state")
+    engine = create_engine(f"sqlite:///{db_file.as_posix()}")
+    with engine.begin() as connection:
+        connection.execute(sa.text(
+            "INSERT INTO students (id, email, display_name, password_hash, created_at) "
+            "VALUES ('student-1', 'migration@example.com', 'Migration learner', NULL, '2026-01-01 00:00:00')"
+        ))
+        connection.execute(sa.text(
+            "INSERT INTO learning_progress (id, student_id, topic, mastery_score, attempts, updated_at) "
+            "VALUES ('progress-1', 'student-1', 'Fractions', 40, 2, '2026-01-01 00:00:00'), "
+            "('progress-2', 'student-1', ' fractions ', 80, 4, '2026-01-02 00:00:00')"
+        ))
+    engine.dispose()
+
     command.upgrade(cfg, "head")
     engine = create_engine(f"sqlite:///{db_file.as_posix()}")
-    assert {"students", "courses", "learning_sessions", "chat_messages", "learning_progress"}.issubset(inspect(engine).get_table_names())
+    tables = inspect(engine).get_table_names()
+    assert {"students", "courses", "learning_sessions", "chat_messages", "learning_progress", "learning_assessment_attempts", "learning_progress_legacy_duplicates"}.issubset(tables)
+    assert "topic_key" in {column["name"] for column in inspect(engine).get_columns("learning_progress")}
+    with engine.connect() as connection:
+        current = connection.execute(sa.text("SELECT topic, mastery_score, attempts, evidence_count FROM learning_progress")).mappings().one()
+        archived = connection.execute(sa.text("SELECT topic, mastery_score, attempts FROM learning_progress_legacy_duplicates")).mappings().one()
+        assert current["topic"] == "Fractions"
+        assert current["mastery_score"] == 80 and current["attempts"] == 4 and current["evidence_count"] == 0
+        assert archived["topic"] == " fractions " and archived["mastery_score"] == 80 and archived["attempts"] == 4
+    engine.dispose()
+    command.downgrade(cfg, "0005_session_visual_state")
+    engine = create_engine(f"sqlite:///{db_file.as_posix()}")
+    with engine.connect() as connection:
+        restored = connection.execute(sa.text("SELECT id, topic, mastery_score, attempts FROM learning_progress ORDER BY id")).mappings().all()
+        assert len(restored) == 2
+        assert {row["id"] for row in restored} == {"progress-1", "progress-2"}
+    assert "learning_progress_legacy_duplicates" not in inspect(engine).get_table_names()
     engine.dispose()
     command.downgrade(cfg, "base")
     engine = create_engine(f"sqlite:///{db_file.as_posix()}")

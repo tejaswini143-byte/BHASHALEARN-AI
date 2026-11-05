@@ -12,6 +12,7 @@ from backend.app.db.models import ChatMessage, SessionVisualState, Student, Stud
 from backend.app.db.session import get_db
 from backend.app.services.tutor import build_instruction, generate_tutor_reply
 from backend.app.services.visual_lessons import describe_visual_lesson, tutor_visual_reference
+from backend.app.services.adaptive_learning import learning_context_text, retrieve_topic_adaptation
 
 router = APIRouter(prefix="/tutor", tags=["AI tutor"])
 
@@ -60,6 +61,11 @@ def tutor_chat(
     level = prefs.learning_level if prefs else "beginner"
     goal = prefs.learning_goal if prefs else None
     language = prefs.preferred_language if prefs else session.language
+    progress, _recent_assessments, adaptation, normalized_topic = retrieve_topic_adaptation(
+        db, student.id, session.topic, level
+    )
+    effective_level = adaptation.recommended_difficulty
+    learning_context = learning_context_text(progress, adaptation, normalized_topic)
     visual_state = db.get(SessionVisualState, session_id)
     visual_lesson = (
         describe_visual_lesson(visual_state.visual_key, visual_state.start_node, visual_state.end_node)
@@ -69,9 +75,10 @@ def tutor_chat(
     instruction = build_instruction(
         session.topic,
         language,
-        level,
+        effective_level,
         goal,
         visual_context=tutor_visual_reference(visual_lesson),
+        learning_context=learning_context,
     )
     # Use role order as a stable tie-break for legacy messages with equal timestamps.
     # The reverse below turns newest-first order into user-before-assistant chronology.

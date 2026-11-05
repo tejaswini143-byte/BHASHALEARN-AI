@@ -111,6 +111,9 @@ def test_stt_success_language_modes_keep_raw_transcript(client, monkeypatch):
         assert response.json()["detected_language"] == "te"
     assert stub.calls == 3
     assert client.get(f"/api/v1/sessions/{session_id}/messages", headers=headers).json() == []
+    unscored = client.get("/api/v1/progress/summary", headers=headers).json()["topics"][0]
+    assert unscored["mastery_score"] is None
+    assert unscored["evidence_count"] == 0
 
 
 def test_stt_empty_unsupported_missing_oversized_and_malformed_audio(client, monkeypatch):
@@ -173,6 +176,9 @@ def test_tts_wav_success_and_failure_does_not_create_chat_turn(client, monkeypat
     assert created[1].calls == [("Hello", Language.ENGLISH, session_id)]
     assert created[2].calls == [("Hello", Language.MIXED, session_id)]
     assert client.get(f"/api/v1/sessions/{session_id}/messages", headers=headers).json() == []
+    unscored = client.get("/api/v1/progress/summary", headers=headers).json()["topics"][0]
+    assert unscored["mastery_score"] is None
+    assert unscored["evidence_count"] == 0
 
     from backend.app.services.gnani_voice import VoiceProviderNotConfigured
     monkeypatch.setattr("backend.app.api.voice.create_timbre_adapter", lambda folder: (_ for _ in ()).throw(VoiceProviderNotConfigured("not configured")))

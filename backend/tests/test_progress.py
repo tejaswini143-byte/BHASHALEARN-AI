@@ -32,26 +32,33 @@ def auth(client, email):
     token = client.post("/api/v1/auth/login", json={"email": email, "password": password}).json()["access_token"]
     return {"Authorization": "Bearer " + token}
 
-def test_create_and_update_progress(client):
+def test_progress_is_updated_only_by_objective_assessments(client):
     headers = auth(client, "one@example.com")
     url = "/api/v1/progress"
-    created = client.put(url, headers=headers, json={"topic": "  Greetings  ", "mastery_score": 25, "attempts": 1})
-    assert created.status_code == 200, created.text
-    assert created.json()["topic"] == "Greetings"
-    updated = client.put(url, headers=headers, json={"topic": "Greetings", "mastery_score": 75, "attempts": 3})
-    assert updated.status_code == 200
-    assert updated.json()["id"] == created.json()["id"]
-    assert updated.json()["mastery_score"] == 75
+    created = client.put(url, headers=headers, json={"topic": "  Fractions  ", "mastery_score": 100, "attempts": 99})
+    assert created.status_code == 405
+    assert client.get(url, headers=headers).json() == []
+    session = client.post("/api/v1/sessions", headers=headers, json={"topic": "  Fractions  "}).json()
+    issued = client.post(f"/api/v1/tutor/sessions/{session['id']}/assessments", headers=headers)
+    assert issued.status_code == 201, issued.text
+    assert "expected_answer" not in issued.json()
+    answer = issued.json()["choices"].keys().__iter__().__next__()
+    scored = client.post(f"/api/v1/tutor/sessions/{session['id']}/assessments/{issued.json()['assessment_id']}/answer", headers=headers, json={"answer": answer})
+    assert scored.status_code == 200, scored.text
     assert len(client.get(url, headers=headers).json()) == 1
-    assert client.get(url + "/Greetings", headers=headers).json()["attempts"] == 3
+    row = client.get(url + "/fractions", headers=headers).json()
+    assert row["evidence_count"] == 1
+    assert row["mastery_score"] in {35, 60}
 
 def test_progress_student_isolation(client):
     first = auth(client, "first@example.com")
     second = auth(client, "second@example.com")
     url = "/api/v1/progress"
-    assert client.put(url, headers=first, json={"topic": "Private", "mastery_score": 60, "attempts": 2}).status_code == 200
+    session = client.post("/api/v1/sessions", headers=first, json={"topic": "Fractions"}).json()
+    issued = client.post(f"/api/v1/tutor/sessions/{session['id']}/assessments", headers=first).json()
+    client.post(f"/api/v1/tutor/sessions/{session['id']}/assessments/{issued['assessment_id']}/answer", headers=first, json={"answer": "unsure"})
     assert client.get(url, headers=second).json() == []
-    assert client.get(url + "/Private", headers=second).status_code == 404
+    assert client.get(url + "/Fractions", headers=second).status_code == 404
     assert client.get(url).status_code == 401
     assert client.put(url, json={"topic": "A", "mastery_score": 20, "attempts": 1}).status_code == 401
 
@@ -64,6 +71,6 @@ def test_progress_validation(client):
         {"topic": "A", "mastery_score": -1, "attempts": 1},
         {"topic": "A", "mastery_score": 20, "attempts": -1},
     ]:
-        assert client.put(url, headers=headers, json=payload).status_code == 422
+        assert client.put(url, headers=headers, json=payload).status_code == 405
     assert client.get(url + "?limit=0", headers=headers).status_code == 422
     assert client.get(url + "/missing", headers=headers).status_code == 404
