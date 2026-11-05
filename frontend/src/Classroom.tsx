@@ -126,7 +126,7 @@ export function Classroom() {
   return <div className="cl-app">
     <aside className={sidebarOpen ? "cl-sidebar cl-sidebar-open" : "cl-sidebar"}>
       <Link to="/dashboard" className="cl-brand"><span className="cl-brand-icon">✦</span> BHASHA<span>LEARN</span><small> AI</small></Link>
-      <Link className="cl-back" to="/dashboard">← Back to dashboard</Link>
+      <Link className="cl-back" to="/dashboard">← Back to dashboard</Link><Link className="cl-back" to="/voice">◉ Open voice studio ↗</Link>
       <button className="cl-new" onClick={() => { setShowCreate(true); setSidebarOpen(false); }} disabled={busy}>＋ New learning session</button>
       <label className="cl-search">⌕ <input aria-label="Search learning sessions" placeholder="Search your sessions…" value={search} onChange={e => setSearch(e.target.value)}/></label>
       <div className="cl-side-label">YOUR CONVERSATIONS</div>
