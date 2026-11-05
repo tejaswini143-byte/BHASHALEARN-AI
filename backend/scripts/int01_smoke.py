@@ -47,7 +47,7 @@ def check(label, condition, explanation=""):
 
 def main():
     suffix = uuid.uuid4().hex[:12]
-    email = "int01-" + suffix + "@example.invalid"
+    email = "int01-" + suffix + "@example.com"
     password = "TemporaryTest!" + uuid.uuid4().hex[:18]
     print("Testing", BASE, "with a disposable student (database rows will remain).")
     status, health = call("GET", "/health")
@@ -59,7 +59,7 @@ def main():
     status, student = call("POST", "/auth/register", {
         "email": email, "display_name": "INT01 Test Student", "password": password,
     })
-    check("Register student", status == 201 and student.get("email") == email, str(status))
+    check("Register student", status == 201 and student.get("email") == email, str(status) + " " + str(student.get("detail") if isinstance(student, dict) else student))
     status, result = call("POST", "/auth/login", {"email": email, "password": password})
     check("Login returns bearer token", status == 200 and bool(result.get("access_token")), str(status))
     token = result["access_token"]
