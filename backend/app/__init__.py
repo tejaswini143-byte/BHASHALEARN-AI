@@ -1,0 +1,1 @@
+"""BHASHALEARN AI backend application."""
