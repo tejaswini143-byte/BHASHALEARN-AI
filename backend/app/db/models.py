@@ -71,6 +71,36 @@ class LearningProgress(Base):
     attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
+    normalized_topic_key: Mapped[str] = mapped_column(String(200), default="", nullable=False, index=True)
+    evidence_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    correct_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    incorrect_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    ambiguous_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    evidence_status: Mapped[str] = mapped_column(String(24), default="unassessed", nullable=False)
+    last_assessed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class LearningAssessmentAttempt(Base):
+    __tablename__ = "learning_assessment_attempts"
+    __table_args__ = (UniqueConstraint("student_id", "idempotency_key", name="uq_assessment_student_idempotency"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    student_id: Mapped[str] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), index=True, nullable=False)
+    session_id: Mapped[str] = mapped_column(ForeignKey("learning_sessions.id", ondelete="CASCADE"), index=True, nullable=False)
+    topic: Mapped[str] = mapped_column(String(200), nullable=False)
+    normalized_topic_key: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    question_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    options_json: Mapped[str] = mapped_column(Text, nullable=False)
+    expected_answer: Mapped[str] = mapped_column(String(500), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    submitted_answer: Mapped[str | None] = mapped_column(String(500))
+    is_correct: Mapped[bool | None] = mapped_column(nullable=True)
+    feedback: Mapped[str | None] = mapped_column(Text)
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    answered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 
 class StudentPreferences(Base):
     """One set of learning preferences per student."""
