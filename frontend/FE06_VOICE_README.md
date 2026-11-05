@@ -1,28 +1,69 @@
-# FE-06 — Browser Voice Tutor
+# FE-06 / INT-03 — Gnani Voice Classroom
 
 ## Implemented
-- Protected `/voice` route linked from dashboard and text classroom.
-- Microphone recognition using browser Web Speech API (SpeechRecognition/webkitSpeechRecognition) where available, with editable transcript before sending.
-- Animated microphone orb and waveform, recording state, microphone permission and recognition error feedback.
-- English (India) and Telugu (India) recognition language options; mixed mode uses English (India), not true simultaneous bilingual ASR.
-- AI tutor requests through existing `POST /api/v1/tutor/sessions/{session_id}/chat` and persisted conversation history through `GET /api/v1/sessions/{session_id}/messages`.
-- Browser speech synthesis playback for individual tutor messages and optional auto-read replies.
-- Session selection, session creation, mobile layout, and clear empty/error states.
 
-## Not yet integrated
-- Gnani Prisma speech recognition and Timbre voice synthesis are **not** connected to FastAPI in this phase. Existing POC code is not automatically a production voice endpoint.
-- No real-time streaming, speech scoring, lip-synced avatar, or reliable code-switching recognition.
-- Animated waveform is a recording-state indicator, **not measured microphone amplitude**.
-- Browser speech recognition availability, privacy and network behavior depend on the browser; recognition may be processed by the browser vendor.
-- Tutor requests require a valid configured Gemini API key on the backend; live provider calls remain unverified.
+- Browser microphone recording is linearly resampled to 16 kHz mono PCM WAV, capped at 30 seconds, and microphone tracks are released after capture.
+- Authenticated upload to `POST /api/v1/voice/sessions/{session_id}/transcribe` calls the existing POC-01 Gnani Prisma client. The raw transcript is editable before sending.
+- The existing `POST /api/v1/tutor/sessions/{session_id}/chat` endpoint remains the only tutoring and chat-persistence path. A completed voice question produces one user/assistant pair.
+- Authenticated `POST /api/v1/voice/sessions/{session_id}/speech` calls the existing POC-02 Timbre client through the POC-06 adapter and returns playable WAV.
+- English, Telugu, and mixed tutor preferences; saved session context; explicit transcription, tutor, and speech states; text fallback; speech retry/replay; and speech failure recovery.
+- TTS retries use the existing assistant text and do not re-submit the student turn to Gemini. TTS failure leaves the saved text conversation intact.
 
-## Windows local test
+## Provider contracts and limitations
+
+Prisma uses the existing POC-01 configuration, including `indic-auto` and
+`codemix` defaults. The UI's language mode is a tutor preference; it does not
+claim that Prisma receives a separate English or Telugu model selector. POC-01
+validates uncompressed PCM WAV, up to 10 MiB and 30 seconds. Timbre uses its
+verified POC-02 English (`en-IN` / Kaveri) and Telugu (`te-IN` / Suhana)
+settings. Mixed tutor responses are segmented by script using POC-06 and
+per-language WAV frame data is joined. Language boundaries may sound abrupt;
+listener quality review remains necessary. No audio recordings are persisted.
+
+The waveform is a recording indicator, not a microphone-amplitude display.
+Streaming, speech scoring, lip-synced avatars, and reliable automatic
+code-switch recognition are outside this integration. Browser mic permission,
+audio playback, and autoplay policy vary by browser. INT-02 Gemini live status
+remains as previously reported and is not re-verified by this task.
+
+## Windows CMD verification
+
+From the repository root, install backend dependencies and run the focused and
+full regression tests:
+
 ```cmd
-cd C:\Users\Tejaswini\BHASHALEARN-AI
-git fetch origin
-git switch feature/fe-06-voice-tutor
-git pull origin feature/fe-06-voice-tutor
+python -m pip install -r backend\requirements.txt
+python -m pytest -q backend\tests\test_voice.py
+python -m pytest -q backend\tests
 ```
-Start backend from repository root: `python -m uvicorn backend.app.main:app --reload` with venv active. Start frontend from `frontend` with `npm run dev`; verify `npm run build`. Open http://localhost:5173/voice, log in if needed, select/create a topic, click the microphone, allow permission, speak, review the transcript, click **Send to tutor**, and use **Listen** on a tutor reply. Try both languages and disable microphone permissions to verify error handling. Use Chrome or Edge for the best chance of browser recognition support.
 
-Never put API keys in frontend files or share secrets in screenshots.
+Start backend and frontend in separate CMD windows:
+
+```cmd
+python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8002
+```
+
+```cmd
+cd /d C:\Users\Tejaswini\BHASHALEARN-AI\frontend
+set BHASHALEARN_API_PROXY_TARGET=http://127.0.0.1:8002
+npm.cmd run dev -- --host 127.0.0.1
+npm.cmd run build
+```
+
+Open the printed Vite URL, sign in, visit `/voice`, choose a tutor language,
+record and stop, inspect/correct the transcript, and send it. Confirm that the
+assistant reply appears in saved history, then use **Listen / replay**. Deny
+microphone permission and verify typed chat remains available. Repeat in
+English and Telugu; try a mixed-language clip and review recognition and audio
+quality separately. Reload the selected session and confirm the same
+chronological history. Mocked tests do not establish live provider or browser
+acceptance.
+
+## Configuration and security
+
+The backend uses `GNANI_API_KEY` and the existing `GNANI_STT_*`, `GNANI_MODEL`,
+`GNANI_LANGUAGE`, `GNANI_OUTPUT_FORMAT`, and `GNANI_TTS_*` variables. Local
+provider settings may remain in their POC `.env` files. Credentials stay on the
+server; never use frontend environment variables for provider keys or commit
+`.env` files. Request errors do not include secrets, uploaded audio, or provider
+response bodies.

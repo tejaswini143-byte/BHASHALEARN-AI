@@ -48,6 +48,8 @@ class PrismaTranscriptionAdapter:
             raise STTStageError("invalid_response", "GNANI Prisma returned an unsupported response.")
         if not isinstance(transcript.text, str):
             raise STTStageError("invalid_response", "GNANI Prisma returned an invalid transcript field.")
+        if transcript.language is not None and not isinstance(transcript.language, str):
+            raise STTStageError("invalid_response", "GNANI Prisma returned invalid detected-language metadata.")
         return TranscriptionResult(
             text=transcript.text,
             detected_language=transcript.language,
