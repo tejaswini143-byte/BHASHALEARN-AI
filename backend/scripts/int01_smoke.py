@@ -67,8 +67,19 @@ def main():
     check("Authenticated profile matches registration", status == 200 and profile.get("id") == student["id"], str(status))
     status, prefs = call("GET", "/students/me/preferences", token=token)
     check("Dashboard preferences endpoint", status == 200 and "learning_level" in prefs, str(status))
+    status, prefs = call("PUT", "/students/me/preferences", {
+        "preferred_language": "mixed", "learning_level": "beginner",
+        "learning_goal": "INT-01 API smoke verification",
+    }, token)
+    check("Update learning preferences", status == 200 and prefs.get("preferred_language") == "mixed", str(status))
+    status, prefs = call("GET", "/students/me/preferences", token=token)
+    check("Read updated learning preferences", status == 200 and prefs.get("learning_goal") == "INT-01 API smoke verification", str(status))
+    status, progress = call("PUT", "/progress", {
+        "topic": "INT01 API Smoke Test", "mastery_score": 25, "attempts": 1,
+    }, token)
+    check("Create learning progress", status == 200 and progress.get("attempts") == 1, str(status))
     status, progress = call("GET", "/progress?limit=100", token=token)
-    check("Dashboard progress endpoint", status == 200 and isinstance(progress, list), str(status))
+    check("Dashboard progress endpoint", status == 200 and isinstance(progress, list) and any(p.get("topic") == "INT01 API Smoke Test" for p in progress), str(status))
     status, sessions = call("GET", "/sessions?limit=20", token=token)
     check("Dashboard sessions endpoint", status == 200 and isinstance(sessions, list), str(status))
     status, session = call("POST", "/sessions", {"topic": "INT01 API Smoke Test", "language": "mixed"}, token)
@@ -76,8 +87,12 @@ def main():
     session_id = session["id"]
     status, sessions = call("GET", "/sessions?limit=20", token=token)
     check("New session appears in listing", status == 200 and any(s["id"] == session_id for s in sessions), str(status))
+    status, message = call("POST", "/sessions/" + session_id + "/messages", {
+        "role": "user", "content": "Verify session message persistence",
+    }, token)
+    check("Create session message", status == 201 and message.get("content") == "Verify session message persistence", str(status))
     status, messages = call("GET", "/sessions/" + session_id + "/messages?limit=500", token=token)
-    check("Session message history endpoint", status == 200 and isinstance(messages, list), str(status))
+    check("Session message history endpoint", status == 200 and isinstance(messages, list) and any(m.get("content") == "Verify session message persistence" for m in messages), str(status))
     status, _ = call("GET", "/sessions/" + session_id)
     check("Private session denies anonymous requests", status == 401, str(status))
     print("\nINT-01 API smoke checks passed. Browser UI still requires separate verification.")

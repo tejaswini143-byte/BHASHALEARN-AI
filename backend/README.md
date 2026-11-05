@@ -29,6 +29,22 @@ Copy `backend/.env.example` to the repository root `.env`, or set
 `BHASHALEARN_*` environment variables. The application reads the current
 working directory's `.env` file by default. Never commit secrets.
 
+Before starting the API, verify local PostgreSQL connectivity and migration
+readiness without changing the database:
+
+```cmd
+python -m backend.scripts.db_preflight
+```
+
+The preflight reports the configured local target, authentication status,
+current Alembic revision, and required application tables. It never prints the
+database URL or credentials. If the revision is behind, confirm the target is
+your local development database before applying migrations with:
+
+```cmd
+python -m alembic -c backend/alembic.ini upgrade head
+```
+
 ## Test scope
 
 The BE-01 tests check health endpoints, OpenAPI metadata, and 404 behavior.
