@@ -82,3 +82,16 @@ class StudentPreferences(Base):
     preferred_language: Mapped[str] = mapped_column(String(16), default="mixed", nullable=False)
     learning_level: Mapped[str] = mapped_column(String(16), default="beginner", nullable=False)
     learning_goal: Mapped[str | None] = mapped_column(String(300))
+
+
+class Lesson(Base):
+    """Ordered lesson within a course."""
+    __tablename__ = "lessons"
+    __table_args__ = (UniqueConstraint("course_id", "position", name="uq_lesson_course_position"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    course_id: Mapped[str] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"), index=True, nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    course: Mapped[Course] = relationship()
