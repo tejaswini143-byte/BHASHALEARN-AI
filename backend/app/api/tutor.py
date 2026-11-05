@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.api.auth import current_student
 from backend.app.api.sessions import owned_session
-from backend.app.db.models import ChatMessage, LearningProgress, SessionVisualState, Student, StudentPreferences, utc_now
+from backend.app.db.models import ChatMessage, LearningMemory, LearningProgress, SessionVisualState, Student, StudentPreferences, utc_now
 from backend.app.db.session import get_db
 from backend.app.services.tutor import build_instruction, generate_tutor_reply
 from backend.app.services.adaptive_learning import normalize_topic, recommend
@@ -75,15 +75,28 @@ def tutor_chat(
         )
         .order_by(LearningProgress.updated_at.desc(), LearningProgress.id.asc())
     )
-    learning_context = None
+    evidence_parts: list[str] = []
     if progress is not None and progress.evidence_attempts > 0:
         policy = recommend(progress.evidence_attempts, progress.correct_attempts, progress.incorrect_attempts)
-        learning_context = (
+        evidence_parts.append(
             f"Topic mastery from submitted objective practice: {progress.mastery_score:.1f}% "
             f"across {progress.evidence_attempts} scored answers ({progress.correct_attempts} correct, "
             f"{progress.incorrect_attempts} incorrect). Suggested teaching strategy: {policy.strategy}. "
             f"Next step: {policy.recommendation}"
         )
+    recent_memories = db.scalars(
+        select(LearningMemory)
+        .where(LearningMemory.student_id == student.id)
+        .order_by(LearningMemory.created_at.desc(), LearningMemory.id.desc())
+        .limit(40)
+    ).all()
+    topic_memories = [
+        memory.note[:300] for memory in recent_memories
+        if normalize_topic(memory.topic) == normalize_topic(session.topic)
+    ][:3]
+    if topic_memories:
+        evidence_parts.append("Student's saved notes for this topic (treat as learner context, not verified facts): " + " | ".join(topic_memories))
+    learning_context = "\n".join(evidence_parts) if evidence_parts else None
     instruction = build_instruction(
         session.topic,
         language,
