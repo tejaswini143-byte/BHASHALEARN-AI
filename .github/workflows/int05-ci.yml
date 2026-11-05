@@ -15,6 +15,7 @@ jobs:
     env:
       BHASHALEARN_JWT_SECRET_KEY: ci-only-secret-key-with-more-than-32-characters
       BHASHALEARN_DATABASE_URL: sqlite:///./int05-ci.db
+      PYTHONPATH: ${{ github.workspace }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
