@@ -21,10 +21,11 @@ def upgrade() -> None:
     for row in rows:
         key = " ".join((row["topic"] or "").strip().lower().split())[:200]
         bind.execute(
-            sa.text("UPDATE learning_progress SET normalized_topic_key=:key, mastery_score=0, attempts=0, evidence_status='legacy_unvalidated' WHERE id=:id"),
+            sa.text("UPDATE learning_progress SET normalized_topic_key=:key, evidence_status='legacy_unvalidated' WHERE id=:id"),
             {"key": key, "id": row["id"]},
         )
-    op.alter_column("learning_progress", "normalized_topic_key", nullable=False)
+    with op.batch_alter_table("learning_progress") as batch:
+        batch.alter_column("normalized_topic_key", existing_type=sa.String(200), nullable=False)
     op.create_index("ix_learning_progress_normalized_topic_key", "learning_progress", ["normalized_topic_key"])
     op.create_table(
         "learning_assessment_attempts",
