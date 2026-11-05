@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     debug: bool = False
     api_prefix: str = "/api/v1"
     database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/bhashalearn"
+    jwt_secret_key: str = ""
+    access_token_expire_minutes: int = 30
 
     model_config = SettingsConfigDict(
         env_prefix="BHASHALEARN_",
