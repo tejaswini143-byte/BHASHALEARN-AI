@@ -43,7 +43,7 @@ def test_full_student_journey(client, monkeypatch):
     prefs = client.put("/api/v1/students/me/preferences", headers=headers, json={
         "preferred_language": "telugu", "learning_level": "beginner", "learning_goal": "Learn greetings"})
     assert prefs.status_code == 200, prefs.text
-    session = client.post("/api/v1/sessions", headers=headers, json={"topic": "Greetings", "language": "mixed"})
+    session = client.post("/api/v1/sessions", headers=headers, json={"topic": "Equivalent Fractions", "language": "mixed"})
     assert session.status_code == 201, session.text
     session_id = session.json()["id"]
     calls = []
@@ -59,21 +59,31 @@ def test_full_student_journey(client, monkeypatch):
     memory = client.post("/api/v1/memories", headers=headers, json={"topic": "Greetings", "note": "Practice pronunciation"})
     assert memory.status_code == 201, memory.text
     assert len(client.get("/api/v1/memories", headers=headers).json()) == 1
-    progress = client.put("/api/v1/progress", headers=headers, json={"topic": "Greetings", "mastery_score": 60, "attempts": 2})
-    assert progress.status_code == 200, progress.text
-    assert client.get("/api/v1/progress/Greetings", headers=headers).json()["mastery_score"] == 60
+    issued = client.post(f"/api/v1/assessments/sessions/{session_id}/issue", headers=headers)
+    assert issued.status_code == 201, issued.text
+    submitted = client.post(
+        f"/api/v1/assessments/{issued.json()['attempt_id']}/answer",
+        headers=headers,
+        json={"answer": issued.json()["options"][0]},
+    )
+    assert submitted.status_code == 200, submitted.text
+    assert submitted.json()["mastery_score"] == 100
+    assert client.get("/api/v1/progress/equivalent%20fractions", headers=headers).json()["evidence_attempts"] == 1
 
 def test_cross_student_journey_isolation(client, monkeypatch):
     first = login(client, "firstjourney@example.com")
     second = login(client, "secondjourney@example.com")
-    session_id = client.post("/api/v1/sessions", headers=first, json={"topic": "Private"}).json()["id"]
+    session_id = client.post("/api/v1/sessions", headers=first, json={"topic": "Equivalent Fractions"}).json()["id"]
     memory_id = client.post("/api/v1/memories", headers=first, json={"topic": "Private", "note": "Keep private"}).json()["id"]
-    client.put("/api/v1/progress", headers=first, json={"topic": "Private", "mastery_score": 55, "attempts": 1})
+    issued = client.post(f"/api/v1/assessments/sessions/{session_id}/issue", headers=first)
+    assert issued.status_code == 201
+    submitted = client.post(f"/api/v1/assessments/{issued.json()['attempt_id']}/answer", headers=first, json={"answer": issued.json()["options"][0]})
+    assert submitted.status_code == 200
     monkeypatch.setattr("backend.app.api.tutor.generate_tutor_reply", lambda *args: "reply")
     assert client.post(f"/api/v1/tutor/sessions/{session_id}/chat", headers=second, json={"message": "hello"}).status_code == 404
     assert client.get(f"/api/v1/sessions/{session_id}/messages", headers=second).status_code == 404
     assert client.get(f"/api/v1/memories/{memory_id}", headers=second).status_code == 404
-    assert client.get("/api/v1/progress/Private", headers=second).status_code == 404
+    assert client.get("/api/v1/progress/Equivalent%20Fractions", headers=second).status_code == 404
     assert client.get("/api/v1/sessions", headers=second).json() == []
     assert client.get("/api/v1/memories", headers=second).json() == []
     assert client.get("/api/v1/progress", headers=second).json() == []

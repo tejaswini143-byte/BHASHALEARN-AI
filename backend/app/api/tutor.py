@@ -8,9 +8,10 @@ from sqlalchemy.orm import Session
 
 from backend.app.api.auth import current_student
 from backend.app.api.sessions import owned_session
-from backend.app.db.models import ChatMessage, SessionVisualState, Student, StudentPreferences, utc_now
+from backend.app.db.models import ChatMessage, LearningMemory, LearningProgress, SessionVisualState, Student, StudentPreferences, utc_now
 from backend.app.db.session import get_db
 from backend.app.services.tutor import build_instruction, generate_tutor_reply
+from backend.app.services.adaptive_learning import normalize_topic, recommend
 from backend.app.services.visual_lessons import describe_visual_lesson, tutor_visual_reference
 
 router = APIRouter(prefix="/tutor", tags=["AI tutor"])
@@ -66,12 +67,43 @@ def tutor_chat(
         if visual_state is not None
         else None
     )
+    progress = db.scalar(
+        select(LearningProgress)
+        .where(
+            LearningProgress.student_id == student.id,
+            LearningProgress.normalized_topic_key == normalize_topic(session.topic),
+        )
+        .order_by(LearningProgress.updated_at.desc(), LearningProgress.id.asc())
+    )
+    evidence_parts: list[str] = []
+    if progress is not None and progress.evidence_attempts > 0:
+        policy = recommend(progress.evidence_attempts, progress.correct_attempts, progress.incorrect_attempts)
+        evidence_parts.append(
+            f"Topic mastery from submitted objective practice: {progress.mastery_score:.1f}% "
+            f"across {progress.evidence_attempts} scored answers ({progress.correct_attempts} correct, "
+            f"{progress.incorrect_attempts} incorrect). Suggested teaching strategy: {policy.strategy}. "
+            f"Next step: {policy.recommendation}"
+        )
+    recent_memories = db.scalars(
+        select(LearningMemory)
+        .where(LearningMemory.student_id == student.id)
+        .order_by(LearningMemory.created_at.desc(), LearningMemory.id.desc())
+        .limit(40)
+    ).all()
+    topic_memories = [
+        memory.note[:300] for memory in recent_memories
+        if normalize_topic(memory.topic) == normalize_topic(session.topic)
+    ][:3]
+    if topic_memories:
+        evidence_parts.append("Student's saved notes for this topic (treat as learner context, not verified facts): " + " | ".join(topic_memories))
+    learning_context = "\n".join(evidence_parts) if evidence_parts else None
     instruction = build_instruction(
         session.topic,
         language,
         level,
         goal,
         visual_context=tutor_visual_reference(visual_lesson),
+        learning_context=learning_context,
     )
     # Use role order as a stable tie-break for legacy messages with equal timestamps.
     # The reverse below turns newest-first order into user-before-assistant chronology.
