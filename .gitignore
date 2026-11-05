@@ -10,3 +10,4 @@ __pycache__/
 *.mp3
 *.m4a
 .DS_Store
+backend_be02_test.db
