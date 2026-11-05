@@ -43,7 +43,7 @@ class PreferencesUpdate(BaseModel):
 
 
 class PreferencesResponse(PreferencesUpdate):
-    pass
+    model_config = ConfigDict(from_attributes=True)
 
 
 @router.get("", response_model=ProfileResponse)
