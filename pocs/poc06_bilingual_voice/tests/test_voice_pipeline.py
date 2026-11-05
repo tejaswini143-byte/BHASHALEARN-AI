@@ -193,7 +193,13 @@ def test_adaptive_voice_answers_update_mastery_without_reset(tmp_path):
 
 
 def test_tts_failure_keeps_transcript_tutor_response_and_learning_context(tmp_path):
-    pipeline, manager, context, _, _, tts, audio = make_pipeline(tmp_path, tts_error=TTSStageError("provider_error", "GNANI HTTP 503."))
+    pipeline, manager, context, _, _, tts, audio = make_pipeline(
+        tmp_path,
+        tts_error=TTSStageError(
+            "provider_error", "GNANI Timbre reported a server error.",
+            exception_type="TTSError", http_status=503, provider_category="provider_server_error",
+        ),
+    )
     result = pipeline.process_audio(context.session_id, audio)
     current = manager.get_session(context.session_id)
     assert result.status == "partial_success"
@@ -201,8 +207,23 @@ def test_tts_failure_keeps_transcript_tutor_response_and_learning_context(tmp_pa
     assert result.tutor_response
     assert result.audio is None
     assert result.errors[0].stage == "tts"
+    assert "exception_type=TTSError" in result.errors[0].message
+    assert "http_status=503" in result.errors[0].message
+    assert "category=provider_server_error" in result.errors[0].message
     assert len(tts.calls) == 1
     assert current.conversation_history
+
+
+def test_unexpected_tts_exception_reports_type_without_echoing_exception_text(tmp_path):
+    pipeline, _, context, _, _, _, audio = make_pipeline(
+        tmp_path, tts_error=RuntimeError("private request content")
+    )
+    result = pipeline.process_audio(context.session_id, audio)
+    assert result.status == "partial_success"
+    assert result.errors[0].stage == "tts"
+    assert "exception_type=RuntimeError" in result.errors[0].message
+    assert "category=unexpected_integration_error" in result.errors[0].message
+    assert "private request content" not in result.errors[0].message
 
 
 def test_empty_tutor_response_does_not_call_tts(tmp_path):

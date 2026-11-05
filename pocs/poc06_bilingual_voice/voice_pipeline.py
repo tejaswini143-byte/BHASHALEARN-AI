@@ -176,8 +176,15 @@ class VoicePipeline:
             errors.append(PipelineError("tts", exc.code, str(exc), exc.retryable))
         except (SessionEndedError, SessionNotFoundError) as exc:
             errors.append(PipelineError("session", "unavailable", str(exc)))
-        except Exception:
-            errors.append(PipelineError("tts", "provider_error", "GNANI Timbre speech generation failed."))
+        except Exception as exc:
+            # Keep unexpected adapter/integration failures useful without
+            # leaking request text, response bodies, or exception contents.
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            status_detail = f"; http_status={status}" if isinstance(status, int) and 100 <= status <= 599 else ""
+            errors.append(PipelineError(
+                "tts", "provider_error",
+                f"GNANI Timbre synthesis failed; exception_type={type(exc).__name__}; category=unexpected_integration_error{status_detail}.",
+            ))
         latencies["tts"] = time.perf_counter() - tts_start
         return self._result(session_id, transcript_result, tutor_response, None, decision, latencies, errors, total_start, speech)
 

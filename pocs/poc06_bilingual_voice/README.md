@@ -12,7 +12,7 @@ they do not establish live provider success.
 | Component | Existing interface reused | Contract used here |
 | --- | --- | --- |
 | POC-01 Prisma | `PrismaSTTAdapter(PrismaConfig).transcribe(path) -> Transcript` | `POST https://api.vachana.ai/stt/v3`; `X-API-Key-ID`; multipart `audio_file`; form `model=prisma-v3.0`, `language_code=indic-auto`, `format=codemix`; result has `text`, optional language and raw JSON. |
-| POC-02 Timbre | `TimbreTTSAdapter(TimbreConfig).synthesize(text, language, voice)` and `write_audio(bytes, path)` | `POST https://api.vachana.ai/api/v1/tts/inference`; `X-API-Key-ID`; binary WAV response; English `en-IN`/Kaveri, Telugu `te-IN`/Suhana, 48 kHz mono 16-bit PCM. POC-02 documents `auto` plus Suhana as an experiment for mixed text; POC-06 uses that mapping, but mixed-language audio quality is unverified. |
+| POC-02 Timbre | `TimbreTTSAdapter(TimbreConfig).synthesize(text, language, voice)` and `write_audio(bytes, path)` | `POST https://api.vachana.ai/api/v1/tts/inference`; `X-API-Key-ID`; binary WAV response; English `en-IN`/Kaveri, Telugu `te-IN`/Suhana, 48 kHz mono 16-bit PCM. POC-06 uses these two verified language/voice pairs. |
 | POC-03 Gemini | `LLMClient.complete`, `Tutor.ask`, `Tutor.set_language`, `Tutor.set_level`, existing prompt/history | The same `LLMClient` instance is supplied to the POC-03 `Tutor` and POC-04 structured evaluator through POC-05. POC-06 does not create a second conversation history. |
 | POC-04 adaptation | `StudentState`, `AdaptiveTeachingEngine.submit_answer`, `adaptive_instruction` | Objective questions use the existing deterministic evaluator; open responses use POC-04's validated structured LLM evaluation. The engine updates the state held by POC-05. |
 | POC-05 session | `SessionManager`, `SharedSessionRuntime.voice_transcript`, `adaptive_answer`, `switch_language`, `get_teaching_context` | Transcripts and tutor replies enter the same bounded session history; identity, language, topic, mastery, difficulty, and hints remain in the existing shared context. |
@@ -48,6 +48,23 @@ Without one, it is a voice-transcript question or follow-up. The pipeline does
 not retry paid provider requests automatically. STT/TTS timeout errors mark
 whether a stage-only retry is safe; `synthesize_saved_response` retries TTS
 from retained text without re-running STT, Gemini, or mastery updates.
+
+POC-06 constructs the TTS wrapper from the existing `TimbreConfig`; it does
+not wrap an already constructed client as a config. The wrapper sanitizes
+common Markdown and LaTeX display syntax for speech. For mixed Telugu/English,
+it splits text by Telugu and Latin script and sends each segment using the
+POC-02 verified `te-IN`/Suhana or `en-IN`/Kaveri pairing, then concatenates PCM
+frames when response formats match. It does not use POC-02's experimental
+`auto` mixed-text mode. This fallback may have a noticeable join between
+languages; Latin transliteration of Telugu is synthesized as English. A custom
+`GNANI_TTS_VOICE` override is rejected for mixed sessions because one voice
+has not been validated across both language modes.
+
+TTS errors include a safe error category and exception class; HTTP status is
+included when available. Raw request text, response bodies, API keys, and
+headers are not included in diagnostics. HTTP 400 errors report a general
+request-rejected category because provider detail text could contain submitted
+content.
 
 The result includes transcript and raw Prisma response, tutor text, topic,
 language, difficulty, mastery, adaptive strategy, WAV path/format/duration,
@@ -142,17 +159,23 @@ partial success, and invalid-audio short circuiting.
   simulations completed with the supplied results.
 - POC-05: Windows CMD reported 22 passed in 0.05 seconds and the supplied
   chat-to-simulated-voice walkthrough completed with 50% mastery and 8 turns.
-- POC-06 live Prisma/Gemini/Timbre pipeline: **not verified**. Do not infer a
-  successful STT/TTS integration from the mocked simulation or previous
-  individual POC results.
+- POC-06 live microphone, Prisma transcript, Gemini tutor, and shared context:
+  the user reported success in the mixed-language CLI session on 2026-11-05.
+- POC-06 live Timbre stage in that session: **failed before a provider request**.
+  The reported generic error and 0.000 s TTS latency are consistent with the
+  verified factory argument mismatch described below. No provider HTTP error
+  or provider response was observed in that run.
+- POC-06 after the TTS factory fix and language-segment fallback: **not yet
+  live-verified**. The user must retry and confirm the playable WAV before
+  acceptance.
 
 ## Known limitations
 
 - This POC has not established live Prisma transcription or end-to-end voice
   quality. POC-01 uses `indic-auto` plus `codemix`; actual English, Telugu, and
   code-switching accuracy needs reviewed live clips.
-- Mixed Timbre output uses the existing documented `auto`/Suhana experiment;
-  language switching inside a single spoken response needs a live check.
+- Mixed Timbre output is assembled from separate verified English and Telugu
+  synthesis requests; the joined audio and naturalness still need live review.
 - Microphone recording depends on optional `sounddevice`, hardware, and OS
   permissions. PCM WAV is the portable fallback.
 - The system is synchronous and in-memory. There is no streaming audio,
@@ -161,4 +184,16 @@ partial success, and invalid-audio short circuiting.
   compatible audio player.
 - Provider timeouts are surfaced, not automatically retried. Retry TTS from
   saved tutor text to avoid repeating STT, LLM evaluation, or mastery updates.
+
+## TTS integration debugging note
+
+The initial POC-06 CLI passed `TimbreTTSAdapter(timbre_config)` into
+`TimbreSpeechAdapter.from_config`, whose contract expects the `TimbreConfig`
+itself. The wrapper then treated the client object as configuration; accessing
+its `voice` attribute raised `AttributeError` before the network request. A
+catch-all converted that local integration bug into the unhelpful generic
+`provider_error`. POC-06 now passes the config directly and reports safe
+exception type, HTTP status when available, and category. Regression tests
+cover the old incorrect factory call and the corrected construction; live
+verification is still required.
 

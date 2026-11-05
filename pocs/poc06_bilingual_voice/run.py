@@ -10,7 +10,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from pocs.poc01_prisma_stt.prisma_stt import PrismaConfig
-from pocs.poc02_timbre_tts.timbre_tts import TimbreConfig, TimbreTTSAdapter
+from pocs.poc02_timbre_tts.timbre_tts import TimbreConfig
 from pocs.poc03_bilingual_llm.config import ConfigurationError, LLMConfig
 from pocs.poc03_bilingual_llm.llm_client import LLMClient
 from pocs.poc03_bilingual_llm.tutor import Tutor
@@ -39,7 +39,7 @@ def build_pipeline(manager: SessionManager, session_id: str, repo_root: Path = R
     tutor = Tutor(llm, language=manager.get_session(session_id).language.value)
     runtime = SharedSessionRuntime(manager, session_id, tutor, StructuredLLMEvaluator(llm))
     stt = PrismaTranscriptionAdapter.from_config(prisma_config)
-    tts = TimbreSpeechAdapter.from_config(TimbreTTSAdapter(timbre_config), voice_config.output_dir)
+    tts = TimbreSpeechAdapter.from_config(timbre_config, voice_config.output_dir)
     return VoicePipeline(stt, runtime, tts, manager)
 
 
