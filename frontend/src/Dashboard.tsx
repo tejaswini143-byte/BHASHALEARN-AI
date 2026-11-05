@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ApiError, clearToken, getCurrentStudent, getToken, request, type Student } from "./auth";
 import "./dashboard.css";
@@ -55,7 +55,7 @@ export function ProtectedDashboard() {
     return () => { active = false; };
   }, [navigate, refresh, signOut]);
 
-  async function createSession(event: React.FormEvent<HTMLFormElement>) {
+  async function createSession(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const token = getToken();
     if (!token || !topic.trim() || creating) return;
