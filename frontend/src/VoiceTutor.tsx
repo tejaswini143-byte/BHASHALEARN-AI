@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { ApiError, clearToken, getCurrentStudent, getToken, request, type Student } from "./auth";
 import { getSharedSessionContext } from "./sessionContext";
 import { SessionModeNav } from "./SessionModeNav";
+import { PracticeAssessment } from "./PracticeAssessment";
 import "./voice.css";
 
 type Language = "english" | "telugu" | "mixed";
@@ -335,6 +336,7 @@ export function VoiceTutor() {
       <section className="vt-chat"><div className="vt-chat-header"><div><span className="vt-eyebrow">CONVERSATION TRANSCRIPT</span><h3>AI Tutor <span>✦</span></h3></div><span className="vt-chat-badge">PRISMA + GEMINI + TIMBRE</span></div>
         <div className="vt-transcript">{historyLoading ? <p className="vt-empty">Loading saved conversation…</p> : messages.length ? messages.map(message => <article key={message.id} className={message.role === "user" ? "vt-message vt-user" : "vt-message vt-ai"}><div className="vt-msg-label"><span>{message.role === "user" ? "YOU" : "✦ AI TUTOR"}</span>{message.role === "assistant" && <button disabled={speechLoading} onClick={() => void generateSpeech(message.content, selected, language)} aria-label="Generate or replay tutor speech">{speechLoading ? "Preparing…" : "▶ Listen / replay"}</button>}</div><p>{message.content}</p></article>) : <div className="vt-empty"><div>✦</div><h3>Your conversation starts here</h3><p>Record your question, review the Prisma transcript, then send it to your AI tutor.</p></div>}{busy && <p className="vt-thinking">✦ Tutor is preparing your reply…</p>}<div ref={scrollBottom}/></div>
         <div className="vt-compose">{error && <p className="vt-error" role="alert">{error}</p>}{notice && <p className="vt-notice" role="status">{notice}</p>}{(draft || transcribing) && <p className="vt-interim">{transcribing ? "Processing microphone recording…" : "Prisma transcript — review or edit before sending"}</p>}<form onSubmit={sendMessage}><textarea aria-label="Prisma transcript or typed message" placeholder="Your Prisma transcript appears here. Review it or type a message…" value={draft} maxLength={4000} onChange={event => setDraft(event.target.value)} rows={3} disabled={busy || transcribing || recording || historyLoading}/><button disabled={!selected || !draft.trim() || busy || transcribing || recording || historyLoading}>{busy ? "Thinking…" : "Send to tutor ↗"}</button></form><small>Only the transcript you send enters Gemini and the saved session history. Microphone audio is not saved.</small></div>
+        <PracticeAssessment sessionId={selected}/>
       </section></div>
     </main>
   </div>;
