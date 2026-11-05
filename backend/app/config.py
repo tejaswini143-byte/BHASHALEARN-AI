@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     app_env: str = "development"
     debug: bool = False
     api_prefix: str = "/api/v1"
+    database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/bhashalearn"
 
     model_config = SettingsConfigDict(
         env_prefix="BHASHALEARN_",
