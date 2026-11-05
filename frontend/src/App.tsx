@@ -3,6 +3,7 @@ import { Link, Route, Routes } from "react-router-dom";
 import { AuthPage, ProtectedDashboard } from "./AuthPages";
 import { Classroom } from "./Classroom";
 import { VoiceTutor } from "./VoiceTutor";
+import { VisualStudio } from "./VisualStudio";
 
 const lessons = [
   { title: "Speak with confidence", subtitle: "Live AI voice classroom", icon: "◉", tone: "pink", detail: "Practice natural Telugu and English conversations with your AI tutor." },
@@ -41,4 +42,4 @@ function Journey() { return <section id="journey" className="journey-section"><d
 
 function Landing() { return <><Header/><main><Hero/><Features/><Experience/><Journey/></main><footer className="site-footer"><div className="section-wrap footer-inner"><Brand/><p>Made for curious minds. తెలుగు × English.</p><span>© {new Date().getFullYear()} BHASHALEARN AI</span></div></footer></>; }
 function Explore() { return <div className="inner-page"><Header/><main className="inner-content section-wrap"><span className="kicker">✦ THE JOURNEY CONTINUES</span><h1>Something <span className="gradient-text">amazing</span> is taking shape.</h1><p>Our AI classroom, voice tutor, visual studio, and personalized dashboard are being developed in upcoming phases.</p><Link className="button-primary" to="/">← Back to home</Link></main></div>; }
-export default function App() { return <Routes><Route path="/" element={<Landing/>}/><Route path="/explore" element={<Explore/>}/><Route path="/login" element={<AuthPage mode="login"/>}/><Route path="/register" element={<AuthPage mode="register"/>}/><Route path="/dashboard" element={<ProtectedDashboard/>}/><Route path="/classroom" element={<Classroom/>}/><Route path="/voice" element={<VoiceTutor/>}/><Route path="/about" element={<Explore/>}/><Route path="*" element={<Explore/>}/></Routes>; }
+export default function App() { return <Routes><Route path="/" element={<Landing/>}/><Route path="/explore" element={<Explore/>}/><Route path="/login" element={<AuthPage mode="login"/>}/><Route path="/register" element={<AuthPage mode="register"/>}/><Route path="/dashboard" element={<ProtectedDashboard/>}/><Route path="/classroom" element={<Classroom/>}/><Route path="/voice" element={<VoiceTutor/>}/><Route path="/visual" element={<VisualStudio/>}/><Route path="/about" element={<Explore/>}/><Route path="*" element={<Explore/>}/></Routes>; }
