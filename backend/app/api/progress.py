@@ -1,48 +1,48 @@
-"""Authenticated per-topic student learning progress API."""
+"""Read-only evidence-backed per-topic student learning progress API."""
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+
 from backend.app.api.auth import current_student
-from backend.app.db.models import LearningProgress, Student, utc_now
+from backend.app.db.models import LearningProgress, Student
 from backend.app.db.session import get_db
+from backend.app.services.adaptive_learning import normalize_topic, recommend
 
 router = APIRouter(prefix="/progress", tags=["learning progress"])
 
-class ProgressUpdate(BaseModel):
-    topic: str = Field(min_length=1, max_length=200)
-    mastery_score: float = Field(ge=0, le=100, allow_inf_nan=False)
-    attempts: int = Field(ge=0)
 
-    @field_validator("topic")
-    @classmethod
-    def clean_topic(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
-            raise ValueError("Topic cannot be blank")
-        return value
-
-class ProgressResponse(ProgressUpdate):
+class ProgressResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: str
+    topic: str
+    mastery_score: float
+    attempts: int
+    evidence_attempts: int
+    correct_attempts: int
+    incorrect_attempts: int
+    ambiguous_attempts: int
+    evidence_status: str
+    last_assessed_at: datetime | None
     updated_at: datetime
+    difficulty: str
+    strategy: str
+    recommendation: str
 
-@router.put("", response_model=ProgressResponse)
-def upsert_progress(payload: ProgressUpdate, student: Student = Depends(current_student), db: Session = Depends(get_db)):
-    progress = db.scalar(select(LearningProgress).where(
-        LearningProgress.student_id == student.id, LearningProgress.topic == payload.topic
-    ))
-    if progress is None:
-        progress = LearningProgress(student_id=student.id, **payload.model_dump())
-        db.add(progress)
-    else:
-        progress.mastery_score = payload.mastery_score
-        progress.attempts = payload.attempts
-        progress.updated_at = utc_now()
-    db.commit()
-    db.refresh(progress)
-    return progress
+
+def _response(item: LearningProgress) -> ProgressResponse:
+    policy = recommend(item.evidence_attempts, item.correct_attempts, item.incorrect_attempts)
+    return ProgressResponse(
+        id=item.id, topic=item.topic,
+        mastery_score=item.mastery_score if item.evidence_attempts else 0.0,
+        attempts=item.evidence_attempts, evidence_attempts=item.evidence_attempts,
+        correct_attempts=item.correct_attempts, incorrect_attempts=item.incorrect_attempts,
+        ambiguous_attempts=item.ambiguous_attempts, evidence_status=item.evidence_status,
+        last_assessed_at=item.last_assessed_at, updated_at=item.updated_at,
+        difficulty=policy.difficulty, strategy=policy.strategy, recommendation=policy.recommendation,
+    )
+
 
 @router.get("", response_model=list[ProgressResponse])
 def list_progress(
@@ -53,13 +53,15 @@ def list_progress(
 ):
     stmt = (select(LearningProgress).where(LearningProgress.student_id == student.id)
             .order_by(LearningProgress.topic, LearningProgress.id).offset(offset).limit(limit))
-    return db.scalars(stmt).all()
+    return [_response(item) for item in db.scalars(stmt).all()]
+
 
 @router.get("/{topic}", response_model=ProgressResponse)
 def get_progress(topic: str, student: Student = Depends(current_student), db: Session = Depends(get_db)):
+    key = normalize_topic(topic)
     progress = db.scalar(select(LearningProgress).where(
-        LearningProgress.student_id == student.id, LearningProgress.topic == topic
-    ))
+        LearningProgress.student_id == student.id, LearningProgress.normalized_topic_key == key
+    ).order_by(LearningProgress.updated_at.desc(), LearningProgress.id.asc()))
     if progress is None:
         raise HTTPException(status_code=404, detail="Progress not found")
-    return progress
+    return _response(progress)
