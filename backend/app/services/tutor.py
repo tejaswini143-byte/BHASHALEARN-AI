@@ -25,6 +25,7 @@ def build_instruction(
     level: str,
     goal: str | None,
     visual_context: str | None = None,
+    learning_context: str | None = None,
 ) -> str:
     instruction = (
         "You are BHASHALEARN AI, a supportive bilingual Telugu-English tutor. "
@@ -37,6 +38,8 @@ def build_instruction(
         f"Student level: {level}\n"
         f"Learning goal: {goal or 'Learn the current topic'}"
     )
+    if learning_context:
+        instruction += "\n\nLEARNING EVIDENCE (use as guidance; never invent scores):\n" + learning_context[:1200]
     if visual_context:
         instruction += "\n\n" + visual_context[:1800]
     return instruction
