@@ -73,8 +73,9 @@ export function ProtectedDashboard() {
   if (!data) return <main className="auth-screen"><div className="db-error"><h2>Dashboard unavailable</h2><p role="alert">{error}</p><button onClick={() => setRefresh(n => n + 1)}>Try again</button><button onClick={signOut}>Sign out</button></div></main>;
 
   const { student, progress, sessions, preferences } = data;
-  const average = progress.length ? progress.reduce((sum, p) => sum + p.mastery_score, 0) / progress.length : 0;
-  const attempts = progress.reduce((sum, p) => sum + p.attempts, 0);
+  const assessedProgress = progress.filter(item => item.evidence_attempts > 0);
+  const average = assessedProgress.length ? assessedProgress.reduce((sum, p) => sum + p.mastery_score, 0) / assessedProgress.length : 0;
+  const attempts = progress.reduce((sum, p) => sum + p.evidence_attempts, 0);
   const filteredSessions = sessions.filter(s => s.topic.toLowerCase().includes(search.toLowerCase()));
   return <div className="db-app">
     <aside className={menuOpen ? "db-sidebar db-sidebar-open" : "db-sidebar"}>
