@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { clearToken, getToken } from "./auth";
+import { getToken } from "./auth";
 import "./visual.css";
 
 type Tab = "Explanation" | "Animation" | "Code & Equations" | "Diagrams" | "Applications" | "Summary" | "Quiz";
