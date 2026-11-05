@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { ApiError, clearToken, getCurrentStudent, getToken, request, type Student } from "./auth";
+import { getSharedSessionContext } from "./sessionContext";
+import { SessionModeNav } from "./SessionModeNav";
 import "./voice.css";
 
 type Language = "english" | "telugu" | "mixed";
@@ -61,6 +63,7 @@ async function readAudioResponse(response: Response): Promise<Blob> {
 
 export function VoiceTutor() {
   const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
   const [student, setStudent] = useState<Student | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [selected, setSelected] = useState("");
@@ -127,7 +130,10 @@ export function VoiceTutor() {
     ]).then(([profile, list, prefs]) => {
       if (!active) return;
       setStudent(profile); setSessions(list); setPreferences(prefs); setLanguage(prefs.preferred_language);
-      if (list.length) setSelected(list[0].id);
+      const requested = params.get("session");
+      if (requested && list.some(item => item.id === requested)) setSelected(requested);
+      else if (!requested && list.length) setSelected(list[0].id);
+      else if (requested) setError("That learning session is unavailable. Choose one of your sessions or return to your dashboard.");
     }).catch(cause => { if (active) handleError(cause); }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [handleError, signOut]);
@@ -138,8 +144,13 @@ export function VoiceTutor() {
     setMessages([]);
     if (!selected) { setHistoryLoading(false); return; }
     setHistoryLoading(true);
-    request<Message[]>(`/sessions/${encodeURIComponent(selected)}/messages?limit=500`, { headers: headers() })
-      .then(data => { if (loadId === activeHistory.current) setMessages(data); })
+    getSharedSessionContext(selected)
+      .then(context => {
+        if (loadId !== activeHistory.current) return;
+        setMessages(context.messages);
+        setLanguage(context.preferred_language);
+        setPreferences({ preferred_language: context.preferred_language, learning_level: context.learning_level, learning_goal: context.learning_goal });
+      })
       .catch(cause => { if (loadId === activeHistory.current) handleError(cause); })
       .finally(() => { if (loadId === activeHistory.current) setHistoryLoading(false); });
   }, [selected, handleError]);
@@ -162,7 +173,7 @@ export function VoiceTutor() {
   function stopPlayback() { if (audioRef.current) { audioRef.current.pause(); audioRef.current.currentTime = 0; } setSpeaking(false); }
   function chooseSession(id: string) {
     if (busy || transcribing || recording) return;
-    setError(""); setNotice(""); setAudioUrl(""); setSelected(id); setMobileMenu(false);
+    setError(""); setNotice(""); setAudioUrl(""); setSelected(id); setParams({ session: id }); setMobileMenu(false);
   }
 
   async function createSession(event: FormEvent<HTMLFormElement>) {
@@ -170,7 +181,7 @@ export function VoiceTutor() {
     setCreating(true); setError("");
     try {
       const session = await request<Session>("/sessions", { method: "POST", headers: headers(), body: JSON.stringify({ topic: topic.trim(), language }) });
-      setSessions(list => [session, ...list]); setTopic(""); setSelected(session.id);
+      setSessions(list => [session, ...list]); setTopic(""); setSelected(session.id); setParams({ session: session.id });
     } catch (cause) { handleError(cause); } finally { setCreating(false); }
   }
 
@@ -311,7 +322,7 @@ export function VoiceTutor() {
       <div className="vt-side-profile"><span>{student.display_name.slice(0, 1).toUpperCase()}</span><div><strong>{student.display_name}</strong><small>Voice learner</small></div></div>
     </aside>
     <main className="vt-main">
-      <header className="vt-topbar"><div><button className="vt-mobile-menu" onClick={() => setMobileMenu(!mobileMenu)} aria-label="Toggle sessions">☰</button><span className="vt-eyebrow">✦ VOICE LEARNING STUDIO</span><h2>{current?.topic || "Your voice classroom"}</h2></div><div className="vt-top-actions"><label>Tutor language <select value={language} disabled={recording || transcribing || busy} onChange={event => void changeLanguage(event.target.value as Language)}><option value="mixed">Telugu + English</option><option value="english">English</option><option value="telugu">తెలుగు</option></select></label><Link to="/classroom">Text classroom ↗</Link></div></header>
+      <header className="vt-topbar"><div><button className="vt-mobile-menu" onClick={() => setMobileMenu(!mobileMenu)} aria-label="Toggle sessions">☰</button><span className="vt-eyebrow">✦ VOICE LEARNING STUDIO</span><h2>{current?.topic || "Your voice classroom"}</h2></div><div className="vt-top-actions"><label>Tutor language <select value={language} disabled={recording || transcribing || busy} onChange={event => void changeLanguage(event.target.value as Language)}><option value="mixed">Telugu + English</option><option value="english">English</option><option value="telugu">తెలుగు</option></select></label></div><SessionModeNav sessionId={selected} active="voice"/></header>
       <div className="vt-layout"><section className="vt-stage"><div className="vt-stage-heading"><span className="vt-eyebrow">✦ SPEAK • LEARN • GROW</span><h1>Speak naturally.<br/><span className="gradient-text">Learn confidently.</span></h1><p>Gnani Prisma transcribes your voice; Gemini tutors in your selected language.</p></div>
         <div className={recording ? "vt-orb-area vt-recording" : "vt-orb-area"}><div className="vt-orb-ring"/><div className="vt-orb-ring vt-ring-two"/><button className="vt-orb" disabled={!selected || busy || transcribing || micStarting} onClick={() => void toggleRecording()} aria-label={recording ? "Stop recording" : "Start microphone recording"} aria-pressed={recording}><svg viewBox="0 0 24 24" width="45" height="45" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><rect x="9" y="2" width="6" height="13" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5m-4 0h8"/></svg></button></div>
         <div className={recording ? "vt-wave vt-wave-active" : "vt-wave"} aria-hidden="true">{Array.from({length: 35}, (_, index) => <i key={index} style={{ height: `${12 + Math.abs(Math.sin(index * 1.43)) * 38}px`, animationDelay: `${index * 37}ms` }}/>)}</div>

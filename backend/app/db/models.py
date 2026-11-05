@@ -104,3 +104,16 @@ class LearningMemory(Base):
     topic: Mapped[str] = mapped_column(String(200), nullable=False)
     note: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
+class SessionVisualState(Base):
+    """One allowlisted built-in visual lesson selection for a learning session."""
+    __tablename__ = "session_visual_states"
+
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("learning_sessions.id", ondelete="CASCADE"), primary_key=True
+    )
+    visual_key: Mapped[str] = mapped_column(String(80), nullable=False)
+    start_node: Mapped[str | None] = mapped_column(String(1))
+    end_node: Mapped[str | None] = mapped_column(String(1))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)

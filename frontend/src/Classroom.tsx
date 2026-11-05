@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { ApiError, clearToken, getCurrentStudent, getToken, request, type Student } from "./auth";
+import { getSharedSessionContext } from "./sessionContext";
+import { SessionModeNav } from "./SessionModeNav";
 import "./classroom.css";
 
 type Language = "telugu" | "english" | "mixed";
@@ -32,6 +34,7 @@ export function Classroom() {
   const [notice, setNotice] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
+  const [invalidSession, setInvalidSession] = useState(false);
   const bottom = useRef<HTMLDivElement>(null);
   const activeLoad = useRef(0);
   const signOut = useCallback(() => { clearToken(); navigate("/login", { replace: true }); }, [navigate]);
@@ -56,6 +59,7 @@ export function Classroom() {
         setStudent(profile); setSessions(list); setPrefs(preferences); setLanguage(preferences.preferred_language);
         const requested = params.get("session");
         if (requested && list.some(item => item.id === requested)) setSelected(requested);
+        else if (requested) setInvalidSession(true);
         else if (list.length) setSelected(list[0].id);
         else setShowCreate(true);
       } catch (cause) { if (live) report(cause); }
@@ -71,16 +75,21 @@ export function Classroom() {
     setMessages([]); setError("");
     if (!selected) { setHistoryLoading(false); return; }
     setHistoryLoading(true);
-    request<Message[]>(`/sessions/${encodeURIComponent(selected)}/messages?limit=500`, { headers: headers() })
-      .then(data => { if (activeLoad.current === loadId) setMessages(data); })
-      .catch(cause => { if (activeLoad.current === loadId) report(cause); })
+    getSharedSessionContext(selected)
+      .then(context => {
+        if (activeLoad.current !== loadId) return;
+        setMessages(context.messages);
+        setLanguage(context.preferred_language);
+        setPrefs({ preferred_language: context.preferred_language, learning_level: context.learning_level, learning_goal: context.learning_goal });
+      })
+      .catch(cause => { if (activeLoad.current === loadId) { if (cause instanceof ApiError && cause.status === 404) { setSelected(null); setInvalidSession(true); } report(cause); } })
       .finally(() => { if (activeLoad.current === loadId) setHistoryLoading(false); });
   }, [selected, headers, report]);
 
   useEffect(() => { bottom.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [messages, busy, historyLoading]);
   const current = sessions.find(s => s.id === selected);
 
-  function selectSession(id: string) { if (busy) return; setSelected(id); setParams({ session: id }); setSidebarOpen(false); setNotice(""); setShowCreate(false); }
+  function selectSession(id: string) { if (busy) return; setSelected(id); setParams({ session: id }); setSidebarOpen(false); setNotice(""); setShowCreate(false); setInvalidSession(false); }
   async function createSession(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (!topic.trim() || creating || busy) return;
     setCreating(true); setError(""); setNotice("");
@@ -126,7 +135,7 @@ export function Classroom() {
   return <div className="cl-app">
     <aside className={sidebarOpen ? "cl-sidebar cl-sidebar-open" : "cl-sidebar"}>
       <Link to="/dashboard" className="cl-brand"><span className="cl-brand-icon">✦</span> BHASHA<span>LEARN</span><small> AI</small></Link>
-      <Link className="cl-back" to="/dashboard">← Back to dashboard</Link><Link className="cl-back" to="/voice">◉ Open voice studio ↗</Link>
+      <Link className="cl-back" to="/dashboard">← Back to dashboard</Link>
       <button className="cl-new" onClick={() => { setShowCreate(true); setSidebarOpen(false); }} disabled={busy}>＋ New learning session</button>
       <label className="cl-search">⌕ <input aria-label="Search learning sessions" placeholder="Search your sessions…" value={search} onChange={e => setSearch(e.target.value)}/></label>
       <div className="cl-side-label">YOUR CONVERSATIONS</div>
@@ -134,9 +143,8 @@ export function Classroom() {
       <div className="cl-side-footer"><span className="cl-avatar">{student.display_name.slice(0, 1).toUpperCase()}</span><span><strong>{student.display_name}</strong><small>AI learning companion</small></span></div>
     </aside>
     <section className="cl-workspace">
-      <header className="cl-header"><div className="cl-heading"><button className="cl-menu" aria-label="Toggle session sidebar" aria-expanded={sidebarOpen} onClick={() => setSidebarOpen(!sidebarOpen)}>☰</button><div><small>✦ AI CLASSROOM</small><strong>{showCreate ? "New learning session" : current?.topic || "Choose a topic"}</strong></div></div><div className="cl-header-actions"><span className="cl-live"><i/> TEXT TUTOR</span><label className="cl-language">Tutor language <select value={language} disabled={busy} onChange={e => void updateLanguage(e.target.value as Language)}>{languages.map(lang => <option key={lang} value={lang}>{lang === "mixed" ? "Telugu + English" : lang === "english" ? "English" : "తెలుగు"}</option>)}</select></label><button className="cl-signout" onClick={signOut}>Sign out ↗</button></div></header>
-      {showCreate || !current ? <main className="cl-create"><div className="cl-create-art">✦</div><span className="cl-kicker">YOUR NEXT DISCOVERY STARTS HERE</span><h1>What shall we <span className="gradient-text">learn today?</span></h1><p>Pick a topic and your AI tutor will guide you step by step, in your preferred language.</p><form onSubmit={createSession}><label htmlFor="cl-topic">Learning topic</label><input id="cl-topic" maxLength={200} required value={topic} onChange={e => setTopic(e.target.value)} placeholder="e.g. English conversation, algebra, Telugu vocabulary"/><button disabled={creating || !topic.trim()}>{creating ? "Creating…" : "Start classroom ↗"}</button></form>{error && <p className="cl-error" role="alert">{error}</p>}</main> :
-      <><div className="cl-conversation" aria-label="AI tutor conversation" aria-live="polite">{historyLoading ? <p className="cl-system">Loading conversation…</p> : messages.length === 0 ? <div className="cl-intro"><div className="cl-tutor-orb">✦</div><span className="cl-kicker">MEET YOUR AI LEARNING COMPANION</span><h1>Ready to explore <span className="gradient-text">{current.topic}?</span></h1><p>Ask a question, request a simple explanation, or try a quick quiz. Your conversation will be saved to this session.</p><div className="cl-suggestions">{examples.map(example => <button key={example} disabled={busy} onClick={() => void sendMessage(undefined, example)}>{example} ↗</button>)}</div></div> : <div className="cl-messages">{messages.map(m => <article className={m.role === "user" ? "cl-message cl-user" : "cl-message cl-assistant"} key={m.id}><div className="cl-message-avatar">{m.role === "user" ? student.display_name.slice(0,1).toUpperCase() : "✦"}</div><div className="cl-message-content"><div className="cl-message-meta"><strong>{m.role === "user" ? "You" : "BHASHALEARN Tutor"}</strong><span>{formatTime(m.created_at)}</span></div><div className="cl-bubble">{m.content}</div></div></article>)}{busy && <div className="cl-thinking"><span>✦</span> Tutor is preparing a reply… <i/><i/><i/></div>}</div>}<div ref={bottom}/></div><div className="cl-composer-wrap">{error && <p className="cl-error" role="alert">{error}</p>}{notice && <p className="cl-notice" role="status">{notice}</p>}<form className="cl-composer" onSubmit={event => void sendMessage(event)}><textarea aria-label="Message your AI tutor" value={draft} onChange={e => setDraft(e.target.value)} onKeyDown={keyDown} placeholder="Ask your tutor anything… (Enter to send, Shift+Enter for new line)" maxLength={4000} rows={2} disabled={busy || historyLoading}/><button aria-label="Send message" disabled={!draft.trim() || busy || historyLoading} type="submit">➤</button></form><p className="cl-disclaimer">AI-generated explanations may contain mistakes. Voice and visual lessons arrive in later tasks.</p></div></>}
+      <header className="cl-header"><div className="cl-heading"><button className="cl-menu" aria-label="Toggle session sidebar" aria-expanded={sidebarOpen} onClick={() => setSidebarOpen(!sidebarOpen)}>☰</button><div><small>✦ AI CLASSROOM</small><strong>{showCreate ? "New learning session" : current?.topic || "Choose a topic"}</strong></div></div><div className="cl-header-actions"><span className="cl-live"><i/> TEXT TUTOR</span><label className="cl-language">Tutor language <select value={language} disabled={busy} onChange={e => void updateLanguage(e.target.value as Language)}>{languages.map(lang => <option key={lang} value={lang}>{lang === "mixed" ? "Telugu + English" : lang === "english" ? "English" : "తెలుగు"}</option>)}</select></label><button className="cl-signout" onClick={signOut}>Sign out ↗</button></div>{selected && <SessionModeNav sessionId={selected} active="chat"/>}</header>{invalidSession ? <main className="cl-create"><h1>Session unavailable</h1><p role="alert">This session does not exist or you do not have access to it.</p><Link to="/dashboard">Return to your dashboard</Link></main> : showCreate || !current ? <main className="cl-create"><div className="cl-create-art">✦</div><span className="cl-kicker">YOUR NEXT DISCOVERY STARTS HERE</span><h1>What shall we <span className="gradient-text">learn today?</span></h1><p>Pick a topic and your AI tutor will guide you step by step, in your preferred language.</p><form onSubmit={createSession}><label htmlFor="cl-topic">Learning topic</label><input id="cl-topic" maxLength={200} required value={topic} onChange={e => setTopic(e.target.value)} placeholder="e.g. English conversation, algebra, Telugu vocabulary"/><button disabled={creating || !topic.trim()}>{creating ? "Creating…" : "Start classroom ↗"}</button></form>{error && <p className="cl-error" role="alert">{error}</p>}</main> :
+      <><div className="cl-conversation" aria-label="AI tutor conversation" aria-live="polite">{historyLoading ? <p className="cl-system">Loading conversation…</p> : messages.length === 0 ? <div className="cl-intro"><div className="cl-tutor-orb">✦</div><span className="cl-kicker">MEET YOUR AI LEARNING COMPANION</span><h1>Ready to explore <span className="gradient-text">{current.topic}?</span></h1><p>Ask a question, request a simple explanation, or try a quick quiz. Your conversation will be saved to this session.</p><div className="cl-suggestions">{examples.map(example => <button key={example} disabled={busy} onClick={() => void sendMessage(undefined, example)}>{example} ↗</button>)}</div></div> : <div className="cl-messages">{messages.map(m => <article className={m.role === "user" ? "cl-message cl-user" : "cl-message cl-assistant"} key={m.id}><div className="cl-message-avatar">{m.role === "user" ? student.display_name.slice(0,1).toUpperCase() : "✦"}</div><div className="cl-message-content"><div className="cl-message-meta"><strong>{m.role === "user" ? "You" : "BHASHALEARN Tutor"}</strong><span>{formatTime(m.created_at)}</span></div><div className="cl-bubble">{m.content}</div></div></article>)}{busy && <div className="cl-thinking"><span>✦</span> Tutor is preparing a reply… <i/><i/><i/></div>}</div>}<div ref={bottom}/></div><div className="cl-composer-wrap">{error && <p className="cl-error" role="alert">{error}</p>}{notice && <p className="cl-notice" role="status">{notice}</p>}<form className="cl-composer" onSubmit={event => void sendMessage(event)}><textarea aria-label="Message your AI tutor" value={draft} onChange={e => setDraft(e.target.value)} onKeyDown={keyDown} placeholder="Ask your tutor anything… (Enter to send, Shift+Enter for new line)" maxLength={4000} rows={2} disabled={busy || historyLoading}/><button aria-label="Send message" disabled={!draft.trim() || busy || historyLoading} type="submit">➤</button></form><p className="cl-disclaimer">AI-generated explanations may contain mistakes. Visual lesson descriptions selected for this session can inform tutor replies.</p></div></>}
     </section>
   </div>;
 }

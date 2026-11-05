@@ -19,8 +19,14 @@ LANGUAGE_GUIDANCE = {
 }
 
 
-def build_instruction(topic: str, language: str, level: str, goal: str | None) -> str:
-    return (
+def build_instruction(
+    topic: str,
+    language: str,
+    level: str,
+    goal: str | None,
+    visual_context: str | None = None,
+) -> str:
+    instruction = (
         "You are BHASHALEARN AI, a supportive bilingual Telugu-English tutor. "
         "Teach accurately, with short examples, ask one useful follow-up question, "
         "adapt complexity to the student's level, and follow the language preference "
@@ -31,6 +37,9 @@ def build_instruction(topic: str, language: str, level: str, goal: str | None) -
         f"Student level: {level}\n"
         f"Learning goal: {goal or 'Learn the current topic'}"
     )
+    if visual_context:
+        instruction += "\n\n" + visual_context[:1800]
+    return instruction
 
 
 def generate_tutor_reply(instruction: str, history: list[dict[str, str]]) -> str:

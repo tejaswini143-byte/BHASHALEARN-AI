@@ -8,9 +8,10 @@ from sqlalchemy.orm import Session
 
 from backend.app.api.auth import current_student
 from backend.app.api.sessions import owned_session
-from backend.app.db.models import ChatMessage, Student, StudentPreferences, utc_now
+from backend.app.db.models import ChatMessage, SessionVisualState, Student, StudentPreferences, utc_now
 from backend.app.db.session import get_db
 from backend.app.services.tutor import build_instruction, generate_tutor_reply
+from backend.app.services.visual_lessons import describe_visual_lesson, tutor_visual_reference
 
 router = APIRouter(prefix="/tutor", tags=["AI tutor"])
 
@@ -59,7 +60,19 @@ def tutor_chat(
     level = prefs.learning_level if prefs else "beginner"
     goal = prefs.learning_goal if prefs else None
     language = prefs.preferred_language if prefs else session.language
-    instruction = build_instruction(session.topic, language, level, goal)
+    visual_state = db.get(SessionVisualState, session_id)
+    visual_lesson = (
+        describe_visual_lesson(visual_state.visual_key, visual_state.start_node, visual_state.end_node)
+        if visual_state is not None
+        else None
+    )
+    instruction = build_instruction(
+        session.topic,
+        language,
+        level,
+        goal,
+        visual_context=tutor_visual_reference(visual_lesson),
+    )
     # Use role order as a stable tie-break for legacy messages with equal timestamps.
     # The reverse below turns newest-first order into user-before-assistant chronology.
     role_order = case(
