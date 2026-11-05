@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
-import { ApiError, clearToken, getCurrentStudent, getToken, loginStudent, registerStudent, saveToken, type Student } from "./auth";
+import { ApiError, clearToken, getCurrentStudent, getToken, loginStudent, registerStudent, saveToken } from "./auth";
 
 export function AuthPage({ mode }: { mode: "login" | "register" }) {
   const navigate = useNavigate();
@@ -69,20 +69,4 @@ export function AuthPage({ mode }: { mode: "login" | "register" }) {
   </main>;
 }
 
-export function ProtectedDashboard() {
-  const navigate = useNavigate();
-  const [student, setStudent] = useState<Student | null>(null);
-  const [loading, setLoading] = useState(true);
-  useEffect(() => {
-    let active = true;
-    const token = getToken();
-    if (!token) { navigate("/login", { replace: true }); return; }
-    getCurrentStudent(token).then(value => { if (active) setStudent(value); })
-      .catch(() => { clearToken(); if (active) navigate("/login", { replace: true }); })
-      .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
-  }, [navigate]);
-  if (loading) return <main className="auth-screen"><p className="auth-wait">Loading your learning space…</p></main>;
-  if (!student) return null;
-  return <main className="dashboard-placeholder"><div className="dashboard-top"><Link to="/" className="auth-brand"><span className="brand-symbol">✦</span> BHASHA<span>LEARN</span> AI</Link><button onClick={() => { clearToken(); navigate("/login", { replace: true }); }}>Sign out ↗</button></div><section className="dashboard-welcome glass"><span className="kicker">✦ YOU'RE SIGNED IN</span><h1>Welcome, <span className="gradient-text">{student.display_name}!</span></h1><p>Your account is connected to BHASHALEARN AI. The interactive dashboard is coming in FE-04.</p><div className="dashboard-email">✓ Signed in as {student.email}</div></section></main>;
-}
+export { ProtectedDashboard } from "./Dashboard";
