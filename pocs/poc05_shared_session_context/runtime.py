@@ -28,7 +28,12 @@ class SharedSessionRuntime:
         context = manager.get_session(session_id)
         self._set_tutor_preferences(context.language, context.difficulty)
 
-    def start_lesson(self, topic: str | None = None, objective: str = "") -> SessionInteraction:
+    def start_lesson(
+        self,
+        topic: str | None = None,
+        objective: str = "",
+        practice_question: str | None = None,
+    ) -> SessionInteraction:
         updates = {"current_teaching_step": "introduction"}
         if topic is not None:
             updates["topic"] = topic
@@ -36,10 +41,17 @@ class SharedSessionRuntime:
             updates["lesson_objective"] = objective
         context = self.manager.update_session(self.session_id, **updates)
         visible_input = f"Start lesson: {context.topic}. Objective: {context.lesson_objective or 'understand the key idea'}"
+        if practice_question:
+            visible_input += f" Practice question: {practice_question}"
+        practice_instruction = (
+            f"End with this exact practice question: {practice_question}. Do not replace it with a different question."
+            if practice_question
+            else "End with one practice question."
+        )
         prompt = (
             f"Teach {context.topic!r} to a {context.difficulty.value} learner. Objective: "
             f"{context.lesson_objective or 'understand the key idea'}. Give a concise step-by-step explanation "
-            "with one example and end with one practice question."
+            f"with one example. {practice_instruction}"
         )
         return SessionInteraction(self._ask_and_record(prompt, visible_input, Modality.CHAT))
 

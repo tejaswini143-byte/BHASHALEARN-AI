@@ -41,6 +41,14 @@ Microphone (optional) / PCM WAV file
                           POC-02 Timbre adapter -> WAV
 ```
 
+POC-03's system prompt defines the language contract for every tutor call:
+English mode responds in English; Telugu mode uses Telugu Unicode script; mixed
+mode keeps Telugu words in Telugu script and English terms in Latin script,
+without Romanized Telugu or word-by-word code switching. The prompt also applies
+to initial explanations, follow-ups, hints, corrections, and practice. As with
+all LLM instructions, this guides output but cannot guarantee every generated
+sentence is linguistically correct.
+
 `VoicePipeline` accepts a session ID, WAV path, optional language override, and
 optional practice question/rubric. With a question, the recognized speech is
 evaluated and updates mastery only when POC-04 returns a scored evaluation.
@@ -122,6 +130,76 @@ Use `--save-only` to save without playback. User-selected input files are not
 copied. Microphone audio is written to the operating system temporary folder
 and deleted after processing.
 
+When language changes with `/language`, the same session and mastery remain;
+the next tutor response uses the new mode and the displayed practice question
+is refreshed in the selected language. For fractions, the choices and accepted
+numeric answers remain the same in English, Telugu, and mixed mode. The initial
+lesson prompt includes that exact practice question so the tutor's explanation
+and answer evaluator stay aligned.
+
+## Prisma Telugu/English recognition evaluation
+
+POC-01 sends `model=prisma-v3.0`, `format=codemix`, and a `language_code` to
+`POST /stt/v3`. POC-06 microphone defaults to mono, 16 kHz, 16-bit PCM. POC-01
+validates PCM WAV, non-empty audio, the 10 MB size limit, and the 30-second
+duration limit, but its validator does not reject other PCM sample rates or
+channel counts. For repeatable samples, use clear mono, 16 kHz PCM recordings
+longer than 3 seconds; clip-specific acceptance is still determined by the
+measured output, not model claims.
+
+The current POC-01 auto configuration is `indic-auto`; explicit documented
+codes are `en-IN` and `te-IN`. The repeatable evaluation script uses explicit
+English and Telugu codes and `indic-auto` for the mixed sentence. `codemix`
+preserves language scripts. Prisma v3 provider material describes Telugu and
+English coverage, automatic language identification, and code-mixed speech;
+the exact recordings below must still be reviewed for BHASHALEARN's sentences.
+[Gnani Prisma v3 overview](https://www.gnani.ai/resources/prisma-v3),
+[Prisma v3 model notes](https://www.gnani.ai/resources/blogs/prisma-v3-0-speech-recognition).
+
+Record three separate WAV files containing the printed sample sentences, then
+run:
+
+```cmd
+python -m pocs.poc06_bilingual_voice.evaluate_transcription --english pocs\poc06_bilingual_voice\artifacts\english.wav --telugu pocs\poc06_bilingual_voice\artifacts\telugu.wav --mixed pocs\poc06_bilingual_voice\artifacts\mixed.wav
+```
+
+For each clip the script reports the exact expected phrase, raw Prisma
+transcript (unchanged; no Gemini rewrite), detected language, language code,
+format, WAV properties, latency, Unicode-token WER, and whitespace-normalized
+Unicode-code-point CER. Save these local recordings securely; they are not
+committed. Short exact phrases produce noisy error-rate estimates, so listen to
+the recordings and review every transcript in addition to reading WER/CER.
+
+## Live language and voice check
+
+With the POC `.env` files available and `sounddevice` installed, start:
+
+```cmd
+python -m pocs.poc06_bilingual_voice.run --save-only
+```
+
+Select `telugu` and record `మిశ్రమ భిన్నం అంటే ఏమిటి?`; switch using
+`/language english` and record `What is a mixed fraction?`; then switch to
+`/language mixed` and record `Mixed fraction అంటే ఏమిటి? ఒక example చెప్పండి.`
+For each turn check the raw transcript, mode, tutor language, TTS error or
+generated WAV path, and latency. Ask a follow-up by `/record`, then use
+`/context` to confirm the topic, mastery, and difficulty persist. The
+`--save-only` option suppresses automatic playback; open each printed WAV path
+in an audio player and verify it is audible. These checks need to be performed
+on real clips; the script and offline tests do not claim live accuracy.
+
+## Speech-text preparation
+
+Timbre receives a deterministic speech-only rendering while the original tutor
+response stays unchanged in the result and conversation history. POC-06 removes
+common Markdown headings, emphasis, links, list markers, and code fences;
+converts `1/2` to “1 over 2”, `2 1/4` to “2 and 1 over 4”, and common TeX
+fractions/operators to words; and preserves Telugu Unicode. It does not
+transliterate text. Mixed speech uses separate validated `en-IN`/Kaveri and
+`te-IN`/Suhana requests split by script, then joins PCM frames when formats
+match. This can sound discontinuous at language boundaries and does not detect
+Telugu written in Latin transliteration.
+
 ## Offline simulation and tests
 
 The simulation uses the real pipeline/adapters with mocked Prisma, Gemini, and
@@ -142,9 +220,12 @@ partial success, and invalid-audio short circuiting.
 
 ### Verification status
 
-- POC-06 automated tests and simulation: **not executed in this Codex sandbox**;
-  Python is not on this shell's PATH. Run the commands above in Windows CMD and
-  record their actual results before claiming acceptance.
+- POC-06 baseline checks: user reported **123 tests passed** before the Telugu
+  prompt, STT evaluation, and speech-formatting changes in the current working
+  revision. Re-run the suites below for this revision; this Codex environment
+  currently has no usable Python interpreter. The repository venv launcher
+  refers to a missing Python 3.12 installation, and `uv` could not download a
+  replacement because sandbox network access is blocked.
 - POC-01: implementation uses the documented Prisma request fields and
   existing tests, but its README acceptance checklist does not record a live
   STT call or reviewed English/Telugu/mixed clips.
@@ -165,9 +246,9 @@ partial success, and invalid-audio short circuiting.
   The reported generic error and 0.000 s TTS latency are consistent with the
   verified factory argument mismatch described below. No provider HTTP error
   or provider response was observed in that run.
-- POC-06 after the TTS factory fix and language-segment fallback: **not yet
-  live-verified**. The user must retry and confirm the playable WAV before
-  acceptance.
+- POC-06 live TTS, Telugu response script quality, and the three-clip STT
+  evaluation for this revision: **not yet verified**. Run the live checklist
+  and inspect the generated WAV and raw transcripts before acceptance.
 
 ## Known limitations
 

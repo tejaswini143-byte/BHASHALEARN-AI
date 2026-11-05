@@ -141,7 +141,7 @@ def test_language_switch_persists_and_changes_poc03_prompt():
 @pytest.mark.parametrize("language, prompt_token", [
     (Language.ENGLISH, "English"),
     (Language.TELUGU, "Telugu"),
-    (Language.MIXED, "code-mixing"),
+    (Language.MIXED, "bilingual language"),
 ])
 def test_each_supported_language_persists_into_tutor_context(language, prompt_token):
     manager, context, provider, _, runtime = setup_session(language=language)

@@ -68,6 +68,19 @@ def test_markdown_and_latex_are_cleaned_for_speech():
     assert result == "Answer: 1 over 2 and one half"
 
 
+def test_fraction_text_is_rendered_as_readable_speech():
+    assert speech_text("Compare 1/2 with 2 1/4.") == "Compare 1 over 2 with 2 and 1 over 4."
+
+
+def test_speech_text_preserves_telugu_unicode():
+    text = "మిశ్రమ భిన్నం (Mixed Fraction) అంటే 1/2 కంటే ఎక్కువ కావచ్చు."
+    result = speech_text(text)
+    assert "మిశ్రమ భిన్నం" in result
+    assert "అంటే" in result
+    assert "Mixed Fraction" in result
+    assert "1 over 2" in result
+
+
 def test_factory_reproduces_old_argument_mismatch_and_accepts_config(tmp_path):
     config = TimbreConfig(api_key="test-only")
     with pytest.raises(TypeError, match="expects a TimbreConfig"):

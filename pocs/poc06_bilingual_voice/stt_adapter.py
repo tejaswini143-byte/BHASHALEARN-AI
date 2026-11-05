@@ -25,6 +25,11 @@ class TranscriptionResult:
     detected_language: str | None
     raw_response: dict[str, Any]
 
+    @property
+    def raw_text(self) -> str:
+        """The provider transcript as returned; POC-06 performs no text rewrite."""
+        return self.text
+
 
 class PrismaTranscriptionAdapter:
     """Preserves POC-01's raw provider response and configured indic-auto/codemix request."""

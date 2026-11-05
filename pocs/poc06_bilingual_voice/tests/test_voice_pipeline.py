@@ -148,7 +148,7 @@ def test_empty_transcript_stops_before_tutor_and_tts(tmp_path):
 @pytest.mark.parametrize("language,token", [
     (Language.ENGLISH, "English"),
     (Language.TELUGU, "Telugu"),
-    (Language.MIXED, "code-mixing"),
+    (Language.MIXED, "bilingual language"),
 ])
 def test_selected_language_reaches_tutor_and_context(tmp_path, language, token):
     pipeline, _, context, provider, _, _, audio = make_pipeline(tmp_path, language=language)
@@ -163,6 +163,92 @@ def test_language_override_persists_in_shared_session(tmp_path):
     assert result.language is Language.TELUGU
     assert manager.get_session(context.session_id).language is Language.TELUGU
     assert "Telugu" in provider.calls[0][0]["content"]
+
+
+def test_language_switch_updates_follow_up_mode_without_resetting_mastery_or_history(tmp_path):
+    raw_transcript = "2/4 అంటే ఇదే సమాధానమా?"
+    pipeline, manager, context, provider, stt, _, audio = make_pipeline(
+        tmp_path, transcript=raw_transcript, language=Language.ENGLISH
+    )
+    state = manager.get_session(context.session_id).learning_state
+    state.mastery_score = 0.73
+    state.attempts = 4
+    before_history = len(manager.get_session(context.session_id).conversation_history)
+
+    pipeline.runtime.switch_language(Language.TELUGU)
+    result = pipeline.process_audio(context.session_id, audio)
+    after = manager.get_session(context.session_id)
+
+    assert result.transcript.text == raw_transcript
+    assert result.language is Language.TELUGU
+    assert after.language is Language.TELUGU
+    assert after.learning_state.mastery_score == pytest.approx(0.73)
+    assert after.learning_state.attempts == 4
+    assert len(after.conversation_history) == before_history + 2
+    assert "Telugu Unicode script" in provider.calls[-1][0]["content"]
+    assert "Romanized Telugu" in provider.calls[-1][0]["content"]
+    assert stt.calls
+
+
+def test_tutor_receives_raw_prisma_transcript_without_rewriting(tmp_path):
+    raw = "Mixed fraction అంటే ఏమిటి? ఒక example చెప్పండి."
+    pipeline, manager, context, provider, _, _, audio = make_pipeline(tmp_path, transcript=raw, language=Language.MIXED)
+    result = pipeline.process_audio(context.session_id, audio)
+    assert result.transcript.text == raw
+    assert result.transcript.raw_text == raw
+    assert raw in [turn.content for turn in manager.get_session(context.session_id).conversation_history]
+    assert provider.calls[-1][-1]["content"] == raw
+
+
+def test_original_tutor_response_is_preserved_for_context_and_result(tmp_path):
+    original = "**Answer:** 2 1/4 is greater than 1/2."
+    pipeline, manager, context, _, _, tts, audio = make_pipeline(
+        tmp_path, provider=FakeProvider(responses=[original])
+    )
+    result = pipeline.process_audio(context.session_id, audio)
+    assert result.tutor_response == original
+    assert tts.calls[0][0] == original
+    assert manager.get_session(context.session_id).conversation_history[-1].content == original
+
+
+def test_telugu_adaptive_hint_uses_telugu_prompt_and_updates_once(tmp_path):
+    pipeline, manager, context, provider, _, _, audio = make_pipeline(
+        tmp_path, transcript="3/4", language=Language.TELUGU
+    )
+    objective = ObjectiveQuestion(("2/4", "1/2"))
+    result = pipeline.process_audio(
+        context.session_id, audio, question="1/2 కు సమానమైన భిన్నం ఏది?", objective=objective
+    )
+    state = manager.get_session(context.session_id).learning_state
+    assert result.adaptive_strategy == "hint"
+    assert "Telugu Unicode script" in provider.calls[-1][0]["content"]
+    assert "Do not write Telugu words in Roman letters" in provider.calls[-1][0]["content"]
+    assert state.attempts == 1
+    assert state.hint_usage == 1
+
+
+@pytest.mark.parametrize("language,expected", [
+    (Language.ENGLISH, "Which fraction is equivalent to 1/2: 2/4 or 3/4?"),
+    (Language.TELUGU, "1/2 కు సమానమైన భిన్నం ఏది: 2/4 లేదా 3/4?"),
+    (Language.MIXED, "1/2 కి సమానమైన fraction ఏది: 2/4 లేదా 3/4?"),
+])
+def test_practice_question_is_identical_to_question_used_for_objective_evaluation(language, expected):
+    from pocs.poc06_bilingual_voice.run import _question_for_topic
+
+    question, _reference, objective = _question_for_topic("fractions", language)
+    assert question == expected
+    assert objective is not None
+    assert "2/4" in objective.accepted_answers
+
+
+def test_initial_lesson_prompt_ends_with_exact_practice_question(tmp_path):
+    question = "1/2 కు సమానమైన భిన్నం ఏది: 2/4 లేదా 3/4?"
+    pipeline, manager, context, provider, _, _, _ = make_pipeline(tmp_path, language=Language.TELUGU)
+    pipeline.runtime.start_lesson("fractions", "Equivalent fractions", question)
+    user_prompt = provider.calls[-1][-1]["content"]
+    assert question in user_prompt
+    assert "Do not replace it with a different question" in user_prompt
+    assert question in manager.get_session(context.session_id).conversation_history[0].content
 
 
 def test_follow_up_uses_same_topic_and_bounded_tutor_history(tmp_path):

@@ -27,8 +27,8 @@ class FakeProvider:
 
 @pytest.mark.parametrize("language,expected", [
     ("english", "English"),
-    ("telugu", "Telugu, written naturally in Telugu script"),
-    ("mixed", "natural Telugu-English code-mixing"),
+    ("telugu", "natural Telugu, written in Telugu Unicode script"),
+    ("mixed", "natural Telugu-English bilingual language"),
 ])
 def test_fraction_teaching_languages(language, expected):
     provider = FakeProvider()
@@ -73,6 +73,25 @@ def test_guided_practice_and_kind_correction_prompt():
     prompt = build_system_prompt("english", "beginner").lower()
     assert "hint or a question before revealing" in prompt
     assert "identify the misconception" in prompt
+
+
+def test_telugu_and_mixed_prompts_forbid_romanized_telugu():
+    telugu = build_system_prompt("telugu", "beginner").casefold()
+    mixed = build_system_prompt("mixed", "beginner").casefold()
+    assert "telugu unicode script" in telugu
+    assert "do not write telugu words in roman letters" in telugu
+    assert "age-appropriate telugu" in telugu
+    assert "hints, corrections" in telugu
+    for word in ("ante", "mariyu", "ikkada", "rendu"):
+        assert word in mixed
+    assert "never use romanized telugu" in mixed
+    assert "do not switch language after every word" in mixed
+    assert "practice questions, hints, and error corrections" in mixed
+
+
+def test_english_prompt_requires_natural_english_teaching():
+    prompt = build_system_prompt("english", "beginner")
+    assert "Use natural English sentences, examples, and explanations." in prompt
 
 
 def test_history_is_bounded():

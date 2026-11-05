@@ -43,14 +43,28 @@ def build_pipeline(manager: SessionManager, session_id: str, repo_root: Path = R
     return VoicePipeline(stt, runtime, tts, manager)
 
 
-def _question_for_topic(topic: str) -> tuple[str, str, ObjectiveQuestion | None]:
+def _question_for_topic(
+    topic: str,
+    language: Language | str = Language.ENGLISH,
+) -> tuple[str, str, ObjectiveQuestion | None]:
+    selected_language = Language(language)
     if topic.casefold() in {"fraction", "fractions", "equivalent fractions"}:
+        questions = {
+            Language.ENGLISH: "Which fraction is equivalent to 1/2: 2/4 or 3/4?",
+            Language.TELUGU: "1/2 కు సమానమైన భిన్నం ఏది: 2/4 లేదా 3/4?",
+            Language.MIXED: "1/2 కి సమానమైన fraction ఏది: 2/4 లేదా 3/4?",
+        }
         return (
-            "Which fraction is equivalent to 1/2: 2/4 or 3/4?",
+            questions[selected_language],
             "An equivalent fraction with the same value as one half, such as 2/4.",
             ObjectiveQuestion(("2/4", "4/8", "1/2"), ("equivalent fraction",)),
         )
-    return f"Explain {topic} in your own words and give one example.", f"An accurate explanation of {topic} with an example.", None
+    questions = {
+        Language.ENGLISH: f"Explain {topic} in your own words and give one example.",
+        Language.TELUGU: f"మీ మాటల్లో {topic}ను వివరించి, ఒక ఉదాహరణ ఇవ్వండి.",
+        Language.MIXED: f"మీ మాటల్లో {topic} గురించి explain చేసి ఒక example ఇవ్వండి.",
+    }
+    return questions[selected_language], f"An accurate explanation of {topic} with an example.", None
 
 
 def _show_result(result: VoicePipelineResult, save_only: bool) -> None:
@@ -108,11 +122,11 @@ def main() -> int:
         print(f"Configuration error: {exc}")
         return 1
     runtime = pipeline.runtime
-    question, reference, objective = _question_for_topic(topic)
+    question, reference, objective = _question_for_topic(topic, language)
     recorder = MicrophoneRecorder(voice_config.sample_rate, voice_config.channels, voice_config.max_recording_seconds)
 
     try:
-        intro = runtime.start_lesson(topic, context.lesson_objective)
+        intro = runtime.start_lesson(topic, context.lesson_objective, question)
         print(f"Session {context.session_id} | {language.value} | {topic}")
         print(f"Teacher: {intro.response}")
         print(f"Practice answer prompt: {question}")
@@ -159,11 +173,15 @@ def main() -> int:
                 process_capture(WavAudioInput.from_file(argument), as_answer=True)
             elif command.lower() == "/language":
                 runtime.switch_language(argument)
-                print(f"Language changed to {manager.get_session(context.session_id).language.value}.")
+                selected_language = manager.get_session(context.session_id).language
+                question, reference, objective = _question_for_topic(topic, selected_language)
+                print(f"Language changed to {selected_language.value}; session progress was preserved.")
+                print(f"Practice answer prompt: {question}")
             elif command.lower() == "/topic":
                 topic = argument
-                question, reference, objective = _question_for_topic(topic)
-                response = runtime.start_lesson(topic, f"Understand {topic} and explain an example.")
+                current_language = manager.get_session(context.session_id).language
+                question, reference, objective = _question_for_topic(topic, current_language)
+                response = runtime.start_lesson(topic, f"Understand {topic} and explain an example.", question)
                 print(f"Teacher: {response.response}\nPractice answer prompt: {question}")
             elif command.lower() == "/context":
                 current = manager.get_teaching_context(context.session_id)
@@ -174,11 +192,13 @@ def main() -> int:
                 )
             elif command.lower() == "/reset":
                 runtime.reset()
-                runtime.start_lesson(topic, f"Understand {topic} and explain an example.")
-                print("Session learning state and conversation history reset; language/topic retained.")
-            elif command.lower() == "/start":
-                response = runtime.start_lesson()
+                response = runtime.start_lesson(topic, f"Understand {topic} and explain an example.", question)
                 print(f"Teacher: {response.response}")
+                print("Session learning state and conversation history reset; language/topic retained.")
+                print(f"Practice answer prompt: {question}")
+            elif command.lower() == "/start":
+                response = runtime.start_lesson(practice_question=question)
+                print(f"Teacher: {response.response}\nPractice answer prompt: {question}")
             else:
                 print("Use a supported command. Microphone and WAV input are available through /record and /file.")
         except (AudioInputError, ValueError, RuntimeError) as exc:

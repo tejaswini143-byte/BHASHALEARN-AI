@@ -74,6 +74,8 @@ def speech_text(text: str) -> str:
     result = result.replace("`", "")
 
     # Convert common math markup to words without asking Timbre to voice TeX.
+    result = re.sub(r"(?<![\w/])(\d+)\s+(\d+)\s*/\s*(\d+)(?!\w)", r"\1 and \2 over \3", result)
+    result = re.sub(r"(?<![\w/])(\d+)\s*/\s*(\d+)(?!\w)", r"\1 over \2", result)
     result = re.sub(r"\\frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}", r"\1 over \2", result)
     result = re.sub(r"\\sqrt\s*\{([^{}]*)\}", r"square root of \1", result)
     result = re.sub(r"\\text\s*\{([^{}]*)\}", r"\1", result)

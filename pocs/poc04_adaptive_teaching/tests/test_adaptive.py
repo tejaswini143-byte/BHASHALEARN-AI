@@ -137,7 +137,7 @@ def test_advanced_strong_mastery_gets_challenge():
 @pytest.mark.parametrize("language, expected", [
     (Language.ENGLISH, "English"),
     (Language.TELUGU, "Telugu"),
-    (Language.MIXED, "code-mixing"),
+    (Language.MIXED, "bilingual language"),
 ])
 def test_teaching_prompt_supports_each_language(language, expected):
     subject = state(language=language)
