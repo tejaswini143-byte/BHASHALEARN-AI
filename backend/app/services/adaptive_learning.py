@@ -4,7 +4,11 @@ from dataclasses import dataclass
 
 
 def normalize_topic(topic: str) -> str:
-    return " ".join(re.sub(r"\s+", " ", topic.strip().lower()).split())[:200]
+    key = " ".join(re.sub(r"\s+", " ", topic.strip().lower()).split())[:200]
+    key = key.replace("’", "'").replace("'", "")
+    if key in {"dijkstras shortest path", "dijkstra algorithm", "dijkstras algorithm"}:
+        return "dijkstra shortest path"
+    return key
 
 
 @dataclass(frozen=True)
