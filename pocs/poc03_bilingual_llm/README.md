@@ -80,18 +80,32 @@ adaptation, switching languages, follow-up context, guided practice and
 correction instructions, bounded history, missing credentials, and provider
 errors.
 
-### Executed results
+### Live Gemini verification (2026-11-05)
 
-- Repository root: `11 passed` using the POC-02 virtual environment and
-  `python -m pytest -q pocs/poc03_bilingual_llm/tests`.
-- POC directory: `11 passed` using the same environment and
-  `python -m pytest -q tests`.
-- Live English, Telugu, and mixed provider demonstrations: **not run**. No
-  `pocs/poc03_bilingual_llm/.env` exists and the process environment has no
-  `LLM_API_KEY`. Add a provider-authorized key to the local POC `.env` to
-  enable live evaluation. No Gnani speech key was treated as LLM access.
-- Test results prove orchestration and prompt construction with a deterministic
-  fake provider. They do not prove live translation quality or teaching quality.
+- The local `pocs/poc03_bilingual_llm/.env` was present and readable. Its
+  `LLM_API_KEY` value was present (the value was not displayed); the configured
+  endpoint host was `generativelanguage.googleapis.com`, model was
+  `gemini-3.5-flash-lite`, and timeout was 60 seconds. Git confirmed that this
+  `.env` is ignored and is not tracked.
+- Google's Gemini model catalog lists `gemini-3.5-flash-lite` as a stable
+  Gemini API model. This confirms the model ID exists in the catalog, but the
+  account's access could not be confirmed. The configured model was not changed.
+- A direct live English connectivity request failed before a response with the
+  exact client error `Unable to connect to the remote server`. The environment
+  therefore did not establish Gemini API connectivity. No response was
+  received, so live English teaching, follow-up/context, Telugu, mixed-language
+  teaching, language switching, and response latency remain unverified.
+- This shell had no `python` executable on `PATH`. The existing POC-02 virtual
+  environment could not start because its base Python executable returned
+  `Access is denied`. Provisioning an isolated Python with `uv` also failed:
+  the sandbox denied the download connection with `tcp connect error` and
+  Windows socket error `10013`. Consequently, the POC-03 pytest suite was not
+  run in this verification session, and the app's `python-dotenv` loader was
+  not executable here. The `.env` file's values were read and checked without
+  displaying the key.
+- An earlier run recorded 11 passing offline POC-03 tests for orchestration
+  and prompt construction using a deterministic fake provider. Those results
+  do not establish live Gemini connectivity or translation and teaching quality.
 
 ## Limitations
 
@@ -102,3 +116,14 @@ errors.
 - Language output quality and teaching accuracy need human review.
 - There is no streaming, retrieval, persistent learner profile, or shared
   session service in this POC.
+
+### Windows CMD verification (2026-11-05)
+
+- Python 3.12.10 was available in normal Windows CMD.
+- POC-03 automated tests passed: 11 passed in 0.47 seconds.
+- Google's Gemini API endpoint was reachable from Windows CMD.
+- The POC-03 interactive CLI successfully generated live Gemini responses to the inputs `hlo` and `english , telugu , hindi`.
+- These results confirm basic live LLM connectivity and response generation outside the Codex sandbox.
+- The earlier connectivity and Python execution failures were specific to the Codex sandbox environment.
+- Dedicated English, Telugu, mixed-language, follow-up/context, language-switching, and response-latency evaluations remain pending.
+- The Gemini API key was not displayed or committed.
