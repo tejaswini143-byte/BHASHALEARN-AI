@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/bhashalearn"
     jwt_secret_key: str = ""
     access_token_expire_minutes: int = 30
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.5-flash"
 
     model_config = SettingsConfigDict(
         env_prefix="BHASHALEARN_",
