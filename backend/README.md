@@ -1,7 +1,7 @@
-# BE-01 — FastAPI backend foundation
+# BHASHALEARN AI Backend
 
-This is the first backend task. It deliberately does not connect to PostgreSQL,
-authenticate students, or call AI providers; those come in later BE tasks.
+FastAPI backend for authenticated student learning, PostgreSQL-backed sessions,
+progress, and bilingual Gemini tutoring.
 
 ## Windows CMD setup
 
@@ -45,7 +45,27 @@ your local development database before applying migrations with:
 python -m alembic -c backend/alembic.ini upgrade head
 ```
 
+## Gemini tutoring
+
+The authenticated classroom uses the existing endpoint
+`POST /api/v1/tutor/sessions/{session_id}/chat`. Set these variables in the
+repository-root `.env` for live Gemini responses:
+
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `BHASHALEARN_GEMINI_API_KEY` | Server-side Gemini API credential | Required for live tutoring |
+| `BHASHALEARN_GEMINI_MODEL` | Gemini `generateContent` model ID | `gemini-2.5-flash` |
+
+Placeholders are in `backend/.env.example`. Keep the key in the backend
+environment; never put it in frontend `VITE_*` variables, print it, or commit
+the root `.env`. The backend sends the credential in the provider request
+header. With no key configured, the chat endpoint returns HTTP 503. Provider
+failures, timeouts, and invalid responses return a generic HTTP 502. A failed
+provider request does not save either half of the attempted chat turn.
+
+Unit and integration tests mock the provider and do not make live Gemini calls.
+
 ## Test scope
 
-The BE-01 tests check health endpoints, OpenAPI metadata, and 404 behavior.
-No external services or API keys are required.
+Backend tests use isolated SQLite databases and mocked external providers. They
+do not require live Gemini credentials or network access.

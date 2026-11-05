@@ -23,7 +23,7 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
       headers: { "Content-Type": "application/json", ...options.headers },
     });
   } catch {
-    throw new ApiError(0, "Cannot connect to the backend. Start FastAPI on port 8000 and try again.");
+    throw new ApiError(0, "Cannot connect to the backend. Check that the configured FastAPI service is running and try again.");
   }
   const body: unknown = await response.json().catch(() => null);
   if (!response.ok) {

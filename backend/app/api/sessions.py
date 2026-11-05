@@ -4,7 +4,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import select
+from sqlalchemy import case, select
 from sqlalchemy.orm import Session
 
 from backend.app.api.auth import current_student
@@ -132,10 +132,15 @@ def list_messages(
     offset: int = Query(0, ge=0),
 ):
     owned_session(session_id, student, db)
+    role_order = case(
+        (ChatMessage.role == "user", 0),
+        (ChatMessage.role == "assistant", 1),
+        else_=2,
+    )
     stmt = (
         select(ChatMessage)
         .where(ChatMessage.session_id == session_id)
-        .order_by(ChatMessage.created_at.asc(), ChatMessage.id.asc())
+        .order_by(ChatMessage.created_at.asc(), role_order.asc(), ChatMessage.id.asc())
         .offset(offset).limit(limit)
     )
     return db.scalars(stmt).all()
