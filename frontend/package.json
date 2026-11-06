@@ -4,9 +4,13 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "dev": "vite --configLoader runner",
+    "build": "tsc -b && vite build --configLoader runner",
+    "preview": "vite preview",
+    "test": "node --test tests/*.test.mjs",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed",
+    "test:e2e:report": "playwright show-report"
   },
   "dependencies": {
     "react": "^19.0.0",
@@ -14,6 +18,7 @@
     "react-router-dom": "^7.0.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.1",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.4.0",

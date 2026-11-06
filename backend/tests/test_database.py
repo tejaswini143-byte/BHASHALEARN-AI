@@ -37,9 +37,39 @@ def test_alembic_upgrade_and_downgrade(tmp_path, monkeypatch):
     cfg = Config("backend/alembic.ini")
     command.upgrade(cfg, "head")
     engine = create_engine(f"sqlite:///{db_file.as_posix()}")
-    assert {"students", "courses", "learning_sessions", "chat_messages", "learning_progress"}.issubset(inspect(engine).get_table_names())
+    assert {"students", "courses", "learning_sessions", "chat_messages", "learning_progress", "documents", "document_pages"}.issubset(inspect(engine).get_table_names())
     engine.dispose()
     command.downgrade(cfg, "base")
     engine = create_engine(f"sqlite:///{db_file.as_posix()}")
     assert "students" not in inspect(engine).get_table_names()
+    assert "documents" not in inspect(engine).get_table_names()
     engine.dispose()
+
+
+def test_document_migration_upgrade_downgrade_and_reupgrade(tmp_path, monkeypatch):
+    db_file = tmp_path / "documents-migration.db"
+    monkeypatch.setenv("BHASHALEARN_DATABASE_URL", f"sqlite:///{db_file.as_posix()}")
+    cfg = Config("backend/alembic.ini")
+    command.upgrade(cfg, "0006_adaptive_learning_memory")
+    engine = create_engine(f"sqlite:///{db_file.as_posix()}")
+    before = set(inspect(engine).get_table_names())
+    assert "learning_assessment_attempts" in before
+    assert "documents" not in before
+    engine.dispose()
+
+    command.upgrade(cfg, "head")
+    engine = create_engine(f"sqlite:///{db_file.as_posix()}")
+    inspector = inspect(engine)
+    assert {"documents", "document_pages", "learning_assessment_attempts", "learning_progress"}.issubset(inspector.get_table_names())
+    assert "ix_documents_student_id" in {item["name"] for item in inspector.get_indexes("documents")}
+    assert "ix_document_pages_document_id" in {item["name"] for item in inspector.get_indexes("document_pages")}
+    assert {item["name"] for item in inspector.get_unique_constraints("document_pages")} == {"uq_document_pages_document_page"}
+    engine.dispose()
+
+    command.downgrade(cfg, "0006_adaptive_learning_memory")
+    engine = create_engine(f"sqlite:///{db_file.as_posix()}")
+    remaining = set(inspect(engine).get_table_names())
+    assert "documents" not in remaining and "document_pages" not in remaining
+    assert {"students", "learning_progress", "learning_assessment_attempts"}.issubset(remaining)
+    engine.dispose()
+    command.upgrade(cfg, "head")

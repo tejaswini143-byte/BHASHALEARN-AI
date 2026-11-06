@@ -17,6 +17,14 @@ python -m uvicorn backend.app.main:app --reload
 Visit http://127.0.0.1:8000/docs for the API documentation and
 http://127.0.0.1:8000/api/v1/health for the health endpoint.
 
+## Private PDF documents
+
+The authenticated document API stores uploaded PDFs outside public static assets
+and extracts page-level text locally. Configure `BHASHALEARN_DOCUMENT_STORAGE_DIR`
+and the `BHASHALEARN_DOCUMENT_MAX_*` limits using the placeholders in
+`backend/.env.example`. See [ADV-01 PDF document processing](../docs/ADV-01-pdf-document-processing.md)
+for endpoint details, migration safety, and verification instructions.
+
 Expected health response:
 
 ```json

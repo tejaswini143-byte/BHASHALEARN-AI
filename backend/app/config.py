@@ -14,6 +14,11 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 30
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
+    document_storage_dir: str = "backend/storage/documents"
+    document_max_upload_bytes: int = 10 * 1024 * 1024
+    document_max_pages: int = 100
+    document_max_extracted_characters: int = 2_000_000
+    document_max_filename_length: int = 255
 
     model_config = SettingsConfigDict(
         env_prefix="BHASHALEARN_",

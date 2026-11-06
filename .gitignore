@@ -2,6 +2,7 @@
 .env.*
 !.env.example
 .venv/
+.venv-e2e/
 venv/
 __pycache__/
 .pytest_cache/
@@ -11,3 +12,8 @@ __pycache__/
 *.m4a
 .DS_Store
 backend_be02_test.db
+backend/storage/documents/
+frontend/test-results/
+frontend/playwright-report/
+frontend/playwright/.cache/
+test-data/

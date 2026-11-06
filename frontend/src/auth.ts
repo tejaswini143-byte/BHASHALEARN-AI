@@ -13,14 +13,19 @@ export class ApiError extends Error {
 function describeError(detail: unknown): string {
   if (typeof detail === "string") return detail;
   if (Array.isArray(detail)) return detail.map(item => typeof item?.msg === "string" ? item.msg : "Invalid field").join("; ");
+  if (detail && typeof detail === "object" && "message" in detail && typeof detail.message === "string") return detail.message;
   return "Request failed. Please try again.";
+}
+export function requestHeaders(options: RequestInit = {}): HeadersInit {
+  const isForm = typeof FormData !== "undefined" && options.body instanceof FormData;
+  return { ...(isForm ? {} : { "Content-Type": "application/json" }), ...options.headers };
 }
 export async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   let response: Response;
   try {
     response = await fetch(API + path, {
       ...options,
-      headers: { "Content-Type": "application/json", ...options.headers },
+      headers: requestHeaders(options),
     });
   } catch {
     throw new ApiError(0, "Cannot connect to the backend. Check that the configured FastAPI service is running and try again.");

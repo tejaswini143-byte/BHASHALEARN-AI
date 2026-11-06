@@ -2,7 +2,7 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Integer, Float, String, Text, UniqueConstraint
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, Float, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
@@ -147,3 +147,44 @@ class SessionVisualState(Base):
     start_node: Mapped[str | None] = mapped_column(String(1))
     end_node: Mapped[str | None] = mapped_column(String(1))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+
+class Document(Base):
+    """Private PDF metadata owned by one student."""
+    __tablename__ = "documents"
+    __table_args__ = (
+        CheckConstraint("file_size_bytes >= 0", name="ck_documents_file_size_nonnegative"),
+        CheckConstraint("page_count IS NULL OR page_count >= 0", name="ck_documents_page_count_nonnegative"),
+        CheckConstraint("processing_status IN ('processed', 'text_extraction_unavailable', 'failed')", name="ck_documents_processing_status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    student_id: Mapped[str] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), index=True, nullable=False)
+    original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    storage_key: Mapped[str] = mapped_column(String(40), unique=True, nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(64), default="application/pdf", nullable=False)
+    file_size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    page_count: Mapped[int | None] = mapped_column(Integer)
+    processing_status: Mapped[str] = mapped_column(String(40), nullable=False)
+    processing_error_code: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+    pages: Mapped[list["DocumentPage"]] = relationship(back_populates="document", cascade="all, delete-orphan")
+
+
+class DocumentPage(Base):
+    """Page-level extracted text for a private document."""
+    __tablename__ = "document_pages"
+    __table_args__ = (
+        UniqueConstraint("document_id", "page_number", name="uq_document_pages_document_page"),
+        CheckConstraint("page_number >= 1", name="ck_document_pages_page_number_positive"),
+        CheckConstraint("character_count >= 0", name="ck_document_pages_character_count_nonnegative"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    document_id: Mapped[str] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), index=True, nullable=False)
+    page_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    extracted_text: Mapped[str] = mapped_column(Text, nullable=False)
+    character_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    document: Mapped[Document] = relationship(back_populates="pages")
