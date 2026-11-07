@@ -7,6 +7,16 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react()],
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (id.includes("/node_modules/three/")) return "vendor-three";
+            if (id.includes("/node_modules/@react-three/")) return "vendor-react-three";
+          },
+        },
+      },
+    },
     server: {
       port: 5173,
       proxy: { "/api": apiTarget, "/health": apiTarget },
