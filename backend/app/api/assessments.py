@@ -53,6 +53,8 @@ class AnswerResponse(BaseModel):
     difficulty: str
     strategy: str
     recommendation: str
+    reason: str
+    revision_recommended: bool
     replayed: bool = False
 
 
@@ -79,6 +81,20 @@ def _progress_for(student_id: str, topic_key: str, topic: str, db: Session) -> L
         db.add(progress)
         db.flush()
     return progress
+
+
+def _recent_outcomes(student_id: str, topic_key: str, db: Session) -> tuple[bool, ...]:
+    attempts = db.scalars(
+        select(LearningAssessmentAttempt.is_correct)
+        .where(
+            LearningAssessmentAttempt.student_id == student_id,
+            LearningAssessmentAttempt.normalized_topic_key == topic_key,
+            LearningAssessmentAttempt.is_correct.is_not(None),
+        )
+        .order_by(LearningAssessmentAttempt.answered_at.desc(), LearningAssessmentAttempt.id.desc())
+        .limit(5)
+    ).all()
+    return tuple(bool(value) for value in reversed(attempts))
 
 
 @router.post("/sessions/{session_id}/issue", response_model=IssueResponse, status_code=status.HTTP_201_CREATED)
@@ -147,13 +163,15 @@ def submit_answer(
             .where(LearningProgress.student_id == student.id, LearningProgress.normalized_topic_key == attempt.normalized_topic_key)
             .order_by(LearningProgress.updated_at.desc(), LearningProgress.id.asc())
         )
-        adaptation = recommend(progress.evidence_attempts if progress else 0, progress.correct_attempts if progress else 0, progress.incorrect_attempts if progress else 0)
+        adaptation = recommend(progress.evidence_attempts if progress else 0, progress.correct_attempts if progress else 0, progress.incorrect_attempts if progress else 0,
+                                _recent_outcomes(student.id, attempt.normalized_topic_key, db))
         return AnswerResponse(
             attempt_id=attempt.id, topic=attempt.topic, answer=answer, is_correct=attempt.is_correct,
             ambiguous=attempt.is_correct is None, feedback=attempt.feedback or "", mastery_score=progress.mastery_score if progress and progress.evidence_attempts else None,
             evidence_attempts=progress.evidence_attempts if progress else 0, correct_attempts=progress.correct_attempts if progress else 0,
             incorrect_attempts=progress.incorrect_attempts if progress else 0, difficulty=adaptation.difficulty,
-            strategy=adaptation.strategy, recommendation=adaptation.recommendation, replayed=True,
+            strategy=adaptation.strategy, recommendation=adaptation.recommendation,
+            reason=adaptation.reason, revision_recommended=adaptation.revision_recommended, replayed=True,
         )
 
     options = json.loads(attempt.options_json)
@@ -182,7 +200,8 @@ def submit_answer(
         progress.updated_at = attempt.answered_at
     db.commit()
     db.refresh(progress)
-    adaptation = recommend(progress.evidence_attempts, progress.correct_attempts, progress.incorrect_attempts)
+    adaptation = recommend(progress.evidence_attempts, progress.correct_attempts, progress.incorrect_attempts,
+                            _recent_outcomes(student.id, attempt.normalized_topic_key, db))
     return AnswerResponse(
         attempt_id=attempt.id, topic=attempt.topic, answer=answer, is_correct=attempt.is_correct,
         ambiguous=attempt.is_correct is None, feedback=attempt.feedback or "",
@@ -190,6 +209,7 @@ def submit_answer(
         evidence_attempts=progress.evidence_attempts, correct_attempts=progress.correct_attempts,
         incorrect_attempts=progress.incorrect_attempts, difficulty=adaptation.difficulty,
         strategy=adaptation.strategy, recommendation=adaptation.recommendation,
+        reason=adaptation.reason, revision_recommended=adaptation.revision_recommended,
     )
 
 

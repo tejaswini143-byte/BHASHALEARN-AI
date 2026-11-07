@@ -52,7 +52,7 @@ def test_preferences_default_and_update(client):
     headers = auth(client, "two@example.com")
     endpoint = "/api/v1/students/me/preferences"
     assert client.get(endpoint, headers=headers).json() == {
-        "preferred_language": "mixed", "learning_level": "beginner", "learning_goal": None
+        "preferred_language": "mixed", "learning_level": "beginner", "learning_pace": "steady", "learning_goal": None
     }
     result = client.put(endpoint, headers=headers, json={
         "preferred_language": "telugu", "learning_level": "intermediate", "learning_goal": "  Speak English confidently  "
@@ -77,3 +77,44 @@ def test_preferences_validation(client):
     endpoint = "/api/v1/students/me/preferences"
     assert client.put(endpoint, headers=headers, json={"preferred_language": "spanish"}).status_code == 422
     assert client.put(endpoint, headers=headers, json={"learning_level": "expert"}).status_code == 422
+    assert client.put(endpoint, headers=headers, json={"learning_pace": "instant"}).status_code == 422
+
+
+def test_learning_profile_combines_preferences_and_minimal_evidence(client):
+    from backend.app.services.assessment_bank import BANK
+
+    headers = auth(client, "learning-profile@example.com")
+    base = "/api/v1/students/me"
+    updated = client.put(base + "/preferences", headers=headers, json={
+        "preferred_language": "telugu", "learning_level": "beginner", "learning_pace": "slow",
+    })
+    assert updated.status_code == 200
+    course = client.post("/api/v1/courses", headers=headers, json={"title": "Mathematics", "language": "mixed"}).json()
+    session = client.post("/api/v1/sessions", headers=headers, json={
+        "topic": "Equivalent Fractions", "language": "mixed", "course_id": course["id"],
+    }).json()
+    client.post(f"/api/v1/sessions/{session['id']}/messages", headers=headers, json={
+        "role": "user", "content": "PRIVATE_CONVERSATION_TEXT",
+    })
+    for question in BANK["equivalent fractions"]:
+        issued = client.post(f"/api/v1/assessments/sessions/{session['id']}/issue", headers=headers).json()
+        wrong = next(choice for choice in issued["options"] if choice != question.answer)
+        response = client.post(f"/api/v1/assessments/{issued['attempt_id']}/answer", headers=headers, json={"answer": wrong})
+        assert response.status_code == 200
+
+    profile_response = client.get(base + "/learning-profile", headers=headers)
+    assert profile_response.status_code == 200
+    profile = profile_response.json()
+    assert profile["preferred_language"] == "telugu"
+    assert profile["learning_pace"] == "slow"
+    assert profile["proficiencies"][0]["subject"] == "Mathematics"
+    assert profile["proficiencies"][0]["difficulty"] == "beginner"
+    assert profile["proficiencies"][0]["strategy"] == "misconception_review"
+    assert profile["recent_activity"][0]["outcome"] == "incorrect"
+    assert "revision_topics" in profile
+    assert "PRIVATE_CONVERSATION_TEXT" not in profile_response.text
+    assert client.get("/api/v1/memories", headers=headers).json() == []
+    assert client.get(base + "/learning-profile").status_code == 401
+    other_headers = auth(client, "other-learning-profile@example.com")
+    assert client.get(base + "/learning-profile", headers=other_headers).json()["proficiencies"] == []
+    assert client.get(base + "/learning-profile", headers=other_headers).json()["recent_activity"] == []

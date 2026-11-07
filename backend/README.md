@@ -110,6 +110,24 @@ tutor. **Listen / replay** requests speech for already persisted assistant
 text only; it never resends the student turn to Gemini. Browser playback can be
 blocked by autoplay policy; use the audio player's Play control in that case.
 
+## ADV-07 adaptive learning and memory
+
+`GET /api/v1/students/me/learning-profile` returns a compact profile derived
+from the authenticated student's preferences and objective assessment evidence.
+Preferences include Telugu, English, or mixed instruction and a self-selected
+slow, steady, or fast pace. `PATCH /api/v1/memories/{id}` corrects a student's
+own curated learning note; existing `DELETE` behavior removes it. The profile
+contains no conversation text. Adaptation decisions include an explanation and
+use objective quiz evidence, recent mistake streaks, and a revision signal.
+The shared session context also carries learning pace for future tutor use.
+
+The policy and integration contracts are documented in
+[`docs/ADV-07-adaptive-learning.md`](../docs/ADV-07-adaptive-learning.md).
+Migration `0009_learning_pace` follows ADV-02's `0008_document_embeddings`.
+That ADV-02 migration is not present in this worktree, so integrate ADV-02
+before ADV-07 and apply the combined chain only through the normal reviewed
+deployment process. No migration has been applied to a database.
+
 ## Test scope
 
 Backend tests use isolated SQLite databases and mocked external providers. They
