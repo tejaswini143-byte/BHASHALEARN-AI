@@ -1,5 +1,6 @@
 """Deterministic tests for cross-mode session and visual context synchronization."""
 from datetime import datetime, timezone
+import json
 
 import pytest
 from fastapi.testclient import TestClient
@@ -173,7 +174,8 @@ def test_visual_context_is_added_to_only_its_gemini_session(client, monkeypatch)
     assert "not an image supplied to you" in calls[0][0]
     assert "Equivalent Fractions" not in calls[1][0]
     assert LANGUAGE_GUIDANCE["mixed"] in calls[0][0]
-    assert calls[0][1][-1] == {"role": "user", "content": "Explain this diagram"}
+    assert calls[0][1][-1]["role"] == "user"
+    assert json.loads(calls[0][1][-1]["content"])["question"] == "Explain this diagram"
 
 
 def test_existing_chat_and_session_contracts_remain_compatible(client, monkeypatch):
@@ -182,7 +184,12 @@ def test_existing_chat_and_session_contracts_remain_compatible(client, monkeypat
     monkeypatch.setattr("backend.app.api.tutor.generate_tutor_reply", lambda *_args: "A whole split into two equal parts.")
     response = client.post(f"/api/v1/tutor/sessions/{session_id}/chat", headers=headers, json={"message": "What is one half?"})
     assert response.status_code == 200
-    assert set(response.json()) == {"session_id", "reply", "language", "learning_level"}
+    assert set(response.json()) == {
+        "session_id", "reply", "language", "learning_level", "citations", "grounded", "retrieval_used",
+    }
+    assert response.json()["citations"] == []
+    assert response.json()["grounded"] is False
+    assert response.json()["retrieval_used"] is False
     messages = client.get(f"/api/v1/sessions/{session_id}/messages", headers=headers)
     assert [(item["role"], item["content"]) for item in messages.json()] == [
         ("user", "What is one half?"), ("assistant", "A whole split into two equal parts."),

@@ -1,99 +1,84 @@
-# ADV-03 - RAG teaching preparation
+# ADV-03 - RAG teaching integration
 
-## Scope and status
+## Integrated behavior
 
-This worktree adds a storage- and provider-independent tutoring orchestration
-contract in `backend/app/services/rag_tutor.py`. It does not connect the
-authenticated chat endpoint to retrieval, call a vector database, access private
-documents, or claim that live RAG works. No database models or migrations were
-added.
+The authenticated chat route `POST /api/v1/tutor/sessions/{session_id}/chat`
+now uses ADV-02's in-process vector search through
+`VectorPassageRetriever` in `backend/app/services/rag_tutor.py`. It verifies the
+session with `owned_session` before retrieval and passes the authenticated
+student ID to retrieval. The adapter checks for that student's ready index,
+embeds the current question as `RETRIEVAL_QUERY`, calls `search_documents`,
+and maps ADV-02 hits into typed passages and citations.
 
-The current chat route in `backend/app/api/tutor.py` authenticates a student and
-uses `owned_session(session_id, student, db)` before it builds the existing
-Gemini request and persists the turn. A future integration should invoke RAG
-only after that ownership check and should preserve the existing provider
-failure behavior (no partial chat turn persisted).
+ADV-02 scores are cosine similarity in `[-1, 1]`, where larger is more
+relevant. ADV-03 currently accepts scores at or above `0.35`, caps prompt
+context to five passages, and drops blank text. The SQL search scopes chunks,
+index state, generations, and documents to the same student; it selects only
+the active ready generation for processed documents. Document deletion
+cascades to index state, generations, and chunks.
 
-## ADV-02 adapter contract required
+The chat response retains `session_id`, `reply`, `language`, and
+`learning_level`, and adds `citations`, `grounded`, and `retrieval_used`.
+Each citation contains its generated citation ID, document ID/title, and
+one-based page number. The assistant reply includes a Sources footer for only
+the citation IDs it emitted that match retrieved results. Unknown citation
+markers are removed. `grounded` is true only when the answer cites a valid
+retrieved passage; this is citation validation, not a formal entailment proof.
 
-ADV-02 can provide a small adapter implementing the `PassageRetriever` protocol
-from `backend.app.services.rag_tutor`:
+When no ready student-owned index exists, no query embedding request is made.
+When search returns no passage meeting the threshold, the existing Gemini tutor
+answers from general knowledge with no document citation. If embedding or
+generation fails, the endpoint returns an error before persisting either side
+of the chat turn. Retrieved PDF text is JSON-encoded as user content and
+explicitly marked as untrusted reference material in the system instructions.
 
-```python
-class PassageRetriever(Protocol):
-    def retrieve(self, request: RetrievalRequest) -> RetrievalResult: ...
-```
+## Score calibration and limitations
 
-The request fields are:
+The `0.35` cutoff has the correct direction for ADV-02 cosine similarity, but
+is still provisional. The mock tests verify mapping and cutoff behavior; they
+do not measure retrieval quality on a representative authorized corpus. Tune
+the cutoff with a reviewed evaluation set before treating it as calibrated.
 
-- `student_id`: the authenticated student ID, supplied by the API boundary;
-- `query`: the student's current question;
-- `topic`: the owned learning session's topic;
-- `limit`: requested maximum (currently 5).
+Prompt instructions and citation-ID validation reduce citation fabrication,
+but do not prove that every sentence is entailed by its cited page. Provider
+output grounding should be evaluated separately before making stronger
+grounding claims.
 
-The result is `RetrievalResult(passages=tuple[RetrievedPassage, ...])`. Every
-passage must carry `passage_id`, `document_id`, `student_id`, `document_title`,
-one-based `page_number`, plain `text`, and a numeric `score`. Scores must be
-normalized so larger means more relevant; the current orchestration default
-acceptance threshold is `0.35`. Retrieval must apply owner filtering in its
-storage query using the request's `student_id`, and must return only pages from
-documents owned by that student. The service independently rejects any result
-whose student ID differs from the authenticated ID. The adapter must not expose
-storage keys, filesystem paths, other students' document metadata, or raw
-database/vector records.
+## Configuration and database prerequisites
 
-The existing ADV-01 `Document` / `DocumentPage` models contain the owner ID,
-document ID, filename, page number, and extracted text. ADV-02 should map its
-chunk metadata back to this source metadata. Chunking and vector schema are
-intentionally unspecified here because ADV-02 is still in progress.
+ADV-02 migration `0008_document_embeddings` and pgvector are required in the
+database used by the application. No migration was run for this integration.
+Before PostgreSQL tests, a read-only check confirmed the isolated database was
+at revision `0008_document_embeddings` with pgvector 0.8.7 and the dedicated
+`bhashalearn_adv02` test role. The check also verified the required table
+privileges. The tests used that isolated database only.
 
-## Orchestration and citations
+Search embeds the query through `GeminiEmbeddingProvider`; tutoring generates
+the answer through the existing Gemini tutor. Live connectivity and configured
+credentials were not tested. The embedding provider uses
+`BHASHALEARN_GEMINI_EMBEDDING_API_KEY` when configured and falls back to
+`BHASHALEARN_GEMINI_API_KEY`; answer generation uses the existing
+`BHASHALEARN_GEMINI_API_KEY`.
 
-`orchestrate_tutoring(...)` takes the authenticated student ID, the already
-verified session owner ID, question, topic, language, level, a retriever, and a
-generator callback. It checks session ownership before retrieval, asks the
-retriever with that same student ID, rejects cross-owner passages, drops weak
-or blank matches, and caps context to five passages. The generator contract is
-`Callable[[GenerationRequest], GeneratedAnswer]`. Its response contains answer
-text and zero or more citation IDs (`S1`, `S2`, ...). Inline markers are also
-recognized. Only IDs tied to selected passages are kept; unknown markers are
-removed. The returned `TeachingResponse` contains the answer, citations,
-whether any retrieval was used, and whether the answer cited retrieved evidence.
+## Verification performed
 
-Retrieved text is inserted as JSON-encoded user data, while the system
-instruction explicitly treats it as untrusted evidence and forbids following
-embedded instructions. The system instruction requests Telugu Unicode for
-Telugu words, retains useful English technical terms, and avoids Romanized
-Telugu. For empty or low-relevance retrieval, the generator receives an
-explicit general-knowledge fallback notice and no document citation is added.
+- RAG and chat-boundary tests use mocked providers, mocked vector-search
+  results, and a fake database session.
+- Backend suite excluding `test_database.py`: 134 passed. This includes all
+  three PostgreSQL integration tests. The migration test module was excluded
+  because migrations were prohibited. Other backend SQLite tests use pytest's
+  isolated temp database.
+- The focused PostgreSQL RAG test used synthetic student/document/page rows,
+  deterministic embeddings, and a mocked answer generator. It verified page
+  citation metadata, owner filtering, active-generation deactivation, document
+  deletion, and no chat-message persistence after generation failure. Test
+  cleanup and a separate read-only check confirmed zero synthetic rows remain.
+- Frontend tests: 10 passed; production build succeeded.
+- No real student PDFs, production credentials, shared development database,
+  E2E database, or live Gemini endpoint were used.
 
-Citation attribution verifies that a citation names a result returned for this
-student; it cannot prove that every generated factual claim is supported. A
-production provider integration should preserve the citation-ID contract and
-add provider-specific output parsing/grounding evaluation as needed.
-
-## Dependencies and pending integration
-
-- ADV-02 must finish and publish a stable retrieval adapter over private
-  document chunks, with owner-filtered search and source metadata.
-- Confirm the retrieval score scale and tune `DEFAULT_MIN_SCORE` against real,
-  appropriately authorized evaluation data before enabling retrieval.
-- A future integration must inject a concrete retriever and adapt the existing
-  Gemini client to `GenerationRequest` / `GeneratedAnswer`.
-- The authenticated tutor route must call orchestration only after its existing
-  session ownership check, return citation metadata in its API response, and
-  persist the final formatted assistant answer consistently.
-- Add integration tests only after ADV-02's API is merged and available. This
-  preparation intentionally adds no migration, real retrieval, or DB-writing
-  test.
-
-## Independent verification
-
-Run the mocked contract tests from the repository root:
+Run the focused RAG tests with:
 
 ```cmd
-python -m pytest -q backend\tests\test_rag_tutor.py
+backend\.venv\Scripts\python.exe -m pytest -q backend\tests\test_rag_tutor.py backend\tests\test_rag_tutor_api.py
 ```
-
-These tests use in-memory fake retriever and generator objects and do not
-connect to PostgreSQL, pgvector, document storage, or Gemini.

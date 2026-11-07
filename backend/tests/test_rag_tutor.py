@@ -9,8 +9,10 @@ from backend.app.services.rag_tutor import (
     RetrievalRequest,
     RetrievedPassage,
     RetrievalResult,
+    VectorPassageRetriever,
     orchestrate_tutoring,
 )
+from backend.app.services import rag_tutor as rag_service
 
 
 class MockRetriever:
@@ -111,6 +113,16 @@ def test_irrelevant_results_use_retrieval_free_fallback_without_citations():
     assert "without document citations" in generator.requests[0].system_instruction
 
 
+def test_provisional_similarity_cutoff_is_inclusive_at_point_35():
+    retriever = MockRetriever(RetrievalResult((passage(score=0.35),)))
+    generator = MockGenerator()
+
+    response = run(retriever, generator)
+
+    assert response.retrieval_used is True
+    assert response.citations[0].citation_id == "S1"
+
+
 def test_empty_retrieval_generates_general_answer_without_fabricated_citations():
     retriever = MockRetriever(RetrievalResult())
     generator = MockGenerator(GeneratedAnswer("Explain a half [S99].", ("S99",)))
@@ -149,3 +161,61 @@ def test_unknown_inline_citations_are_removed_while_valid_citations_survive():
     assert "[S1]" in response.answer
     assert "[S8]" not in response.answer
     assert len(response.citations) == 1
+
+
+def test_vector_adapter_maps_adv02_cosine_hits_and_preserves_rank(monkeypatch):
+    class FakeDb:
+        def scalar(self, _statement):
+            return "ready-document"
+
+    class FakeEmbeddingProvider:
+        model = "gemini-embedding-001"
+
+        def embed_texts(self, texts, *, task_type):
+            assert texts == ["fraction question"]
+            assert task_type == "RETRIEVAL_QUERY"
+            return [[0.25, 0.75]]
+
+    captured = {}
+
+    def fake_search(db, *, student_id, query_vector, model, top_k):
+        captured.update(student_id=student_id, query_vector=query_vector, model=model, top_k=top_k)
+        return [
+            {"chunk_id": "chunk-2", "document_id": "doc-2", "document_name": "Lesson 2.pdf",
+             "page_number": 3, "ordinal": 1, "content": "Strong match", "score": 0.92},
+            {"chunk_id": "chunk-1", "document_id": "doc-1", "document_name": "Lesson 1.pdf",
+             "page_number": 1, "ordinal": 0, "content": "Next match", "score": 0.71},
+        ]
+
+    monkeypatch.setattr(rag_service, "search_documents", fake_search)
+    adapter = VectorPassageRetriever(FakeDb(), FakeEmbeddingProvider())
+
+    result = adapter.retrieve(RetrievalRequest("student-1", "fraction question", "Fractions", limit=8))
+
+    assert captured == {
+        "student_id": "student-1", "query_vector": [0.25, 0.75],
+        "model": "gemini-embedding-001", "top_k": 5,
+    }
+    assert [item.passage_id for item in result.passages] == ["chunk-2", "chunk-1"]
+    assert [item.score for item in result.passages] == [0.92, 0.71]
+    assert result.passages[0].student_id == "student-1"
+    assert result.passages[0].document_title == "Lesson 2.pdf"
+    assert result.passages[0].page_number == 3
+
+
+def test_vector_adapter_skips_embedding_when_student_has_no_ready_index():
+    class FakeDb:
+        def scalar(self, _statement):
+            return None
+
+    class UnusedProvider:
+        model = "gemini-embedding-001"
+
+        def embed_texts(self, *_args, **_kwargs):
+            pytest.fail("query embedding is unnecessary without a ready owned index")
+
+    result = VectorPassageRetriever(FakeDb(), UnusedProvider()).retrieve(
+        RetrievalRequest("student-1", "question", "topic")
+    )
+
+    assert result == RetrievalResult()

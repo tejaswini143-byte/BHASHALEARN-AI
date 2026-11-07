@@ -4,7 +4,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -12,9 +12,15 @@ from backend.app.api.auth import current_student
 from backend.app.config import get_settings
 from backend.app.db.models import Document, DocumentPage, Student
 from backend.app.db.session import get_db
+from backend.app.services.document_index import IndexingError, index_document, index_status, search_documents
+from backend.app.services.embeddings import EmbeddingError, GeminiEmbeddingProvider
 from backend.app.services.documents import DocumentCleanupError, DocumentInputError, PrivateDocumentStorage, extract_pdf_pages, validate_filename
 
 router = APIRouter(prefix="/documents", tags=["documents"])
+
+
+def get_embedding_provider() -> GeminiEmbeddingProvider:
+    return GeminiEmbeddingProvider()
 
 
 class DocumentResponse(BaseModel):
@@ -41,6 +47,44 @@ class DocumentPageList(BaseModel):
     document_id: str
     total: int
     items: list[DocumentPageResponse]
+
+
+class DocumentIndexResponse(BaseModel):
+    document_id: str
+    status: str
+    error_code: str | None = None
+    chunk_count: int = 0
+    embedding_model: str | None = None
+    embedding_dimensions: int | None = None
+    updated_at: datetime
+
+
+class SemanticSearchRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=1000)
+    top_k: int = Field(default=5, ge=1, le=20)
+
+    @field_validator("query")
+    @classmethod
+    def query_not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Query must contain non-whitespace text")
+        return value.strip()
+
+
+class SemanticSearchItem(BaseModel):
+    chunk_id: str
+    document_id: str
+    document_name: str
+    page_number: int
+    ordinal: int
+    content: str
+    score: float = Field(ge=-1, le=1)
+
+
+class SemanticSearchResponse(BaseModel):
+    model: str
+    dimensions: int
+    items: list[SemanticSearchItem]
 
 
 def _owned(document_id: str, student: Student, db: Session) -> Document:
@@ -185,3 +229,50 @@ def delete_document(document_id: str, student: Student = Depends(current_student
         storage.delete(storage_key)
     except OSError:
         raise HTTPException(status_code=500, detail={"code": "document_file_cleanup_failed", "message": "Document metadata was removed, but private file cleanup failed. Contact support."}) from None
+
+
+@router.get("/{document_id}/index-status", response_model=DocumentIndexResponse)
+def get_document_index_status(
+    document_id: str,
+    student: Student = Depends(current_student),
+    db: Session = Depends(get_db),
+):
+    try:
+        return index_status(db, document_id=document_id, student_id=student.id)
+    except IndexingError as exc:
+        raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": str(exc)}) from None
+
+
+@router.post("/{document_id}/index", response_model=DocumentIndexResponse)
+def index_private_document(
+    document_id: str,
+    force: bool = Query(False),
+    student: Student = Depends(current_student),
+    db: Session = Depends(get_db),
+    provider: GeminiEmbeddingProvider = Depends(get_embedding_provider),
+):
+    try:
+        settings = get_settings()
+        return index_document(
+            db, document_id=document_id, student_id=student.id, provider=provider, force=force,
+            chunk_size=settings.embedding_chunk_size, overlap=settings.embedding_chunk_overlap,
+        )
+    except IndexingError as exc:
+        raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": str(exc)}) from None
+
+
+@router.post("/search", response_model=SemanticSearchResponse)
+def semantic_search(
+    payload: SemanticSearchRequest,
+    student: Student = Depends(current_student),
+    db: Session = Depends(get_db),
+    provider: GeminiEmbeddingProvider = Depends(get_embedding_provider),
+):
+    if provider.dimensions != 768:
+        raise HTTPException(status_code=503, detail={"code": "embedding_configuration_mismatch", "message": "Embedding configuration does not match vector storage."})
+    try:
+        query_vector = provider.embed_texts([payload.query], task_type="RETRIEVAL_QUERY")[0]
+    except EmbeddingError as exc:
+        raise HTTPException(status_code=exc.status_code, detail={"code": "embedding_provider_unavailable", "message": str(exc)}) from None
+    items = search_documents(db, student_id=student.id, query_vector=query_vector, model=provider.model, top_k=payload.top_k)
+    return SemanticSearchResponse(model=provider.model, dimensions=provider.dimensions, items=items)

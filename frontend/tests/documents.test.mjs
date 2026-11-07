@@ -42,6 +42,19 @@ test("document details fetch bounded pages and display extraction results", asyn
   assert.ok(source.includes("No selectable text found"));
 });
 
+test("documents UI exposes explicit indexing status and authenticated semantic search controls", async () => {
+  const source = await readFile(new URL("../src/Documents.tsx", import.meta.url), "utf8");
+  assert.ok(source.includes("/index-status"));
+  assert.ok(source.includes("/index${"));
+  assert.ok(source.includes("/documents/search"));
+  assert.ok(source.includes("?force=true"));
+  assert.ok(source.includes("Index document"));
+  assert.ok(source.includes("Retry indexing"));
+  assert.ok(source.includes("No indexed documents matched your search."));
+  assert.ok(source.includes("aria-labelledby=\"semantic-search-heading\""));
+  assert.ok(source.includes("Similarity"));
+});
+
 test("file selection rejects invalid, empty, and oversized files", () => {
   assert.equal(validatePdfSelection({ name: "notes.txt", type: "text/plain", size: 1 }), "Choose a PDF file.");
   assert.equal(validatePdfSelection({ name: "empty.pdf", type: "application/pdf", size: 0 }), "The selected file is empty.");

@@ -1,4 +1,6 @@
 """End-to-end backend journey with isolated database and mocked Gemini."""
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -132,11 +134,14 @@ def test_tutor_history_language_switch_and_message_persistence(client, monkeypat
     assert "Current topic: Fractions" in calls[0][0]
     assert "Prepare for algebra" in calls[0][0]
     assert LANGUAGE_GUIDANCE["english"] in calls[0][0]
-    assert calls[0][1] == [
+    assert calls[0][1][:2] == [
         {"role": "user", "content": "What is one half?"},
         {"role": "assistant", "content": "One half is one of two equal parts."},
-        {"role": "user", "content": "Give me another example"},
     ]
+    first_prompt = json.loads(calls[0][1][-1]["content"])
+    assert calls[0][1][-1]["role"] == "user"
+    assert first_prompt["question"] == "Give me another example"
+    assert "retrieval_notice" in first_prompt
 
     prefs = client.put("/api/v1/students/me/preferences", headers=headers, json={
         "preferred_language": "telugu",
@@ -152,13 +157,15 @@ def test_tutor_history_language_switch_and_message_persistence(client, monkeypat
     assert second.json()["learning_level"] == "beginner"
     assert LANGUAGE_GUIDANCE["telugu"] in calls[1][0]
     assert "Review equivalent fractions" in calls[1][0]
-    assert calls[1][1] == [
+    assert calls[1][1][:-1] == [
         {"role": "user", "content": "What is one half?"},
         {"role": "assistant", "content": "One half is one of two equal parts."},
         {"role": "user", "content": "Give me another example"},
         {"role": "assistant", "content": "mock reply 1"},
-        {"role": "user", "content": "Explain that more simply"},
     ]
+    second_prompt = json.loads(calls[1][1][-1]["content"])
+    assert calls[1][1][-1]["role"] == "user"
+    assert second_prompt["question"] == "Explain that more simply"
 
     persisted = client.get(messages_url, headers=headers)
     assert persisted.status_code == 200
@@ -277,11 +284,13 @@ def test_equal_timestamp_chat_pair_keeps_user_before_assistant(client, monkeypat
     )
 
     assert response.status_code == 200, response.text
-    assert calls == [[
+    assert calls[0][:-1] == [
         {"role": "user", "content": "Earlier user question"},
         {"role": "assistant", "content": "Earlier assistant reply"},
-        {"role": "user", "content": "Follow-up question"},
-    ]]
+    ]
+    rag_prompt = json.loads(calls[0][-1]["content"])
+    assert calls[0][-1]["role"] == "user"
+    assert rag_prompt["question"] == "Follow-up question"
     saved = client.get(f"/api/v1/sessions/{session_id}/messages", headers=headers)
     assert saved.status_code == 200
     assert [(item["role"], item["content"]) for item in saved.json()] == [

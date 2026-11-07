@@ -7,9 +7,17 @@ available.
 from __future__ import annotations
 
 import json
+import math
 import re
 from dataclasses import dataclass
 from typing import Callable, Protocol
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from backend.app.db.models import DocumentIndexState
+from backend.app.services.document_index import search_documents
+from backend.app.services.embeddings import EmbeddingError, GeminiEmbeddingProvider
 
 
 MAX_PASSAGES = 5
@@ -87,6 +95,67 @@ class TeachingResponse:
 
 class RetrievalOwnershipError(ValueError):
     """Raised when a retriever returns content owned by another student."""
+
+
+class VectorPassageRetriever:
+    """Adapt ADV-02's owner-scoped vector search to the ADV-03 contract."""
+
+    def __init__(self, db: Session, embedding_provider: GeminiEmbeddingProvider):
+        self.db = db
+        self.embedding_provider = embedding_provider
+
+    def retrieve(self, request: RetrievalRequest) -> RetrievalResult:
+        if request.limit < 1:
+            raise ValueError("Retrieval limit must be positive")
+        has_ready_index = self.db.scalar(
+            select(DocumentIndexState.document_id)
+            .where(
+                DocumentIndexState.student_id == request.student_id,
+                DocumentIndexState.status == "ready",
+                DocumentIndexState.active_generation_id.is_not(None),
+            )
+            .limit(1)
+        )
+        if has_ready_index is None:
+            return RetrievalResult()
+        vectors = self.embedding_provider.embed_texts(
+            [request.query], task_type="RETRIEVAL_QUERY"
+        )
+        if len(vectors) != 1:
+            raise EmbeddingError("Gemini embedding provider returned an invalid query vector")
+        hits = search_documents(
+            self.db,
+            student_id=request.student_id,
+            query_vector=vectors[0],
+            model=self.embedding_provider.model,
+            top_k=min(MAX_PASSAGES, request.limit),
+        )
+        passages: list[RetrievedPassage] = []
+        for hit in hits:
+            text = hit.get("content")
+            score = hit.get("score")
+            page_number = hit.get("page_number")
+            if not isinstance(text, str) or not text.strip():
+                continue
+            if (
+                isinstance(score, bool)
+                or not isinstance(score, (int, float))
+                or not math.isfinite(score)
+                or not -1.0 <= score <= 1.0
+            ):
+                raise ValueError("Vector search returned an invalid relevance score")
+            if isinstance(page_number, bool) or not isinstance(page_number, int) or page_number < 1:
+                raise ValueError("Vector search returned an invalid source page")
+            passages.append(RetrievedPassage(
+                passage_id=hit["chunk_id"],
+                document_id=hit["document_id"],
+                student_id=request.student_id,
+                document_title=hit["document_name"],
+                page_number=page_number,
+                text=text,
+                score=float(score),
+            ))
+        return RetrievalResult(tuple(passages))
 
 
 def _teaching_guidance(language: str) -> str:

@@ -13,6 +13,7 @@ __pycache__/
 *.m4a
 .DS_Store
 backend_be02_test.db
+backend/.pytest-adv02-*/
 backend/storage/documents/
 frontend/test-results/
 frontend/playwright-report/

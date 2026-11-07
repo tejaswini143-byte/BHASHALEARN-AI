@@ -24,6 +24,8 @@ and extracts page-level text locally. Configure `BHASHALEARN_DOCUMENT_STORAGE_DI
 and the `BHASHALEARN_DOCUMENT_MAX_*` limits using the placeholders in
 `backend/.env.example`. See [ADV-01 PDF document processing](../docs/ADV-01-pdf-document-processing.md)
 for endpoint details, migration safety, and verification instructions.
+For explicit document chunking, Gemini embeddings, pgvector indexing, and
+authenticated semantic search, see [ADV-02 embeddings and vector storage](../docs/ADV-02-embeddings-vector-storage.md).
 
 Expected health response:
 

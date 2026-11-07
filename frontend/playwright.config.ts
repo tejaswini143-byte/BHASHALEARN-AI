@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 const frontendUrl = process.env.BHASHALEARN_E2E_FRONTEND_URL || "http://127.0.0.1:5174";
 const startServers = process.env.BHASHALEARN_E2E_START_SERVERS === "1";
 const allowMutations = process.env.BHASHALEARN_E2E_ALLOW_MUTATIONS === "1";
+const useFakeEmbeddingProvider = process.env.BHASHALEARN_E2E_FAKE_EMBEDDINGS === "1";
 const databaseUrl = process.env.BHASHALEARN_E2E_DATABASE_URL;
 
 function assertDisposableDatabase(value: string | undefined): asserts value is string {
@@ -78,7 +79,7 @@ export default defineConfig({
   },
   webServer: startServers ? [
     {
-      command: `${quote(python)} -m uvicorn backend.app.main:app --host 127.0.0.1 --port ${testBackendPort}`,
+      command: `${quote(python)} -m uvicorn ${useFakeEmbeddingProvider ? "backend.tests.adv02_e2e_server:app" : "backend.app.main:app"} --host 127.0.0.1 --port ${testBackendPort}`,
       cwd: "..",
       url: `${dedicatedBackendUrl}/health`,
       reuseExistingServer: false,

@@ -7,12 +7,21 @@ from sqlalchemy import case, select
 from sqlalchemy.orm import Session
 
 from backend.app.api.auth import current_student
+from backend.app.api.documents import get_embedding_provider
 from backend.app.api.sessions import owned_session
 from backend.app.db.models import ChatMessage, LearningMemory, LearningProgress, SessionVisualState, Student, StudentPreferences, utc_now
 from backend.app.db.session import get_db
 from backend.app.services.tutor import build_instruction, generate_tutor_reply
 from backend.app.services.adaptive_learning import normalize_topic, recommend
 from backend.app.services.visual_lessons import describe_visual_lesson, tutor_visual_reference
+from backend.app.services.embeddings import EmbeddingError, GeminiEmbeddingProvider
+from backend.app.services.rag_tutor import (
+    GeneratedAnswer,
+    GenerationRequest,
+    TeachingResponse,
+    VectorPassageRetriever,
+    orchestrate_tutoring,
+)
 
 router = APIRouter(prefix="/tutor", tags=["AI tutor"])
 
@@ -42,11 +51,21 @@ class TutorRequest(BaseModel):
         return value
 
 
+class TutorCitation(BaseModel):
+    citation_id: str
+    document_id: str
+    document_title: str
+    page_number: int
+
+
 class TutorResponse(BaseModel):
     session_id: str
     reply: str
     language: str
     learning_level: str
+    citations: list[TutorCitation] = Field(default_factory=list)
+    grounded: bool = False
+    retrieval_used: bool = False
 
 
 @router.post("/sessions/{session_id}/chat", response_model=TutorResponse)
@@ -55,6 +74,7 @@ def tutor_chat(
     payload: TutorRequest,
     student: Student = Depends(current_student),
     db: Session = Depends(get_db),
+    embedding_provider: GeminiEmbeddingProvider = Depends(get_embedding_provider),
 ):
     session = owned_session(session_id, student, db)
     prefs = db.get(StudentPreferences, student.id)
@@ -112,17 +132,43 @@ def tutor_chat(
         (ChatMessage.role == "assistant", 1),
         else_=2,
     )
-    # Retrieve at most 19 recent messages plus the current user message.
+    # Retrieve at most 19 recent messages; the current message and retrieved
+    # passages are added together in the generation adapter below.
     prior = db.scalars(
         select(ChatMessage)
         .where(ChatMessage.session_id == session_id)
         .order_by(ChatMessage.created_at.desc(), role_order.desc(), ChatMessage.id.desc())
         .limit(19)
     ).all()
-    history = [{"role": m.role, "content": m.content} for m in reversed(prior)]
-    history.append({"role": "user", "content": payload.message})
-    # Provider failures must not persist a partial conversation.
-    reply = generate_tutor_reply(instruction, history)
+    prior_history = [{"role": m.role, "content": m.content} for m in reversed(prior)]
+
+    def generate_rag_answer(request: GenerationRequest) -> GeneratedAnswer:
+        combined_instruction = instruction + "\n\n" + request.system_instruction
+        history = [
+            *prior_history,
+            {"role": "user", "content": request.user_prompt},
+        ]
+        return GeneratedAnswer(generate_tutor_reply(combined_instruction, history))
+
+    # Retrieval and generation both complete before either half of the turn is
+    # added to the session, so provider failures cannot persist a partial turn.
+    try:
+        teaching: TeachingResponse = orchestrate_tutoring(
+            authenticated_student_id=student.id,
+            session_owner_id=session.student_id,
+            question=payload.message[:1000],
+            topic=session.topic,
+            language=language,
+            level=level,
+            retriever=VectorPassageRetriever(db, embedding_provider),
+            generate=generate_rag_answer,
+        )
+    except EmbeddingError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail="Document retrieval is unavailable; no chat turn was saved.",
+        ) from None
+    reply = teaching.answer
     user_created_at, assistant_created_at = _next_turn_timestamps(
         prior[0].created_at if prior else None
     )
@@ -141,4 +187,12 @@ def tutor_chat(
         ),
     ])
     db.commit()
-    return TutorResponse(session_id=session_id, reply=reply, language=language, learning_level=level)
+    return TutorResponse(
+        session_id=session_id,
+        reply=reply,
+        language=language,
+        learning_level=level,
+        citations=[TutorCitation(**citation.__dict__) for citation in teaching.citations],
+        grounded=teaching.grounded,
+        retrieval_used=teaching.retrieval_used,
+    )
