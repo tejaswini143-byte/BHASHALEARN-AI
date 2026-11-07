@@ -21,7 +21,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         title=config.app_name,
         debug=config.debug,
         version="0.1.0",
-        description="Backend API for BHASHALEARN AI.",
+        description="Backend API for BHASHALEARN AI. Explicit document indexing and semantic search send extracted text and queries to the configured Gemini embedding provider.",
     )
     app.include_router(auth_router, prefix=config.api_prefix)
     app.include_router(students_router, prefix=config.api_prefix)
