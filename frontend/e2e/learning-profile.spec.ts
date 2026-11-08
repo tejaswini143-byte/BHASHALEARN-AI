@@ -57,8 +57,9 @@ test("pace persists across language changes and shared context refreshes", async
 
 test("learning profile loading and error states are accessible", async ({ page }) => {
   await mockClassroom(page, true, 1500);
+  const profileRequest = page.waitForRequest(request => request.url().includes("/students/me/learning-profile"));
   await page.goto("/classroom");
-  await page.waitForRequest(request => request.url().includes("/students/me/learning-profile"));
+  await profileRequest;
   await expect(page.getByRole("status")).toContainText("Loading learning profile");
   await expect(page.getByRole("alert")).toContainText("Profile service unavailable");
 });

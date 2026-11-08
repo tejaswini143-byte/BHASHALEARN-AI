@@ -2,8 +2,8 @@ import { defineConfig, devices } from "@playwright/test";
 import { resolve } from "node:path";
 import { readFileSync } from "node:fs";
 
-const frontendUrl = process.env.BHASHALEARN_E2E_FRONTEND_URL || "http://127.0.0.1:5174";
 const startServers = process.env.BHASHALEARN_E2E_START_SERVERS === "1";
+const externalFrontendUrl = process.env.BHASHALEARN_E2E_FRONTEND_URL;
 const allowMutations = process.env.BHASHALEARN_E2E_ALLOW_MUTATIONS === "1";
 const useFakeEmbeddingProvider = process.env.BHASHALEARN_E2E_FAKE_EMBEDDINGS === "1";
 const databaseUrl = process.env.BHASHALEARN_E2E_DATABASE_URL;
@@ -52,9 +52,10 @@ const python = process.env.BHASHALEARN_E2E_PYTHON || (process.platform === "win3
   : resolve("..", ".venv", "bin", "python"));
 const quote = (value: string) => `"${value.replaceAll('"', '\\"')}"`;
 const testBackendPort = Number(process.env.BHASHALEARN_E2E_BACKEND_PORT || 8012);
-const testFrontendPort = Number(process.env.BHASHALEARN_E2E_FRONTEND_PORT || 5184);
+const testFrontendPort = Number(process.env.BHASHALEARN_E2E_FRONTEND_PORT || (startServers ? 5184 : 5185));
 const dedicatedBackendUrl = `http://127.0.0.1:${testBackendPort}`;
 const dedicatedFrontendUrl = `http://127.0.0.1:${testFrontendPort}`;
+const frontendUrl = externalFrontendUrl || dedicatedFrontendUrl;
 
 export default defineConfig({
   testDir: "./e2e",
