@@ -31,6 +31,10 @@ async function mockClassroom(page, profileFails = false, profileDelay = 0) {
       contextRequests += 1;
       return route.fulfill({ json: { session_id: "session-1", topic: "Fractions", preferred_language: prefs.preferred_language, learning_level: prefs.learning_level, learning_pace: prefs.learning_pace, learning_goal: prefs.learning_goal, messages: [], visual_lesson: null } });
     }
+    if (path === "/tutor/sessions/session-1/lesson-plan") return route.fulfill({ json: {
+      session_id: "session-1", evidence_attempts: 5, mastery_score: 60, recommendation_source: "recorded_practice", learning_goal: null, citations: [],
+      plan: { learning_objective: "Understand fractions", prerequisite_concepts: ["Equal parts"], explanation_strategy: "Use a scaffolded example", examples: ["One half"], understanding_checks: ["What is half?"], suggested_next_activity: "Try a practice question", difficulty: "intermediate", language: prefs.preferred_language, recommended_topic: null, recommendation_reason: "Keep practising.", fallback: false, grounded: false },
+    } });
     return route.fulfill({ status: 404, json: { detail: "Unexpected mocked API request" } });
   });
   return { preferenceWrites, contextCount: () => contextRequests };
@@ -53,6 +57,10 @@ test("pace persists across language changes and shared context refreshes", async
   expect(state.preferenceWrites[1]).toMatchObject({ learning_pace: "slow", preferred_language: "english" });
   await expect(pace).toHaveValue("slow");
   await expect.poll(state.contextCount).toBeGreaterThan(1);
+
+  await page.getByLabel("Explanation level").selectOption("advanced");
+  await expect.poll(() => state.preferenceWrites.length).toBe(3);
+  expect(state.preferenceWrites[2]).toMatchObject({ learning_level: "advanced", learning_pace: "slow", preferred_language: "english" });
 });
 
 test("learning profile loading and error states are accessible", async ({ page }) => {
