@@ -1,4 +1,5 @@
 """Career planner ownership, skill evidence, and deterministic dependency tests."""
+from datetime import date, timedelta
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -59,6 +60,10 @@ def test_goal_catalog_and_roadmap_are_bilingual_and_catalog_grounded(client):
     assert all(item["course_id"] is None or item["course_id"] in {course["id"]} for item in roadmap["phases"])
     assert next(item for item in roadmap["phases"] if item["skill_key"] == "programming-basics")["assessment_topic"] == "dijkstra shortest path"
     assert next(item for item in roadmap["phases"] if item["skill_key"] == "python")["assessment_topic"] is None
+    completed = client.post(f"/api/v1/career/goals/{goal['id']}/lessons/{lesson['id']}/complete", headers=headers)
+    assert completed.status_code == 200
+    assert next(item for item in completed.json()["phases"] if item["lesson_id"] == lesson["id"])["lesson_completed"] is True
+    assert next(item for item in completed.json()["skill_gaps"] if item["skill_key"] == "python")["status"] == "self_reported"
 
 
 def test_student_isolation_milestone_idempotency_and_replanning(client):
@@ -77,6 +82,21 @@ def test_student_isolation_milestone_idempotency_and_replanning(client):
     assert next(item for item in replanned["phases"] if item["milestone_id"] == milestone)["completed"] is True
     assert client.get("/api/v1/career/goals", headers=second).json() == []
     assert client.get("/api/v1/career/recommendations").status_code == 401
+
+
+def test_weekly_target_tracking_replans_after_a_missed_week(client):
+    first, second = auth(client, "weekly-one@example.com"), auth(client, "weekly-two@example.com")
+    goal = create_goal(client, first).json()
+    monday = date.today() - timedelta(days=date.today().weekday() + 7)
+    path = f"/api/v1/career/goals/{goal['id']}/weekly-progress"
+    payload = {"week_start": monday.isoformat(), "studied_minutes": 60}
+    assert client.put(path, headers=second, json=payload).status_code == 404
+    update = client.put(path, headers=first, json=payload)
+    assert update.status_code == 200 and update.json()["status"] == "below_target"
+    plan = client.post(f"/api/v1/career/goals/{goal['id']}/replan", headers=first).json()
+    assert plan["study_adjustment"]["state"] == "missed_last_week"
+    assert plan["study_adjustment"]["previous_studied_minutes"] == 60
+    assert sum(day["minutes"] for day in plan["weekly_plan"]) == 60
 
 
 def test_validation_and_ownership_responses(client):

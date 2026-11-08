@@ -175,6 +175,37 @@ class CareerMilestoneCompletion(Base):
     completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
 
+class CareerLessonCompletion(Base):
+    """Idempotent completion of a real catalog lesson in a student's goal."""
+    __tablename__ = "career_lesson_completions"
+    __table_args__ = (UniqueConstraint("student_id", "goal_id", "lesson_id", name="uq_career_lesson_student_goal"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    student_id: Mapped[str] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), nullable=False)
+    goal_id: Mapped[str] = mapped_column(ForeignKey("career_goals.id", ondelete="CASCADE"), nullable=False)
+    course_id: Mapped[str] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"), nullable=False)
+    lesson_id: Mapped[str] = mapped_column(ForeignKey("lessons.id", ondelete="CASCADE"), nullable=False)
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
+class CareerStudyWeek(Base):
+    """Student-entered weekly minutes, used as a replanning signal."""
+    __tablename__ = "career_study_weeks"
+    __table_args__ = (
+        UniqueConstraint("student_id", "goal_id", "week_start", name="uq_career_study_week_student_goal"),
+        CheckConstraint("target_minutes >= 30 AND target_minutes <= 2400", name="ck_career_study_target_minutes"),
+        CheckConstraint("studied_minutes >= 0 AND studied_minutes <= 2400", name="ck_career_studied_minutes"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    student_id: Mapped[str] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), nullable=False)
+    goal_id: Mapped[str] = mapped_column(ForeignKey("career_goals.id", ondelete="CASCADE"), nullable=False)
+    week_start: Mapped[str] = mapped_column(String(10), nullable=False)
+    target_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    studied_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+
 
 class StudentPreferences(Base):
     """One set of learning preferences per student."""

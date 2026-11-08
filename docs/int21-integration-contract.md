@@ -14,9 +14,9 @@
 
 ## Migration coordination with INT17
 
-The verified source migration head was `0010_mission_completions`. INT-21 adds `0011_int21_career_roadmap` with `down_revision = 0010_mission_completions` and does not edit prior revisions. At inspection time the separate INT17 worktree had `0011_int17_assistant` followed by `0012_int17_provider_integrations`, also based on `0010_mission_completions`. These feature branches therefore intentionally have independent heads while developed in parallel.
+The verified source migration head was `0010_mission_completions`. INT-21 adds `0011_int21_career_roadmap` with `down_revision = 0010_mission_completions`, followed by `0012_int21_learning_progress`; it does not edit prior revisions. At inspection time the separate INT17 worktree had `0011_int17_assistant` followed by `0012_int17_provider_integrations`, also based on `0010_mission_completions`. These feature branches therefore intentionally have independent heads while developed in parallel.
 
-When integration combines both branches, retain both feature migrations and add a merge revision with `down_revision = ("0011_int21_career_roadmap", "0012_int17_provider_integrations")`. Verify the combined graph with `alembic heads` and `alembic history`, then upgrade and downgrade disposable databases before applying anything to a shared environment. Do not renumber or edit either branch's migration files to resolve the graph.
+When integration combines both branches, retain both feature migrations and add a merge revision with `down_revision = ("0012_int21_learning_progress", "0012_int17_provider_integrations")`. Verify the combined graph with `alembic heads` and `alembic history`, then upgrade and downgrade disposable databases before applying anything to a shared environment. Do not renumber or edit either branch's migration files to resolve the graph.
 
 ## Current boundary
 

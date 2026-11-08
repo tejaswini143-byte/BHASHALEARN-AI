@@ -1,6 +1,6 @@
 """Authenticated, student-owned career goals, skill profiles, and roadmaps."""
 import json
-from datetime import date
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend.app.api.auth import current_student
-from backend.app.db.models import CareerGoal, CareerMilestoneCompletion, Course, Lesson, LearningProgress, Student, StudentSkillProfile
+from backend.app.db.models import CareerGoal, CareerLessonCompletion, CareerMilestoneCompletion, CareerStudyWeek, Course, Lesson, LearningProgress, Student, StudentSkillProfile
 from backend.app.db.session import get_db
 from backend.app.services.career_roadmap import CAREERS, LANGUAGES, LEVELS, SKILLS, CatalogItem, build_plan, skill_gaps
 
@@ -83,6 +83,19 @@ class SkillInput(BaseModel):
         return value
 
 
+class StudyWeekUpdate(BaseModel):
+    week_start: date
+    studied_minutes: int = Field(ge=0, le=2400)
+
+    @field_validator("week_start")
+    @classmethod
+    def monday_only(cls, value: date) -> date:
+        if value.weekday() != 0:
+            raise ValueError("week_start must be a Monday")
+        if value > date.today():
+            raise ValueError("week_start cannot be in the future")
+        return value
+
 def _owned_goal(goal_id: str, student: Student, db: Session) -> CareerGoal:
     goal = db.scalar(select(CareerGoal).where(CareerGoal.id == goal_id, CareerGoal.student_id == student.id))
     if goal is None:
@@ -149,8 +162,41 @@ def _build(goal: CareerGoal, student_id: str, db: Session) -> dict:
     plan = build_plan(goal_data, gaps, _catalog(db), {"completed_milestones": list(done)})
     for phase in plan["phases"]:
         phase["completed"] = phase["milestone_id"] in done
+    lesson_completions = db.scalars(select(CareerLessonCompletion).where(
+        CareerLessonCompletion.goal_id == goal.id, CareerLessonCompletion.student_id == student_id
+    )).all()
+    completed_lessons = {row.lesson_id for row in lesson_completions}
+    for phase in plan["phases"]:
+        phase["lesson_completed"] = phase["lesson_id"] in completed_lessons if phase["lesson_id"] else False
+    today = date.today()
+    current_week = today - timedelta(days=today.weekday())
+    previous_week = current_week - timedelta(days=7)
+    current_log = db.scalar(select(CareerStudyWeek).where(
+        CareerStudyWeek.student_id == student_id, CareerStudyWeek.goal_id == goal.id,
+        CareerStudyWeek.week_start == current_week.isoformat(),
+    ))
+    previous_log = db.scalar(select(CareerStudyWeek).where(
+        CareerStudyWeek.student_id == student_id, CareerStudyWeek.goal_id == goal.id,
+        CareerStudyWeek.week_start == previous_week.isoformat(),
+    ))
+    missed = bool(previous_log and previous_log.studied_minutes < previous_log.target_minutes)
+    adjusted_minutes = (min(goal.weekly_minutes, max(30, previous_log.studied_minutes))
+                        if missed and previous_log else goal.weekly_minutes)
+    plan["weekly_plan"] = [{"day": day, "minutes": adjusted_minutes // 5 + (1 if i < adjusted_minutes % 5 else 0),
+                            "activity": "Use a shorter focused block and review the last unfinished skill." if missed
+                            else "Learn and practise the next roadmap skill."}
+                           for i, day in enumerate(["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"])]
     plan["skill_gaps"] = gaps
-    plan["progress"] = {"completed_milestones": len(done), "total_milestones": len(plan["phases"])}
+    plan["progress"] = {"completed_milestones": len(done), "total_milestones": len(plan["phases"]),
+                        "completed_lessons": len(completed_lessons)}
+    plan["study_adjustment"] = {
+        "state": "missed_last_week" if missed else "on_track" if previous_log else "not_recorded",
+        "previous_target_minutes": previous_log.target_minutes if previous_log else None,
+        "previous_studied_minutes": previous_log.studied_minutes if previous_log else None,
+        "recommended_weekly_minutes": adjusted_minutes,
+        "current_week_start": current_week.isoformat(),
+        "current_week_studied_minutes": current_log.studied_minutes if current_log else 0,
+    }
     return plan
 
 
@@ -230,7 +276,12 @@ def get_roadmap(goal_id: str, student: Student = Depends(current_student), db: S
         CareerMilestoneCompletion.goal_id == goal.id, CareerMilestoneCompletion.student_id == student.id)).all()}
     for phase in result["phases"]:
         phase["completed"] = phase["milestone_id"] in done
-    result["progress"] = {"completed_milestones": len(done), "total_milestones": len(result["phases"])}
+    lesson_done = {row.lesson_id for row in db.scalars(select(CareerLessonCompletion).where(
+        CareerLessonCompletion.goal_id == goal.id, CareerLessonCompletion.student_id == student.id)).all()}
+    for phase in result["phases"]:
+        phase["lesson_completed"] = phase["lesson_id"] in lesson_done if phase["lesson_id"] else False
+    result["progress"] = {"completed_milestones": len(done), "total_milestones": len(result["phases"]),
+                          "completed_lessons": len(lesson_done)}
     return result
 
 
@@ -241,6 +292,45 @@ def replan(goal_id: str, student: Student = Depends(current_student), db: Sessio
     goal.roadmap_json = json.dumps(result, ensure_ascii=False)
     db.commit()
     return result
+
+
+@router.put("/goals/{goal_id}/weekly-progress")
+def update_weekly_progress(goal_id: str, payload: StudyWeekUpdate, student: Student = Depends(current_student), db: Session = Depends(get_db)):
+    goal = _owned_goal(goal_id, student, db)
+    week_start = payload.week_start.isoformat()
+    entry = db.scalar(select(CareerStudyWeek).where(
+        CareerStudyWeek.student_id == student.id, CareerStudyWeek.goal_id == goal.id,
+        CareerStudyWeek.week_start == week_start,
+    ))
+    if entry is None:
+        entry = CareerStudyWeek(student_id=student.id, goal_id=goal.id, week_start=week_start,
+                                target_minutes=goal.weekly_minutes, studied_minutes=payload.studied_minutes)
+        db.add(entry)
+    else:
+        entry.target_minutes = goal.weekly_minutes
+        entry.studied_minutes = payload.studied_minutes
+    db.commit()
+    return {"week_start": week_start, "target_minutes": goal.weekly_minutes,
+            "studied_minutes": payload.studied_minutes,
+            "status": "on_track" if payload.studied_minutes >= goal.weekly_minutes else "below_target"}
+
+
+@router.post("/goals/{goal_id}/lessons/{lesson_id}/complete")
+def complete_lesson(goal_id: str, lesson_id: str, student: Student = Depends(current_student), db: Session = Depends(get_db)):
+    goal = _owned_goal(goal_id, student, db)
+    plan = json.loads(goal.roadmap_json) if goal.roadmap_json else _build(goal, student.id, db)
+    phase = next((item for item in plan["phases"] if item["lesson_id"] == lesson_id and item["course_id"]), None)
+    if phase is None:
+        raise HTTPException(status_code=404, detail="Recommended lesson not found")
+    if db.get(Lesson, lesson_id) is None or db.get(Course, phase["course_id"]) is None:
+        raise HTTPException(status_code=404, detail="Catalog lesson not found")
+    db.add(CareerLessonCompletion(student_id=student.id, goal_id=goal.id,
+                                  course_id=phase["course_id"], lesson_id=lesson_id))
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+    return get_roadmap(goal_id, student, db)
 
 
 @router.post("/goals/{goal_id}/milestones/{milestone_id}/complete")

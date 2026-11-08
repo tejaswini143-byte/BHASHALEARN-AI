@@ -11,3 +11,9 @@
 .quiz-options button{border:1px solid #596b99;border-radius:10px;background:#1a2850;color:#eef2ff;text-align:left;padding:13px;font-size:14px;cursor:pointer}
 .quiz-options button:hover{border-color:#9b91ff;background:#293565}
 .quiz-feedback{padding:14px;background:#173a3c;border:1px solid #5aa68e;border-radius:10px;color:#c4f5df;line-height:1.6}
+.study-log-form{display:grid;gap:10px;margin:15px 0}
+.study-log-form label{display:grid;gap:6px;color:#cdd9f5;font-size:11px;font-weight:700}
+.study-log-form input{width:100%;border:1px solid #465780;border-radius:8px;background:#0b1532;color:#fff;padding:9px}
+.study-adjustment{padding:10px;border-radius:9px;background:#4b3c2b;color:#f6d9a8!important}
+.lesson-complete-action{display:block;margin-top:16px}
+.lesson-done-label{display:inline-block;margin:9px 0;color:#a9f0d3;font-size:11px}

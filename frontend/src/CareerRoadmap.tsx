@@ -28,9 +28,10 @@ export function CareerRoadmap() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [viewLanguage, setViewLanguage] = useState<"english" | "telugu" | "mixed">("english");
-  const [lesson, setLesson] = useState<{ title: string; content: string } | null>(null);
+  const [lesson, setLesson] = useState<{ title: string; content: string; course_id: string; lesson_id: string; completed: boolean } | null>(null);
   const [quiz, setQuiz] = useState<{ attempt_id: string; prompt: string; options: string[]; topic: string } | null>(null);
   const [quizResult, setQuizResult] = useState<{ feedback: string; is_correct: boolean | null } | null>(null);
+  const [studyMinutes, setStudyMinutes] = useState(0);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -50,7 +51,7 @@ export function CareerRoadmap() {
         setLanguage(existing.preferred_language); setWeeklyHours(Math.max(1, Math.round(existing.weekly_minutes / 60)));
         setInterests(existing.interests.join(", ")); setCustomGoal(existing.custom_goal ?? ""); setTargetDate(existing.target_date ?? "");
         const plan = await request<Roadmap>(`/career/goals/${existing.id}/roadmap`, { headers });
-        if (active) { setRoadmap(plan); setReady(true); }
+        if (active) { setRoadmap(plan); setStudyMinutes(plan.study_adjustment.current_week_studied_minutes); setReady(true); }
       }
     }).catch(cause => { if (active) setError(cause instanceof ApiError ? cause.message : "Could not load career planner."); })
       .finally(() => { if (active) setLoading(false); });
@@ -66,7 +67,7 @@ export function CareerRoadmap() {
         : await request<Goal>("/career/goals", { method: "POST", headers, body: JSON.stringify(payload) });
       await request("/career/skills", { method: "PUT", headers, body: JSON.stringify(Object.entries(selected).map(([skill_key, proficiency]) => ({ skill_key, proficiency }))) });
       const plan = await request<Roadmap>(`/career/goals/${saved.id}/roadmap`, { method: "POST", headers });
-      setGoal(saved); setRoadmap(plan); setReady(true);
+      setGoal(saved); setRoadmap(plan); setStudyMinutes(plan.study_adjustment.current_week_studied_minutes); setReady(true);
     } catch (cause) { setError(cause instanceof ApiError ? cause.message : "Could not create your roadmap."); }
     finally { setBusy(false); }
   }
@@ -85,10 +86,28 @@ export function CareerRoadmap() {
     catch (cause) { setError(cause instanceof ApiError ? cause.message : "Could not refresh your roadmap."); }
     finally { setBusy(false); }
   }
-  async function openLesson(courseId: string, lessonId: string) {
+  async function openLesson(courseId: string, lessonId: string, completed: boolean) {
     setBusy(true); setError("");
-    try { setLesson(await request<{ title: string; content: string }>(`/courses/${courseId}/lessons/${lessonId}`, { headers })); }
+    try { const result = await request<{ title: string; content: string }>(`/courses/${courseId}/lessons/${lessonId}`, { headers }); setLesson({ ...result, course_id: courseId, lesson_id: lessonId, completed }); }
     catch (cause) { setError(cause instanceof ApiError ? cause.message : "Could not open this catalog lesson."); }
+    finally { setBusy(false); }
+  }
+  async function markLessonComplete() {
+    if (!goal || !lesson) return;
+    setBusy(true); setError("");
+    try { const next = await request<Roadmap>(`/career/goals/${goal.id}/lessons/${lesson.lesson_id}/complete`, { method: "POST", headers }); setRoadmap(next); setLesson({ ...lesson, completed: true }); }
+    catch (cause) { setError(cause instanceof ApiError ? cause.message : "Could not record lesson completion."); }
+    finally { setBusy(false); }
+  }
+  async function saveStudyMinutes(event: FormEvent) {
+    event.preventDefault();
+    if (!goal || !roadmap) return;
+    setBusy(true); setError("");
+    try {
+      await request(`/career/goals/${goal.id}/weekly-progress`, { method: "PUT", headers, body: JSON.stringify({ week_start: roadmap.study_adjustment.current_week_start, studied_minutes: studyMinutes }) });
+      const next = await request<Roadmap>(`/career/goals/${goal.id}/replan`, { method: "POST", headers });
+      setRoadmap(next); setStudyMinutes(next.study_adjustment.current_week_studied_minutes);
+    } catch (cause) { setError(cause instanceof ApiError ? cause.message : "Could not save this week's study time."); }
     finally { setBusy(false); }
   }
   async function startQuiz(topic: string) {
@@ -135,12 +154,12 @@ export function CareerRoadmap() {
       {ready && roadmap && <>
         <section className="roadmap-summary"><div><span className="career-kicker">GENERAL CAREER GUIDANCE · NOT A LIVE JOB FORECAST</span><h2>{roadmap.career_title}</h2><p>{bilingual(roadmap.summary, roadmap.summary_te)}</p></div><div className="roadmap-progress"><strong>{progress}%</strong><span>{roadmap.progress.completed_milestones} of {roadmap.progress.total_milestones} milestones</span><div className="progress-track"><i style={{ width: `${progress}%` }}/></div></div></section>
         <div className="roadmap-heading"><div><span className="career-kicker">YOUR LEARNING PATH</span><h2>{bilingual("From foundations to portfolio", "మీ తదుపరి దశలు")}</h2></div><div className="career-actions"><button className="career-secondary" onClick={() => { setReady(false); setRoadmap(null); }}>{bilingual("Edit goal & skills", "లక్ష్యం మరియు నైపుణ్యాలను మార్చండి")}</button><button className="career-secondary" disabled={busy} onClick={replan}>{bilingual("Replan", "మళ్లీ ప్రణాళిక చేయండి")}</button></div></div>
-        <div className="career-layout"><section className="phase-list" aria-label="Career roadmap timeline">{roadmap.phases.map((phase, index) => <article className={`phase-card ${phase.completed ? "phase-done" : ""}`} key={phase.milestone_id}><div className="phase-number">{phase.completed ? "✓" : String(index + 1).padStart(2, "0")}</div><div className="phase-main"><div className="phase-title"><div><span className="career-kicker">PHASE {index + 1} · {phase.estimated_hours} HOURS</span><h3>{bilingual(phase.title, phase.title_te)}</h3></div><span className="skill-status">{gapLabel(roadmap.skill_gaps.find(item => item.skill_key === phase.skill_key)?.status ?? "recommended_next", viewLanguage)}</span></div><p>Prerequisites: {phase.prerequisite_skills.map(key => skills[key]?.name ?? key).join(", ") || "None"}</p>{phase.course_id && <p className="catalog-link">Course: {phase.course_title}{phase.lesson_id ? ` · Lesson: ${phase.lesson_title}` : ""}</p>}{phase.course_id && phase.lesson_id && <button className="study-lesson-button" disabled={busy} onClick={() => openLesson(phase.course_id!, phase.lesson_id!)}>{bilingual("Study recommended lesson", "సిఫార్సు చేసిన పాఠం చదవండి")}</button>}<p className="milestone-description">{bilingual(phase.milestone_description, phase.milestone_description_te)}</p><div className="phase-activities"><p><b>Practice</b> {bilingual(phase.practice, phase.practice_te)}</p><p><b>Assessment</b> {phase.assessment}</p>{phase.assessment_topic && <button className="study-lesson-button" disabled={busy} onClick={() => startQuiz(phase.assessment_topic!)}>{bilingual("Start objective quiz", "వస్తునిష్ఠ క్విజ్ ప్రారంభించండి")}</button>}<p><b>Portfolio</b> {phase.project}</p></div><button className="milestone-button" disabled={phase.completed || busy} onClick={() => complete(phase.milestone_id)}>{phase.completed ? bilingual("Milestone completed", "దశ పూర్తయింది") : bilingual("Complete milestone", "దశను పూర్తి చేయండి")}</button></div></article>)}</section>
-          <aside className="planner-card"><span className="career-kicker">THIS WEEK</span><h3>Study planner</h3><p>{Math.round(roadmap.weekly_plan.reduce((sum, day) => sum + day.minutes, 0) / 60)} hours · flexible sessions</p><ul>{roadmap.weekly_plan.map(day => <li key={day.day}><b>{day.day}</b><span>{day.minutes} min</span></li>)}</ul><h3>Skill gap snapshot</h3><ul className="gap-list">{roadmap.skill_gaps.map(item => <li key={item.skill_key}><span>{item.name}</span><small>{gapLabel(item.status, viewLanguage)}</small></li>)}</ul><p className="career-muted">Reported proficiency stays unverified until supported by learning evidence.</p></aside>
+        <div className="career-layout"><section className="phase-list" aria-label="Career roadmap timeline">{roadmap.phases.map((phase, index) => <article className={`phase-card ${phase.completed ? "phase-done" : ""}`} key={phase.milestone_id}><div className="phase-number">{phase.completed ? "✓" : String(index + 1).padStart(2, "0")}</div><div className="phase-main"><div className="phase-title"><div><span className="career-kicker">PHASE {index + 1} · {phase.estimated_hours} HOURS</span><h3>{bilingual(phase.title, phase.title_te)}</h3></div><span className="skill-status">{gapLabel(roadmap.skill_gaps.find(item => item.skill_key === phase.skill_key)?.status ?? "recommended_next", viewLanguage)}</span></div><p>Prerequisites: {phase.prerequisite_skills.map(key => skills[key]?.name ?? key).join(", ") || "None"}</p>{phase.course_id && <p className="catalog-link">Course: {phase.course_title}{phase.lesson_id ? ` · Lesson: ${phase.lesson_title}` : ""}</p>}{phase.course_id && phase.lesson_id && <button className="study-lesson-button" disabled={busy} onClick={() => openLesson(phase.course_id!, phase.lesson_id!, phase.lesson_completed)}>{bilingual("Study recommended lesson", "సిఫార్సు చేసిన పాఠం చదవండి")}</button>}{phase.lesson_completed && <span className="lesson-done-label">Lesson completed</span>}<p className="milestone-description">{bilingual(phase.milestone_description, phase.milestone_description_te)}</p><div className="phase-activities"><p><b>Practice</b> {bilingual(phase.practice, phase.practice_te)}</p><p><b>Assessment</b> {phase.assessment}</p>{phase.assessment_topic && <button className="study-lesson-button" disabled={busy} onClick={() => startQuiz(phase.assessment_topic!)}>{bilingual("Start objective quiz", "వస్తునిష్ఠ క్విజ్ ప్రారంభించండి")}</button>}<p><b>Portfolio</b> {phase.project}</p></div><button className="milestone-button" disabled={phase.completed || busy} onClick={() => complete(phase.milestone_id)}>{phase.completed ? bilingual("Milestone completed", "దశ పూర్తయింది") : bilingual("Complete milestone", "దశను పూర్తి చేయండి")}</button></div></article>)}</section>
+          <aside className="planner-card"><span className="career-kicker">THIS WEEK</span><h3>Study planner</h3><p>{Math.round(roadmap.study_adjustment.recommended_weekly_minutes / 60)} hours · flexible sessions</p>{roadmap.study_adjustment.state === "missed_last_week" && <p className="study-adjustment" role="status">Last week: {roadmap.study_adjustment.previous_studied_minutes} of {roadmap.study_adjustment.previous_target_minutes} minutes. This week uses shorter focused blocks.</p>}<ul>{roadmap.weekly_plan.map(day => <li key={day.day}><b>{day.day}</b><span>{day.minutes} min</span></li>)}</ul><form className="study-log-form" onSubmit={saveStudyMinutes}><label>Minutes studied this week<input aria-label="Minutes studied this week" type="number" min={0} max={2400} value={studyMinutes} onChange={event => setStudyMinutes(Number(event.target.value))}/></label><button className="career-secondary" disabled={busy}>Save study time</button></form><p className="career-muted">Current log: {roadmap.study_adjustment.current_week_studied_minutes} min · target {goal?.weekly_minutes} min</p><h3>Skill gap snapshot</h3><ul className="gap-list">{roadmap.skill_gaps.map(item => <li key={item.skill_key}><span>{item.name}</span><small>{gapLabel(item.status, viewLanguage)}</small></li>)}</ul><p className="career-muted">Reported proficiency stays unverified until supported by learning evidence.</p></aside>
         </div>
       </>}
     </section>
-    {lesson && <div className="lesson-backdrop" role="presentation" onClick={() => setLesson(null)}><section className="lesson-dialog" role="dialog" aria-modal="true" aria-labelledby="lesson-title" onClick={event => event.stopPropagation()}><button className="lesson-close" aria-label="Close lesson" onClick={() => setLesson(null)}>×</button><span className="career-kicker">CATALOG LESSON</span><h2 id="lesson-title">{lesson.title}</h2><div className="lesson-content">{lesson.content}</div></section></div>}
+    {lesson && <div className="lesson-backdrop" role="presentation" onClick={() => setLesson(null)}><section className="lesson-dialog" role="dialog" aria-modal="true" aria-labelledby="lesson-title" onClick={event => event.stopPropagation()}><button className="lesson-close" aria-label="Close lesson" onClick={() => setLesson(null)}>×</button><span className="career-kicker">CATALOG LESSON</span><h2 id="lesson-title">{lesson.title}</h2><div className="lesson-content">{lesson.content}</div><button className="milestone-button lesson-complete-action" disabled={busy || lesson.completed} onClick={markLessonComplete}>{lesson.completed ? "Lesson completed" : "Mark lesson complete"}</button></section></div>}
     {quiz && <div className="lesson-backdrop" role="presentation" onClick={() => { setQuiz(null); setQuizResult(null); }}><section className="lesson-dialog" role="dialog" aria-modal="true" aria-labelledby="quiz-title" onClick={event => event.stopPropagation()}><button className="lesson-close" aria-label="Close quiz" onClick={() => { setQuiz(null); setQuizResult(null); }}>×</button><span className="career-kicker">OBJECTIVE PRACTICE · {quiz.topic}</span><h2 id="quiz-title">{quiz.prompt}</h2>{quizResult ? <><p role="status" className="quiz-feedback">{quizResult.feedback}</p><button className="career-secondary" onClick={() => { setQuiz(null); setQuizResult(null); }}>Close quiz</button></> : <div className="quiz-options">{quiz.options.map(option => <button key={option} disabled={busy} onClick={() => answerQuiz(option)}>{option}</button>)}</div>}</section></div>}
   </main>;
 }
