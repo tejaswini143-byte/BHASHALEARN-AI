@@ -9,6 +9,7 @@ const require = createRequire(import.meta.url);
 require.extensions[".ts"] = (module, filename) => module._compile(ts.transpileModule(require("node:fs").readFileSync(filename, "utf8"), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText, filename);
 const { AvatarSyncController } = require(resolve(dirname(fileURLToPath(import.meta.url)), "../src/avatarSync.ts"));
 const { teacherActionsForAvatarSyncFrame } = require(resolve(dirname(fileURLToPath(import.meta.url)), "../src/voiceContract.ts"));
+const { ImmersiveVoiceBridge } = require(resolve(dirname(fileURLToPath(import.meta.url)), "../src/immersiveVoiceBridge.ts"));
 
 function makeController() {
   const frames = [];
@@ -110,4 +111,48 @@ test("playback and pause states bridge to the existing teacher interface", () =>
   assert.deepEqual(teacherActionsForAvatarSyncFrame(frames.at(-1)).map(command => command.type), ["teacher_state", "teacher_action"]);
   controller.pause(generation);
   assert.deepEqual(teacherActionsForAvatarSyncFrame(frames.at(-1)), [{ type: "teacher_state", state: "idle" }]);
+});
+
+
+test("immersive bridge shares playback frames without per-frame React-style notifications", () => {
+  const bridge = new ImmersiveVoiceBridge();
+  let notifications = 0;
+  let frameNotifications = 0;
+  bridge.subscribe(() => { notifications += 1; });
+  bridge.subscribeFrames(() => { frameNotifications += 1; });
+  const speaking = { generation: 2, state: "playing", mode: "audio-driven-approximate", language: "mixed", currentTimeMs: 100, viseme: "aa" };
+  bridge.acceptFrame(speaking);
+  bridge.acceptFrame({ ...speaking, currentTimeMs: 215, viseme: "ee" });
+  assert.equal(bridge.getState(), "speaking");
+  assert.equal(bridge.getFrame().currentTimeMs, 215);
+  assert.equal(bridge.getFrame().viseme, "ee");
+  assert.equal(notifications, 1, "listeners update only when teacher state changes");
+  assert.equal(frameNotifications, 2, "the renderer can schedule frames without React state updates");
+  bridge.setState("listening");
+  assert.equal(bridge.getState(), "listening");
+  assert.equal(bridge.getFrame().viseme, "sil");
+  bridge.acceptFrame({ ...speaking, generation: 3, currentTimeMs: 20, viseme: "oh" });
+  bridge.acceptFrame({ ...speaking, generation: 2, currentTimeMs: 900, viseme: "aa" });
+  assert.equal(bridge.getFrame().generation, 3, "older utterance callbacks cannot replace a newer frame");
+  bridge.setState("thinking");
+  bridge.setState("error");
+  bridge.clear();
+  assert.equal(bridge.getState(), "idle");
+  assert.equal(bridge.getFrame().viseme, "sil");
+});
+
+test("controller uses media-time fallback for all supported languages without Web Audio", () => {
+  const result = language => {
+    const { frames, controller } = makeController();
+    const generation = controller.begin({}, language);
+    controller.play(generation);
+    controller.tick(generation, { currentTime: 0.15, paused: false, ended: false });
+    return frames.at(-1);
+  };
+  for (const language of ["english", "telugu", "mixed"]) {
+    const frame = result(language);
+    assert.equal(frame.language, language);
+    assert.equal(frame.mode, "audio-driven-approximate");
+    assert.notEqual(frame.viseme, "sil");
+  }
 });

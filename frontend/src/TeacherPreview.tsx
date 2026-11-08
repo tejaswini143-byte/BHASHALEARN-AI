@@ -6,6 +6,7 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { AnimationMixer, type AnimationClip, type Group, type Object3D } from "three";
 import { Link } from "react-router-dom";
 import { mapBoardTarget, settledTeacherState, validateTeacherAction, validateVisemeTimeline, visemeAt, type BoardTarget, type Expression, type TeacherAction, type TeacherState, type VisemeFrame } from "./teacherCore";
+import { immersiveVoiceBridge, type ImmersiveVoiceState } from "./immersiveVoiceBridge";
 import "./teacher-preview.css";
 
 const states: TeacherState[] = ["idle", "walk", "turn", "explain", "point", "listen", "celebrate"];
@@ -48,9 +49,14 @@ function PlaceholderTeacher({ state, expression, target, walkTarget, lookTarget,
   const leftArm = useRef<THREE.Group>(null);
   const rightArm = useRef<THREE.Group>(null);
   const head = useRef<THREE.Group>(null);
+  const mouth = useRef<THREE.Mesh>(null);
   const clock = useRef(0);
   const pointing = useMemo(() => target ? mapBoardTarget(target) : [0, 2.4, -6] as [number, number, number], [target]);
   useFrame((_, delta) => {
+    const syncedSpeaking = immersiveVoiceBridge.getState() === "speaking";
+    const syncedViseme = syncedSpeaking ? immersiveVoiceBridge.getFrame().viseme : viseme;
+    const openness = syncedViseme === "sil" ? 0.18 : syncedViseme === "aa" ? 1 : syncedViseme === "oh" ? 0.72 : syncedViseme === "ee" ? 0.48 : syncedViseme === "th" ? 0.55 : 0.32;
+    if (mouth.current) mouth.current.scale.y = reduced ? openness : THREE.MathUtils.damp(mouth.current.scale.y, openness, 22, delta);
     if (reduced) return;
     clock.current += delta;
     const t = clock.current;
@@ -82,7 +88,7 @@ function PlaceholderTeacher({ state, expression, target, walkTarget, lookTarget,
       <mesh position={[0, 0.17, -0.035]} castShadow><sphereGeometry args={[0.39, 24, 18]} /><meshStandardMaterial color="#302038" roughness={0.86} /></mesh>
       <mesh position={[0, 0.025, 0.315]}><sphereGeometry args={[0.3, 24, 18, 0, Math.PI * 2, 0.4, 2.1]} /><meshStandardMaterial color="#d6a589" roughness={0.65} /></mesh>
       {[-0.12, 0.12].map(x => <mesh key={x} position={[x, 0.025, 0.308]}><sphereGeometry args={[0.025, 10, 8]} /><meshBasicMaterial color="#171b2c" /></mesh>)}
-      <mesh position={[0, -0.095, 0.32]}><capsuleGeometry args={[0.025, viseme === "sil" ? 0.008 : 0.055, 3, 6]} /><meshStandardMaterial color={viseme === "sil" ? "#734e4c" : "#6c3049"} /></mesh>
+      <mesh ref={mouth} position={[0, -0.095, 0.32]}><capsuleGeometry args={[0.025, 0.055, 3, 6]} /><meshStandardMaterial color={viseme === "sil" ? "#734e4c" : "#6c3049"} /></mesh>
       <mesh position={[0, 0.13, 0.05]}><sphereGeometry args={[0.19, 16, 12, 0, Math.PI * 2, 0, 1.5]} /><meshStandardMaterial color={expression === "happy" || expression === "encouraging" ? "#392037" : "#302038"} roughness={0.7} /></mesh>
     </group>
     <group ref={leftArm} position={[-0.45, 1.5, 0]}><mesh position={[0, -0.34, 0]} rotation={[0, 0, 0.12]} castShadow><capsuleGeometry args={[0.13, 0.53, 4, 10]} /><meshStandardMaterial color={blouse} roughness={0.78} /></mesh><mesh position={[0, -0.67, 0.01]}><sphereGeometry args={[0.12, 12, 10]} /><meshStandardMaterial color="#d6a589" /></mesh></group>
@@ -138,9 +144,26 @@ function LoadedTeacher({ model, state, expression, viseme, walkTarget, lookTarge
     });
     invalidate();
   }, [expression, invalidate, model, viseme]);
+  const lastSyncViseme = useRef("");
   useFrame((_, delta) => {
     const clip = model.clips.find(item => item.name.toLowerCase().includes(state));
     mixer.update(reduced ? 0 : delta);
+    const syncedViseme = immersiveVoiceBridge.getState() === "speaking" ? immersiveVoiceBridge.getFrame().viseme : "sil";
+    if (syncedViseme !== lastSyncViseme.current) {
+      lastSyncViseme.current = syncedViseme;
+      model.scene.traverse((node: Object3D) => {
+        const mesh = node as THREE.Mesh;
+        const dict = mesh.morphTargetDictionary;
+        const influences = mesh.morphTargetInfluences;
+        if (!dict || !influences) return;
+        for (const [name, index] of Object.entries(dict)) {
+          if (index === undefined) continue;
+          const key = name.toLowerCase();
+          influences[index] = syncedViseme !== "sil" && (key.includes(syncedViseme) || (syncedViseme === "aa" && (key.includes("open") || key.includes("jaw")))) ? 0.55 : 0;
+        }
+      });
+      invalidate();
+    }
     if (reduced || clip || !outer.current) return;
     const time = performance.now() * 0.001;
     outer.current.position.y = Math.sin(time * 1.2) * 0.025;
@@ -181,8 +204,11 @@ function Teacher(props: TeacherProps) {
 
 // Shared by the immersive scene; it reuses the prototype rendering contract
 // without importing the preview room or its board-oriented controls.
-export function ImmersiveTeacher({ state = "idle", reduced = false }: { state?: TeacherState; reduced?: boolean }) {
-  return <Teacher state={state} expression="neutral" target={null} walkTarget={[-2, -0.5]} lookTarget={[0, 1.5, -2]} viseme="sil" reduced={reduced} model={null} />;
+export function ImmersiveTeacher({ state = "idle", reduced = false, voiceState = "idle" }: { state?: TeacherState; reduced?: boolean; voiceState?: ImmersiveVoiceState }) {
+  const voiceTeacherState: TeacherState = voiceState === "listening" ? "listen"
+    : voiceState === "speaking" || voiceState === "thinking" ? "explain"
+      : state;
+  return <Teacher state={voiceTeacherState} expression={voiceState === "thinking" ? "thinking" : "neutral"} target={null} walkTarget={[-2, -0.5]} lookTarget={[0, 1.5, -2]} viseme="sil" reduced={reduced} model={null} />;
 }
 
 function CameraRig({ cinematic }: { cinematic: boolean }) {
