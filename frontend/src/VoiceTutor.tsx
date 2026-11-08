@@ -4,6 +4,7 @@ import { ApiError, clearToken, getCurrentStudent, getToken, request, type Studen
 import { getSharedSessionContext } from "./sessionContext";
 import { SessionModeNav } from "./SessionModeNav";
 import { PracticeAssessment } from "./PracticeAssessment";
+import { AvatarSyncController, type SyncMode } from "./avatarSync";
 import "./voice.css";
 
 type Language = "english" | "telugu" | "mixed";
@@ -77,6 +78,9 @@ export function VoiceTutor() {
   const [micStarting, setMicStarting] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
   const [speaking, setSpeaking] = useState(false);
+  const [syncMode, setSyncMode] = useState<SyncMode>("silent");
+  const [mouthViseme, setMouthViseme] = useState("sil");
+  const [playbackRun, setPlaybackRun] = useState(0);
   const [speechLoading, setSpeechLoading] = useState(false);
   const [autoSpeak, setAutoSpeak] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -99,6 +103,19 @@ export function VoiceTutor() {
   const chunksRef = useRef<Float32Array[]>([]);
   const audioCache = useRef(new Map<string, string>());
   const audioRef = useRef<HTMLAudioElement>(null);
+  const syncGenerationRef = useRef<number | null>(null);
+  const audioLanguageRef = useRef<Language>("mixed");
+  const mouthVisemeRef = useRef("sil");
+  const playbackContextRef = useRef<AudioContext | null>(null);
+  const playbackAnalyserRef = useRef<AnalyserNode | null>(null);
+  const playbackSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
+  const playbackSamplesRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
+  const syncControllerRef = useRef<AvatarSyncController | null>(null);
+  if (!syncControllerRef.current) syncControllerRef.current = new AvatarSyncController(frame => {
+    if (!mounted.current) return;
+    setSyncMode(frame.mode);
+    if (mouthVisemeRef.current !== frame.viseme) { mouthVisemeRef.current = frame.viseme; setMouthViseme(frame.viseme); }
+  });
   const speechRequestRef = useRef<AbortController | null>(null);
   const recordingActive = useRef(false);
   const micRequestActive = useRef(false);
@@ -160,25 +177,84 @@ export function VoiceTutor() {
   useEffect(() => { scrollBottom.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [messages, busy]);
   useEffect(() => {
     if (!audioUrl || !audioRef.current) return;
-    void audioRef.current.play().then(() => setSpeaking(true)).catch(() => setNotice("Audio is ready. Press Play to start playback."));
+    syncGenerationRef.current = syncControllerRef.current!.begin({}, audioLanguageRef.current);
+    void audioRef.current.play().catch(() => setNotice("Audio is ready. Press Play to start playback."));
   }, [audioUrl]);
+  useEffect(() => {
+    if (!speaking) return;
+    const audio = audioRef.current;
+    const generation = syncGenerationRef.current;
+    if (!audio || generation === null) return;
+    let animationFrame = 0;
+    const animate = () => {
+      let level: number | undefined;
+      const analyser = playbackAnalyserRef.current;
+      const samples = playbackSamplesRef.current;
+      if (analyser && samples) {
+        analyser.getByteTimeDomainData(samples);
+        let energy = 0;
+        for (const sample of samples) { const normalized = (sample - 128) / 128; energy += normalized * normalized; }
+        level = Math.sqrt(energy / samples.length);
+      }
+      syncControllerRef.current?.tick(generation, { currentTime: audio.currentTime, duration: audio.duration, paused: audio.paused, ended: audio.ended }, level);
+      if (!audio.paused && !audio.ended) animationFrame = window.requestAnimationFrame(animate);
+    };
+    animationFrame = window.requestAnimationFrame(animate);
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, [speaking, playbackRun]);
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
       if (recordingTimer.current !== null) window.clearInterval(recordingTimer.current);
       void releaseMicrophone();
+      syncControllerRef.current?.cancel();
+      audioRef.current?.pause();
+      if (audioRef.current) audioRef.current.currentTime = 0;
+      if (playbackSourceRef.current) { playbackSourceRef.current.disconnect(); playbackSourceRef.current = null; }
+      if (playbackContextRef.current && playbackContextRef.current.state !== "closed") void playbackContextRef.current.close();
       audioCache.current.forEach(url => URL.revokeObjectURL(url));
     };
   }, [releaseMicrophone]);
 
   function stopPlayback() {
     speechRequestRef.current?.abort(); speechRequestRef.current = null;
+    if (syncGenerationRef.current !== null) syncControllerRef.current?.cancel(syncGenerationRef.current);
+    syncGenerationRef.current = null;
     if (audioRef.current) { audioRef.current.pause(); audioRef.current.currentTime = 0; }
     setSpeaking(false); setSpeechLoading(false);
   }
+  function startPlaybackSync() {
+    const controller = syncControllerRef.current!;
+    if (syncGenerationRef.current === null || ["completed", "interrupted", "error"].includes(controller.currentState())) {
+      syncGenerationRef.current = controller.begin({}, audioLanguageRef.current);
+    }
+    controller.play(syncGenerationRef.current);
+    const audio = audioRef.current;
+    if (audio && !playbackAnalyserRef.current && typeof AudioContext !== "undefined") {
+      try {
+        const context = new AudioContext();
+        const analyser = context.createAnalyser(); analyser.fftSize = 256;
+        const source = context.createMediaElementSource(audio);
+        source.connect(analyser); analyser.connect(context.destination);
+        void context.resume().catch(() => undefined);
+        playbackContextRef.current = context; playbackAnalyserRef.current = analyser;
+        playbackSourceRef.current = source; playbackSamplesRef.current = new Uint8Array(new ArrayBuffer(analyser.fftSize));
+      } catch { /* Playback continues; the controller labels its timing-based mouth motion as approximate. */ }
+    }
+    setSpeaking(true); setPlaybackRun(value => value + 1);
+  }
+  function pausePlaybackSync() {
+    if (syncGenerationRef.current !== null && audioRef.current && !audioRef.current.ended) syncControllerRef.current?.pause(syncGenerationRef.current);
+    setSpeaking(false);
+  }
+  function completePlaybackSync() {
+    if (syncGenerationRef.current !== null) syncControllerRef.current?.complete(syncGenerationRef.current);
+    setSpeaking(false);
+  }
   function chooseSession(id: string) {
     if (busy || transcribing || recording) return;
+    stopPlayback();
     setError(""); setNotice(""); setAudioUrl(""); setSelected(id); setParams({ session: id }); setMobileMenu(false);
   }
 
@@ -267,13 +343,14 @@ export function VoiceTutor() {
   }
 
   async function generateSpeech(text: string, sessionId: string, mode: Language) {
+    audioLanguageRef.current = mode;
     const cacheKey = `${sessionId}:${mode}:${text}`;
     const cached = audioCache.current.get(cacheKey);
     if (cached) {
       if (audioUrl === cached && audioRef.current) {
         audioRef.current.currentTime = 0;
-        void audioRef.current.play().then(() => setSpeaking(true)).catch(() => setNotice("Audio is ready. Press Play to start playback."));
-      } else setAudioUrl(cached);
+        void audioRef.current.play().catch(() => setNotice("Audio is ready. Press Play to start playback."));
+      } else { stopPlayback(); setAudioUrl(cached); }
       return;
     }
     stopPlayback(); setAudioUrl("");
@@ -338,7 +415,7 @@ export function VoiceTutor() {
         <div className="vt-status" role="status">{micStarting ? "Requesting microphone permission…" : recording ? `Recording… ${recordingSeconds}s / 30s — tap the orb to stop` : transcribing ? "Transcribing with Gnani Prisma…" : speaking ? "Tutor audio is playing…" : speechLoading ? "Generating tutor audio with Gnani Timbre…" : busy ? "Gemini tutor is thinking…" : selected ? "Tap the orb to record a question" : "Choose a learning session first"}</div>
         <label className="vt-autospeak"><input type="checkbox" checked={autoSpeak} onChange={event => setAutoSpeak(event.target.checked)}/> Generate and play tutor replies automatically</label>
         {speechLoading && !audioUrl && <button type="button" className="vt-stop-generation" onClick={stopPlayback}>Cancel speech generation</button>}
-        {audioUrl && <div className="vt-playback"><audio ref={audioRef} src={audioUrl} controls onPlay={() => setSpeaking(true)} onPause={() => setSpeaking(false)} onEnded={() => setSpeaking(false)}>Your browser cannot play this WAV audio.</audio><button type="button" onClick={stopPlayback}>Stop audio</button></div>}
+        {audioUrl && <div className="vt-playback"><audio ref={audioRef} src={audioUrl} controls onPlay={startPlaybackSync} onPause={pausePlaybackSync} onEnded={completePlaybackSync} onError={() => { if (syncGenerationRef.current !== null) syncControllerRef.current?.fail(syncGenerationRef.current); setSpeaking(false); }}>Your browser cannot play this WAV audio.</audio><button type="button" onClick={stopPlayback}>Stop audio</button><small>{syncMode === "timestamped-visemes" ? "Timestamped viseme cues" : syncMode === "timestamped-phonemes-approximate" ? "Timestamped phonemes · approximate mouth shapes" : "Approximate audio-driven mouth animation · no phoneme alignment"} · {mouthViseme} mouth shape</small></div>}
         <div className="vt-stage-note">Microphone audio is converted to bounded mono PCM WAV and sent to the authenticated backend. Browser playback uses the WAV returned by Gnani Timbre.</div>
         <div className="vt-new-topic"><form onSubmit={createSession}><label htmlFor="vt-topic">New learning topic</label><div><input id="vt-topic" value={topic} maxLength={200} onChange={event => setTopic(event.target.value)} placeholder="e.g. Everyday English" required/><button disabled={!topic.trim() || creating || busy || recording}>{creating ? "Creating…" : "+ Create"}</button></div></form></div>
       </section>
