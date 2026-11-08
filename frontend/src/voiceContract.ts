@@ -1,4 +1,5 @@
 import { validateTeacherAction, type BoardTarget, type TeacherAction, type VisemeFrame } from "./teacherCore";
+import type { AvatarSyncFrame } from "./avatarSync";
 
 export type VoiceLanguage = "english" | "telugu" | "mixed";
 
@@ -37,6 +38,8 @@ export type SpeechAudio = {
   /** Only populated when the provider or alignment service supplies timing. */
   durationMs?: number;
   visemes?: VisemeFrame[];
+  /** Optional timestamped phoneme labels from a real alignment source; not emitted by current Timbre REST. */
+  phonemes?: Array<{ atMs: number; durationMs: number; phoneme: string }>;
 };
 
 export type RecognitionRequest = {
@@ -81,6 +84,17 @@ export function teacherActionsForVoiceEvent(event: TeacherVoiceEvent): TeacherIn
     case "smartboard_command":
       return [{ type: "teacher_action", action: validateTeacherAction(event.action) }];
   }
+}
+
+/** Narrow bridge from controller samples to the existing ADV-05 teacher actions. */
+export function teacherActionsForAvatarSyncFrame(frame: AvatarSyncFrame): TeacherIntegrationCommand[] {
+  if (frame.state !== "playing") return [{ type: "teacher_state", state: "idle" }];
+  const commands: TeacherIntegrationCommand[] = [{ type: "teacher_state", state: "explain" }];
+  if (frame.viseme !== "sil") commands.push({
+    type: "teacher_action",
+    action: validateTeacherAction({ type: "speak", timeline: [{ atMs: 0, durationMs: 120, viseme: frame.viseme }] }),
+  });
+  return commands;
 }
 
 /** Deterministic development double. It emits exact Telugu/English text and a tiny mock WAV URL. */
