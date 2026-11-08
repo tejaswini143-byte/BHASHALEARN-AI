@@ -152,6 +152,8 @@ def submit_answer(
     )
     if attempt is None:
         raise HTTPException(status_code=404, detail="Assessment attempt not found")
+    if attempt.question_id.startswith("int13:"):
+        raise HTTPException(status_code=409, detail="This question belongs to a quiz. Submit the complete quiz instead.")
     owned_session(attempt.session_id, student, db)
 
     answer = payload.answer.strip()

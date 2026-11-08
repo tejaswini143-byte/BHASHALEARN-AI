@@ -9,6 +9,7 @@ from .api.tutor import router as tutor_router
 from .api.memories import router as memories_router
 from .api.progress import router as progress_router
 from .api.assessments import router as assessments_router
+from .api.quizzes import router as quizzes_router
 from .api.voice import router as voice_router
 from .api.session_context import router as session_context_router
 from .api.documents import router as documents_router
@@ -32,6 +33,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(memories_router, prefix=config.api_prefix)
     app.include_router(progress_router, prefix=config.api_prefix)
     app.include_router(assessments_router, prefix=config.api_prefix)
+    app.include_router(quizzes_router, prefix=config.api_prefix)
     app.include_router(voice_router, prefix=config.api_prefix)
     app.include_router(session_context_router, prefix=config.api_prefix)
     app.include_router(documents_router, prefix=config.api_prefix)

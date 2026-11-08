@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { readFileSync } from "node:fs";
 
 const startServers = process.env.BHASHALEARN_E2E_START_SERVERS === "1";
+const mockApi = process.env.BHASHALEARN_E2E_MOCK_API === "1";
 const externalFrontendUrl = process.env.BHASHALEARN_E2E_FRONTEND_URL;
 const allowMutations = process.env.BHASHALEARN_E2E_ALLOW_MUTATIONS === "1";
 const useFakeEmbeddingProvider = process.env.BHASHALEARN_E2E_FAKE_EMBEDDINGS === "1";
@@ -45,7 +46,7 @@ function sameDatabase(left: string, right: string) {
 }
 
 if (allowMutations) assertDisposableDatabase(databaseUrl);
-if (startServers) assertDisposableDatabase(databaseUrl);
+if (startServers && !mockApi) assertDisposableDatabase(databaseUrl);
 
 const python = process.env.BHASHALEARN_E2E_PYTHON || (process.platform === "win32"
   ? resolve("..", ".venv", "Scripts", "python.exe")
@@ -65,8 +66,8 @@ export default defineConfig({
   workers: 1,
   timeout: 30_000,
   expect: { timeout: 7_500 },
-  reporter: [["list"], ["html", { outputFolder: "playwright-report", open: "never" }]],
-  outputDir: "test-results",
+  reporter: [["list"], ["html", { outputFolder: process.env.BHASHALEARN_E2E_REPORT_DIR || "playwright-report-int13", open: "never" }]],
+  outputDir: process.env.BHASHALEARN_E2E_ARTIFACT_DIR || "test-results-int13",
   use: {
     baseURL: startServers ? dedicatedFrontendUrl : frontendUrl,
     browserName: "chromium",
@@ -79,7 +80,7 @@ export default defineConfig({
       : undefined,
   },
   webServer: startServers ? [
-    {
+    ...(!mockApi ? [{
       command: `${quote(python)} -m uvicorn ${useFakeEmbeddingProvider ? "backend.tests.adv02_e2e_server:app" : "backend.app.main:app"} --host 127.0.0.1 --port ${testBackendPort}`,
       cwd: "..",
       url: `${dedicatedBackendUrl}/health`,
@@ -90,7 +91,7 @@ export default defineConfig({
         BHASHALEARN_JWT_SECRET_KEY: process.env.BHASHALEARN_E2E_JWT_SECRET || "e2e-only-secret-key-not-for-production",
         BHASHALEARN_DOCUMENT_STORAGE_DIR: resolve("..", "test-data", "private-documents"),
       },
-    },
+    }] : []),
     {
       command: `npm run dev -- --host 127.0.0.1 --port ${testFrontendPort} --strictPort`,
       cwd: ".",
