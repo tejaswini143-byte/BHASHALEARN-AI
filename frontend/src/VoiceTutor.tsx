@@ -99,6 +99,7 @@ export function VoiceTutor() {
   const chunksRef = useRef<Float32Array[]>([]);
   const audioCache = useRef(new Map<string, string>());
   const audioRef = useRef<HTMLAudioElement>(null);
+  const speechRequestRef = useRef<AbortController | null>(null);
   const recordingActive = useRef(false);
   const micRequestActive = useRef(false);
   const voiceTurnActive = useRef(false);
@@ -171,7 +172,11 @@ export function VoiceTutor() {
     };
   }, [releaseMicrophone]);
 
-  function stopPlayback() { if (audioRef.current) { audioRef.current.pause(); audioRef.current.currentTime = 0; } setSpeaking(false); }
+  function stopPlayback() {
+    speechRequestRef.current?.abort(); speechRequestRef.current = null;
+    if (audioRef.current) { audioRef.current.pause(); audioRef.current.currentTime = 0; }
+    setSpeaking(false); setSpeechLoading(false);
+  }
   function chooseSession(id: string) {
     if (busy || transcribing || recording) return;
     setError(""); setNotice(""); setAudioUrl(""); setSelected(id); setParams({ session: id }); setMobileMenu(false);
@@ -273,21 +278,24 @@ export function VoiceTutor() {
     }
     stopPlayback(); setAudioUrl("");
     setSpeechLoading(true);
+    const controller = new AbortController(); speechRequestRef.current = controller;
     try {
       const response = await fetch(`/api/v1/voice/sessions/${encodeURIComponent(sessionId)}/speech`, {
-        method: "POST", headers: { ...headers(), "Content-Type": "application/json" }, body: JSON.stringify({ text, language: mode }),
+        method: "POST", headers: { ...headers(), "Content-Type": "application/json" }, body: JSON.stringify({ text, language: mode }), signal: controller.signal,
       });
       const blob = await readAudioResponse(response);
+      if (controller.signal.aborted) return;
       const url = URL.createObjectURL(blob); audioCache.current.set(cacheKey, url); setAudioUrl(url); setNotice("Timbre audio is ready.");
       if (audioCache.current.size > 20) {
         const oldest = audioCache.current.keys().next().value;
         if (oldest) { URL.revokeObjectURL(audioCache.current.get(oldest)!); audioCache.current.delete(oldest); }
       }
     } catch (cause) {
+      if (controller.signal.aborted) return;
       if (cause instanceof ApiError && cause.status === 401) handleError(cause);
       else setNotice("Tutor response is saved as text. Speech playback failed: " + errorText(cause));
     }
-    finally { setSpeechLoading(false); }
+    finally { if (speechRequestRef.current === controller) speechRequestRef.current = null; setSpeechLoading(false); }
   }
 
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
@@ -329,6 +337,7 @@ export function VoiceTutor() {
         <div className={recording ? "vt-wave vt-wave-active" : "vt-wave"} aria-hidden="true">{Array.from({length: 35}, (_, index) => <i key={index} style={{ height: `${12 + Math.abs(Math.sin(index * 1.43)) * 38}px`, animationDelay: `${index * 37}ms` }}/>)}</div>
         <div className="vt-status" role="status">{micStarting ? "Requesting microphone permission…" : recording ? `Recording… ${recordingSeconds}s / 30s — tap the orb to stop` : transcribing ? "Transcribing with Gnani Prisma…" : speaking ? "Tutor audio is playing…" : speechLoading ? "Generating tutor audio with Gnani Timbre…" : busy ? "Gemini tutor is thinking…" : selected ? "Tap the orb to record a question" : "Choose a learning session first"}</div>
         <label className="vt-autospeak"><input type="checkbox" checked={autoSpeak} onChange={event => setAutoSpeak(event.target.checked)}/> Generate and play tutor replies automatically</label>
+        {speechLoading && !audioUrl && <button type="button" className="vt-stop-generation" onClick={stopPlayback}>Cancel speech generation</button>}
         {audioUrl && <div className="vt-playback"><audio ref={audioRef} src={audioUrl} controls onPlay={() => setSpeaking(true)} onPause={() => setSpeaking(false)} onEnded={() => setSpeaking(false)}>Your browser cannot play this WAV audio.</audio><button type="button" onClick={stopPlayback}>Stop audio</button></div>}
         <div className="vt-stage-note">Microphone audio is converted to bounded mono PCM WAV and sent to the authenticated backend. Browser playback uses the WAV returned by Gnani Timbre.</div>
         <div className="vt-new-topic"><form onSubmit={createSession}><label htmlFor="vt-topic">New learning topic</label><div><input id="vt-topic" value={topic} maxLength={200} onChange={event => setTopic(event.target.value)} placeholder="e.g. Everyday English" required/><button disabled={!topic.trim() || creating || busy || recording}>{creating ? "Creating…" : "+ Create"}</button></div></form></div>

@@ -19,4 +19,8 @@ The first experiment lives under `pocs/poc01_prisma_stt/`. It is intentionally i
 
 See [POC-01 setup](pocs/poc01_prisma_stt/README.md) and [Phase 1 tracker](docs/PHASE1_TRACKER.md).
 
+See [ADV-06 Gnani voice architecture](docs/ADV-06-voice-architecture.md) for
+the current voice transport contract, teacher integration boundary, and live
+provider verification status.
+
 Do not commit API keys or recorded private speech.
