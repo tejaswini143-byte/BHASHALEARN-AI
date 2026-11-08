@@ -23,6 +23,8 @@ from backend.app.services.document_index import IndexingError, index_document, s
 from backend.app.services.embeddings import EmbeddingError, GeminiEmbeddingProvider
 from backend.app.services.rag_tutor import GeneratedAnswer, RetrievalRequest, VectorPassageRetriever, orchestrate_tutoring
 
+CURRENT_ORM_SCHEMA_REVISION = "0009_learning_pace"
+
 
 class ControlledProvider:
     BATCH_SIZE = 16
@@ -60,7 +62,7 @@ def pg_context():
         identity = connection.execute(text("SELECT current_database(), current_user")).one()
         extension = connection.execute(text("SELECT extversion FROM pg_extension WHERE extname='vector'")).scalar_one_or_none()
         revision = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one_or_none()
-        if identity != ("bhashalearn_adv02_test", "bhashalearn_adv02") or extension != "0.8.7" or revision != "0008_document_embeddings":
+        if identity != ("bhashalearn_adv02_test", "bhashalearn_adv02") or extension != "0.8.7" or revision != CURRENT_ORM_SCHEMA_REVISION:
             engine.dispose()
             raise RuntimeError("PostgreSQL integration identity, extension, or migration-head check failed before test writes.")
     factory = sessionmaker(bind=engine, expire_on_commit=False)
@@ -236,6 +238,10 @@ def test_postgres_concurrent_indexing_attempt_is_rejected(pg_context):
 def test_postgres_rag_retrieval_citations_ownership_deactivation_deletion_and_chat_failure(pg_context, monkeypatch):
     _, factory, created = pg_context
     with factory() as db:
+        schema_revision = db.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+        assert schema_revision == CURRENT_ORM_SCHEMA_REVISION, (
+            "RAG integration requires the current ORM schema before querying student preferences"
+        )
         owner = seed_student(db, created)
         stranger = seed_student(db, created)
         source = seed_pdf_pages(db, owner.id, "fractions-source.pdf", ["", "A fraction has equal parts."])
