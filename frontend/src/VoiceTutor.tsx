@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { ApiError, clearToken, getCurrentStudent, getToken, request, type Student } from "./auth";
 import { getSharedSessionContext } from "./sessionContext";
+import { DEFAULT_LEARNING_PREFERENCES, mergeLearningPreferences, type LearningPreferences } from "./learningPreferences";
 import { SessionModeNav } from "./SessionModeNav";
 import { PracticeAssessment } from "./PracticeAssessment";
 import "./voice.css";
@@ -10,7 +11,7 @@ type Language = "english" | "telugu" | "mixed";
 type Session = { id: string; topic: string; language: Language; created_at: string };
 type Message = { id: string; role: "user" | "assistant"; content: string; created_at: string };
 type TutorReply = { reply: string; session_id: string; language: string; learning_level: string };
-type Preferences = { preferred_language: Language; learning_level: string; learning_goal: string | null };
+type Preferences = LearningPreferences;
 const headers = () => ({ Authorization: "Bearer " + getToken() });
 function errorText(cause: unknown) { return cause instanceof Error ? cause.message : "Something went wrong."; }
 
@@ -69,7 +70,7 @@ export function VoiceTutor() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [selected, setSelected] = useState("");
   const [language, setLanguage] = useState<Language>("mixed");
-  const [preferences, setPreferences] = useState<Preferences>({ preferred_language: "mixed", learning_level: "beginner", learning_goal: null });
+  const [preferences, setPreferences] = useState<Preferences>(DEFAULT_LEARNING_PREFERENCES);
   const [topic, setTopic] = useState("");
   const [draft, setDraft] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
@@ -151,7 +152,7 @@ export function VoiceTutor() {
         if (loadId !== activeHistory.current) return;
         setMessages(context.messages);
         setLanguage(context.preferred_language);
-        setPreferences({ preferred_language: context.preferred_language, learning_level: context.learning_level, learning_goal: context.learning_goal });
+        setPreferences({ preferred_language: context.preferred_language, learning_level: context.learning_level, learning_pace: context.learning_pace, learning_goal: context.learning_goal });
       })
       .catch(cause => { if (loadId === activeHistory.current) handleError(cause); })
       .finally(() => { if (loadId === activeHistory.current) setHistoryLoading(false); });
@@ -195,7 +196,7 @@ export function VoiceTutor() {
     if (busy || recording || transcribing) return;
     const previous = language; setLanguage(value); setError(""); setNotice("");
     try {
-      const updated = await request<Preferences>("/students/me/preferences", { method: "PUT", headers: headers(), body: JSON.stringify({ ...preferences, preferred_language: value }) });
+      const updated = await request<Preferences>("/students/me/preferences", { method: "PUT", headers: headers(), body: JSON.stringify(mergeLearningPreferences(preferences, { preferred_language: value })) });
       setPreferences(updated); setNotice("Tutor language updated. Your session and conversation remain unchanged.");
     } catch (cause) { setLanguage(previous); handleError(cause); }
   }

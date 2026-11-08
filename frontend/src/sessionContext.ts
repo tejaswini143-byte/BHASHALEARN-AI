@@ -1,4 +1,5 @@
 import { getToken, request } from "./auth";
+import type { LearningPace } from "./learningPreferences";
 
 export type LearningLanguage = "english" | "telugu" | "mixed";
 export type LearningLevel = "beginner" | "intermediate" | "advanced";
@@ -17,6 +18,7 @@ export type SharedSessionContext = {
   topic: string;
   preferred_language: LearningLanguage;
   learning_level: LearningLevel;
+  learning_pace: LearningPace;
   learning_goal: string | null;
   messages: SharedMessage[];
   visual_lesson: VisualLessonContext | null;

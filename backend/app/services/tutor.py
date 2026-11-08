@@ -18,6 +18,12 @@ LANGUAGE_GUIDANCE = {
     ),
 }
 
+PACE_GUIDANCE = {
+    "slow": "Use one idea at a time, shorter explanation steps, and frequent understanding checks.",
+    "steady": "Use a balanced pace with clear examples and regular understanding checks.",
+    "fast": "Move briskly through familiar steps, while keeping explanations clear and checking understanding.",
+}
+
 
 def build_instruction(
     topic: str,
@@ -26,6 +32,7 @@ def build_instruction(
     goal: str | None,
     visual_context: str | None = None,
     learning_context: str | None = None,
+    learning_pace: str = "steady",
 ) -> str:
     instruction = (
         "You are BHASHALEARN AI, a supportive bilingual Telugu-English tutor. "
@@ -36,6 +43,7 @@ def build_instruction(
         f"Current topic: {topic}\n"
         f"Language preference: {LANGUAGE_GUIDANCE.get(language, LANGUAGE_GUIDANCE['mixed'])}\n"
         f"Student level: {level}\n"
+        f"Learning pace: {PACE_GUIDANCE.get(learning_pace, PACE_GUIDANCE['steady'])}\n"
         f"Learning goal: {goal or 'Learn the current topic'}"
     )
     if learning_context:

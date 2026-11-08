@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from backend.app.api.auth import current_student
 from backend.app.api.documents import get_embedding_provider
 from backend.app.api.sessions import owned_session
-from backend.app.db.models import ChatMessage, LearningMemory, LearningProgress, SessionVisualState, Student, StudentPreferences, utc_now
+from backend.app.db.models import ChatMessage, LearningAssessmentAttempt, LearningMemory, LearningProgress, SessionVisualState, Student, StudentPreferences, utc_now
 from backend.app.db.session import get_db
 from backend.app.services.tutor import build_instruction, generate_tutor_reply
 from backend.app.services.adaptive_learning import normalize_topic, recommend
@@ -81,28 +81,58 @@ def tutor_chat(
     level = prefs.learning_level if prefs else "beginner"
     goal = prefs.learning_goal if prefs else None
     language = prefs.preferred_language if prefs else session.language
+    learning_pace = prefs.learning_pace if prefs else "steady"
     visual_state = db.get(SessionVisualState, session_id)
     visual_lesson = (
         describe_visual_lesson(visual_state.visual_key, visual_state.start_node, visual_state.end_node)
         if visual_state is not None
         else None
     )
+    topic_key = normalize_topic(session.topic)
     progress = db.scalar(
         select(LearningProgress)
         .where(
             LearningProgress.student_id == student.id,
-            LearningProgress.normalized_topic_key == normalize_topic(session.topic),
+            LearningProgress.normalized_topic_key == topic_key,
         )
         .order_by(LearningProgress.updated_at.desc(), LearningProgress.id.asc())
     )
+    recent_outcomes_desc = db.scalars(
+        select(LearningAssessmentAttempt.is_correct)
+        .where(
+            LearningAssessmentAttempt.student_id == student.id,
+            LearningAssessmentAttempt.normalized_topic_key == topic_key,
+            LearningAssessmentAttempt.is_correct.is_not(None),
+            LearningAssessmentAttempt.answered_at.is_not(None),
+        )
+        .order_by(LearningAssessmentAttempt.answered_at.desc(), LearningAssessmentAttempt.id.desc())
+        .limit(5)
+    ).all()
+    recent_outcomes = tuple(bool(value) for value in reversed(recent_outcomes_desc))
     evidence_parts: list[str] = []
     if progress is not None and progress.evidence_attempts > 0:
-        policy = recommend(progress.evidence_attempts, progress.correct_attempts, progress.incorrect_attempts)
+        policy = recommend(
+            progress.evidence_attempts,
+            progress.correct_attempts,
+            progress.incorrect_attempts,
+            recent_outcomes=recent_outcomes,
+        )
+        mastery_score = max(0.0, min(100.0, float(progress.mastery_score)))
         evidence_parts.append(
-            f"Topic mastery from submitted objective practice: {progress.mastery_score:.1f}% "
+            f"Topic mastery from submitted objective practice: {mastery_score:.1f}% "
             f"across {progress.evidence_attempts} scored answers ({progress.correct_attempts} correct, "
             f"{progress.incorrect_attempts} incorrect). Suggested teaching strategy: {policy.strategy}. "
             f"Next step: {policy.recommendation}"
+        )
+    else:
+        evidence_parts.append(
+            "No scored progress is available for this topic. Start with a short diagnostic question; "
+            "do not infer the student's mastery."
+        )
+    if recent_outcomes:
+        outcome_labels = ", ".join("correct" if outcome else "incorrect" for outcome in recent_outcomes)
+        evidence_parts.append(
+            "Recent scored outcomes for this topic (oldest to newest): " + outcome_labels + "."
         )
     recent_memories = db.scalars(
         select(LearningMemory)
@@ -124,6 +154,7 @@ def tutor_chat(
         goal,
         visual_context=tutor_visual_reference(visual_lesson),
         learning_context=learning_context,
+        learning_pace=learning_pace,
     )
     # Use role order as a stable tie-break for legacy messages with equal timestamps.
     # The reverse below turns newest-first order into user-before-assistant chronology.

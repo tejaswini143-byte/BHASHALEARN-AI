@@ -113,6 +113,110 @@ def test_tutor_receives_assessment_evidence_and_saved_topic_memory(tmp_path, mon
         get_settings.cache_clear()
 
 
+def test_tutor_instruction_includes_selected_learning_pace(tmp_path, monkeypatch):
+    client, engine = _client(tmp_path, monkeypatch)
+    try:
+        with client:
+            headers = _auth(client, "pace-context@example.com")
+            session = client.post("/api/v1/sessions", headers=headers, json={"topic": "Fractions", "language": "mixed"}).json()
+            assert client.put("/api/v1/students/me/preferences", headers=headers, json={
+                "preferred_language": "mixed", "learning_level": "beginner", "learning_pace": "slow", "learning_goal": None,
+            }).status_code == 200
+            captured = {"instructions": []}
+            def record_instruction(instruction, history):
+                captured["instructions"].append(instruction)
+                return "Okay"
+            monkeypatch.setattr("backend.app.api.tutor.generate_tutor_reply", record_instruction)
+            response = client.post(f"/api/v1/tutor/sessions/{session['id']}/chat", headers=headers, json={"message": "Help me"})
+            assert response.status_code == 200, response.text
+            assert "Learning pace: Use one idea at a time" in captured["instructions"][-1]
+    finally:
+        client.close(); engine.dispose(); get_settings.cache_clear()
+
+
+def test_tutor_context_uses_recent_outcomes_and_missing_progress_fallback(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from backend.app.db.models import LearningAssessmentAttempt, LearningProgress
+    from backend.app.services.adaptive_learning import normalize_topic
+
+    client, engine = _client(tmp_path, monkeypatch)
+    try:
+        with client:
+            headers = _auth(client, "recent-context@example.com")
+            session = client.post("/api/v1/sessions", headers=headers, json={"topic": "Fractions", "language": "mixed"}).json()
+            with engine.begin() as connection:
+                student_id = connection.exec_driver_sql("SELECT id FROM students WHERE email = 'recent-context@example.com'").scalar_one()
+            now = datetime.now(timezone.utc)
+            with engine.begin() as connection:
+                connection.execute(LearningProgress.__table__.insert().values(
+                    student_id=student_id, topic="Fractions", normalized_topic_key=normalize_topic("Fractions"),
+                    evidence_attempts=5, correct_attempts=5, incorrect_attempts=0, mastery_score=100,
+                    updated_at=now,
+                ))
+                for i, correct in enumerate((True, False, False)):
+                    connection.execute(LearningAssessmentAttempt.__table__.insert().values(
+                        student_id=student_id, session_id=session["id"], topic="Fractions",
+                        normalized_topic_key=normalize_topic("Fractions"), is_correct=correct,
+                        question_id=f"q-{i}", prompt="Which fraction is equivalent?", options_json='["1/2","2/4"]',
+                        expected_answer="2/4", idempotency_key=f"recent-{i}",
+                        answered_at=now + timedelta(seconds=i), issued_at=now + timedelta(seconds=i),
+                    ))
+            captured = {"instructions": []}
+            def record_instruction(instruction, history):
+                captured["instructions"].append(instruction)
+                return "Okay"
+            monkeypatch.setattr("backend.app.api.tutor.generate_tutor_reply", record_instruction)
+            response = client.post(f"/api/v1/tutor/sessions/{session['id']}/chat", headers=headers, json={"message": "Help me"})
+            assert response.status_code == 200, response.text
+            prompt = captured["instructions"][-1]
+            assert "Recent scored outcomes for this topic (oldest to newest): correct, incorrect, incorrect" in prompt
+            assert "Suggested teaching strategy: hinted_practice" in prompt
+
+            other_session = client.post("/api/v1/sessions", headers=headers, json={"topic": "Geometry", "language": "mixed"}).json()
+            response = client.post(f"/api/v1/tutor/sessions/{other_session['id']}/chat", headers=headers, json={"message": "Start"})
+            assert response.status_code == 200
+            assert "No scored progress is available for this topic" in captured["instructions"][-1]
+    finally:
+        client.close(); engine.dispose(); get_settings.cache_clear()
+
+
+def test_tutor_context_is_isolated_between_students(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    from backend.app.db.models import LearningAssessmentAttempt, LearningMemory, LearningProgress
+    from backend.app.services.adaptive_learning import normalize_topic
+
+    client, engine = _client(tmp_path, monkeypatch)
+    try:
+        with client:
+            headers = _auth(client, "owner-context@example.com")
+            other_headers = _auth(client, "other-context@example.com")
+            session = client.post("/api/v1/sessions", headers=headers, json={"topic": "Algebra", "language": "mixed"}).json()
+            other_session = client.post("/api/v1/sessions", headers=other_headers, json={"topic": "Algebra", "language": "mixed"}).json()
+            with engine.begin() as connection:
+                owner_id, other_id = connection.exec_driver_sql("SELECT id FROM students WHERE email = 'owner-context@example.com'").scalar_one(), connection.exec_driver_sql("SELECT id FROM students WHERE email = 'other-context@example.com'").scalar_one()
+                now = datetime.now(timezone.utc)
+                connection.execute(LearningProgress.__table__.insert().values(student_id=other_id, topic="Algebra", normalized_topic_key=normalize_topic("Algebra"), evidence_attempts=9, correct_attempts=9, incorrect_attempts=0, mastery_score=100, updated_at=now))
+                connection.execute(LearningMemory.__table__.insert().values(student_id=other_id, topic="Algebra", note="FOREIGN STUDENT PRIVATE MARKER", created_at=now))
+                connection.execute(LearningAssessmentAttempt.__table__.insert().values(
+                    student_id=other_id, session_id=other_session["id"], topic="Algebra",
+                    normalized_topic_key=normalize_topic("Algebra"), is_correct=False,
+                    question_id="foreign-q", prompt="Private assessment", options_json='["x","y"]',
+                    expected_answer="x", idempotency_key="foreign-history", answered_at=now, issued_at=now,
+                ))
+            captured = {}
+            monkeypatch.setattr("backend.app.api.tutor.generate_tutor_reply", lambda instruction, history: captured.setdefault("instruction", instruction) or "Okay")
+            response = client.post(f"/api/v1/tutor/sessions/{session['id']}/chat", headers=headers, json={"message": "Help"})
+            assert response.status_code == 200
+            prompt = captured["instruction"]
+            assert "No scored progress is available for this topic" in prompt
+            assert "FOREIGN STUDENT PRIVATE MARKER" not in prompt
+            assert "9 scored answers" not in prompt
+            assert "Recent scored outcomes for this topic" not in prompt
+            assert owner_id != other_id
+    finally:
+        client.close(); engine.dispose(); get_settings.cache_clear()
+
+
 def test_gemini_transport_sends_system_instruction_and_parses_text(monkeypatch):
     from backend.app.services import tutor
 
