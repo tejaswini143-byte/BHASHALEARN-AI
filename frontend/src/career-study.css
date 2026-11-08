@@ -1,0 +1,13 @@
+.career-custom-goal{display:grid;gap:8px;color:#d5def7;font-size:12px;font-weight:700;margin:0 0 20px}
+.career-custom-goal input{background:#111c3b;border:1px solid #465780;border-radius:9px;color:#f3f5ff;padding:12px}
+.study-lesson-button{display:inline-block;padding:8px 11px;border-radius:9px;border:1px solid #58a99c;background:#163b43;color:#b2f1df;font-size:11px;font-weight:800;cursor:pointer}
+.milestone-description{color:#d3def7!important}
+.lesson-backdrop{position:fixed;inset:0;z-index:20;display:grid;place-items:center;padding:18px;background:#030816cc}
+.lesson-dialog{width:min(680px,100%);max-height:85vh;overflow:auto;position:relative;padding:30px;border-radius:18px;border:1px solid #7182bc;background:#111b39;box-shadow:0 24px 80px #0009}
+.lesson-dialog h2{font:800 25px Outfit,sans-serif;margin:10px 0 20px}
+.lesson-close{position:absolute;right:14px;top:12px;border:1px solid #59688f;border-radius:8px;background:#1b2850;color:#fff;font-size:22px;line-height:1;padding:4px 10px;cursor:pointer}
+.lesson-content{white-space:pre-wrap;color:#d4ddf4;line-height:1.75}
+.quiz-options{display:grid;gap:10px}
+.quiz-options button{border:1px solid #596b99;border-radius:10px;background:#1a2850;color:#eef2ff;text-align:left;padding:13px;font-size:14px;cursor:pointer}
+.quiz-options button:hover{border-color:#9b91ff;background:#293565}
+.quiz-feedback{padding:14px;background:#173a3c;border:1px solid #5aa68e;border-radius:10px;color:#c4f5df;line-height:1.6}

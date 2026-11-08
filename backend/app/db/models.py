@@ -131,6 +131,50 @@ class MissionCompletion(Base):
     completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
 
+class CareerGoal(Base):
+    """Private career goal and its latest catalog-grounded roadmap snapshot."""
+    __tablename__ = "career_goals"
+    __table_args__ = (Index("ix_career_goals_student_active", "student_id", "active"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    student_id: Mapped[str] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), nullable=False)
+    career_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    custom_goal: Mapped[str | None] = mapped_column(String(160))
+    education_level: Mapped[str] = mapped_column(String(32), nullable=False)
+    interests_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    weekly_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    preferred_language: Mapped[str] = mapped_column(String(16), nullable=False)
+    target_date: Mapped[str | None] = mapped_column(String(10))
+    active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    roadmap_json: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+
+class StudentSkillProfile(Base):
+    """Student-reported proficiency; this table never grants verified mastery."""
+    __tablename__ = "student_skill_profiles"
+    __table_args__ = (UniqueConstraint("student_id", "skill_key", name="uq_student_skill_profile"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    student_id: Mapped[str] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), nullable=False)
+    skill_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    proficiency: Mapped[str] = mapped_column(String(24), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+
+class CareerMilestoneCompletion(Base):
+    """Idempotent student-owned milestone completion record."""
+    __tablename__ = "career_milestone_completions"
+    __table_args__ = (UniqueConstraint("student_id", "goal_id", "milestone_id", name="uq_career_milestone_student_goal"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    student_id: Mapped[str] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), nullable=False)
+    goal_id: Mapped[str] = mapped_column(ForeignKey("career_goals.id", ondelete="CASCADE"), nullable=False)
+    milestone_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
 
 class StudentPreferences(Base):
     """One set of learning preferences per student."""
