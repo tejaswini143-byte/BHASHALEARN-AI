@@ -6,7 +6,7 @@ from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
 from fastapi import HTTPException, status
 
-from backend.app.config import get_settings
+from backend.app.config import get_settings, is_placeholder_secret
 
 hasher = PasswordHasher()
 ALGORITHM = "HS256"
@@ -25,7 +25,7 @@ def verify_password(password: str, password_hash: str) -> bool:
 
 def get_jwt_secret() -> str:
     secret = get_settings().jwt_secret_key
-    if len(secret) < 32:
+    if is_placeholder_secret(secret) or len(secret) < 32:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="JWT secret is not configured (set BHASHALEARN_JWT_SECRET_KEY to at least 32 characters)",

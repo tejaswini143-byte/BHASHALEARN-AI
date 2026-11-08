@@ -37,7 +37,23 @@ Expected health response:
 
 Copy `backend/.env.example` to the repository root `.env`, or set
 `BHASHALEARN_*` environment variables. The application reads the current
-working directory's `.env` file by default. Never commit secrets.
+working directory's `.env` file by default. Process environment values take
+precedence over `.env` values. Gemini uses `BHASHALEARN_GEMINI_API_KEY` and
+`BHASHALEARN_GEMINI_EMBEDDING_API_KEY`; embeddings fall back to the tutor key
+when the embedding key is blank. Gnani Prisma and Timbre use `GNANI_*` values
+from process environment or the repository-root `.env`. Existing POC-local
+`.env` files remain fallback-only for standalone POC compatibility. Never
+commit real `.env` files or secrets.
+
+Database and JWT settings fail closed: set `BHASHALEARN_DATABASE_URL` and a
+`BHASHALEARN_JWT_SECRET_KEY` of at least 32 characters before using protected
+API endpoints. There is no embedded database URL or default JWT secret.
+
+Historical credential note: an early local-development revision contained a
+loopback PostgreSQL default credential. Current configuration does not use
+that value. Treat the historical default as exposed and manually rotate any
+database role that still accepts it; no existing database is changed by this
+project. A new commit cannot remove the value from prior Git history.
 
 Before starting the API, verify local PostgreSQL connectivity and migration
 readiness without changing the database:

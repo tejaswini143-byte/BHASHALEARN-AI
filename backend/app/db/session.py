@@ -10,7 +10,19 @@ from backend.app.config import get_settings
 
 @lru_cache
 def get_engine() -> Engine:
-    return create_engine(get_settings().database_url, pool_pre_ping=True)
+    database_url = get_settings().database_url.strip()
+    normalized_url = database_url.casefold()
+    if (
+        not database_url
+        or "your_db_user" in normalized_url
+        or "your_db_password" in normalized_url
+        or "your_db_name" in normalized_url
+        or "replace-" in normalized_url
+        or "replace_" in normalized_url
+        or "<" in database_url
+    ):
+        raise RuntimeError("Database is not configured; set BHASHALEARN_DATABASE_URL.")
+    return create_engine(database_url, pool_pre_ping=True)
 
 
 @lru_cache

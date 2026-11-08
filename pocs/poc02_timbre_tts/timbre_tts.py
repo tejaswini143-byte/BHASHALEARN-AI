@@ -32,7 +32,12 @@ class TimbreConfig:
     @classmethod
     def from_env(cls) -> "TimbreConfig":
         key = os.getenv("GNANI_API_KEY", "").strip()
-        if not key or key in {"replace_me", "YOUR_ACTUAL_KEY"}:
+        normalized_key = key.casefold()
+        if (
+            not key
+            or normalized_key in {"replace_me", "your_actual_key"}
+            or normalized_key.startswith(("replace-", "replace_", "your-", "your_", "<"))
+        ):
             raise TTSError("Set GNANI_API_KEY in your local .env file.")
         url = os.getenv("GNANI_TTS_URL", ENDPOINT).strip() or ENDPOINT
         if not url.startswith("https://"):

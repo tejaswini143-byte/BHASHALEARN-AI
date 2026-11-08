@@ -38,7 +38,12 @@ class PrismaConfig:
     def from_env(cls) -> "PrismaConfig":
         key = os.getenv("GNANI_API_KEY", "").strip()
         url = os.getenv("GNANI_STT_URL", "https://api.vachana.ai/stt/v3").strip()
-        if not key or key == "replace_me":
+        normalized_key = key.casefold()
+        if (
+            not key
+            or normalized_key in {"replace_me", "your_actual_key"}
+            or normalized_key.startswith(("replace-", "replace_", "your-", "your_", "<"))
+        ):
             raise STTError("Set GNANI_API_KEY in your local .env file.")
         if not url.startswith("https://"):
             raise STTError("Set GNANI_STT_URL to the verified HTTPS endpoint.")

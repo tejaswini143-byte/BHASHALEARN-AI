@@ -5,6 +5,16 @@ from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def is_placeholder_secret(value: str | None) -> bool:
+    """Return whether a credential is empty or an example/template value."""
+    normalized = (value or "").strip().casefold()
+    return (
+        not normalized
+        or normalized in {"replace_me", "your_actual_key"}
+        or normalized.startswith(("replace-", "replace_", "your-", "your_", "<"))
+    )
+
+
 class Settings(BaseSettings):
     app_name: str = "BHASHALEARN AI API"
     app_env: str = "development"

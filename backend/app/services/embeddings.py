@@ -7,7 +7,7 @@ from collections.abc import Callable, Sequence
 
 import httpx
 
-from backend.app.config import get_settings
+from backend.app.config import get_settings, is_placeholder_secret
 
 
 class EmbeddingError(RuntimeError):
@@ -35,7 +35,10 @@ class GeminiEmbeddingProvider:
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         settings = get_settings()
-        self.api_key = api_key if api_key is not None else (settings.gemini_embedding_api_key or settings.gemini_api_key)
+        configured_embedding_key = settings.gemini_embedding_api_key
+        if is_placeholder_secret(configured_embedding_key):
+            configured_embedding_key = settings.gemini_api_key
+        self.api_key = api_key if api_key is not None else configured_embedding_key
         self.model = model if model is not None else settings.gemini_embedding_model
         self.dimensions = dimensions if dimensions is not None else settings.gemini_embedding_dimensions
         self.timeout = timeout if timeout is not None else settings.embedding_timeout_seconds
@@ -69,7 +72,7 @@ class GeminiEmbeddingProvider:
             return []
         if any(not isinstance(text, str) or not text.strip() for text in texts):
             raise EmbeddingError("Embedding input must contain non-empty text")
-        if not self.api_key:
+        if is_placeholder_secret(self.api_key):
             raise EmbeddingError("Gemini embedding API key is not configured", status_code=503)
         vectors: list[list[float]] = []
         for offset in range(0, len(texts), self.BATCH_SIZE):

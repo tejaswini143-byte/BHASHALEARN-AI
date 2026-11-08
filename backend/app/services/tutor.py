@@ -2,7 +2,7 @@
 import httpx
 from fastapi import HTTPException
 
-from backend.app.config import get_settings
+from backend.app.config import get_settings, is_placeholder_secret
 
 LANGUAGE_GUIDANCE = {
     "telugu": (
@@ -48,7 +48,7 @@ def build_instruction(
 def generate_tutor_reply(instruction: str, history: list[dict[str, str]]) -> str:
     settings = get_settings()
     api_key = settings.gemini_api_key.strip()
-    if not api_key:
+    if is_placeholder_secret(api_key):
         raise HTTPException(status_code=503, detail="AI provider not configured; set BHASHALEARN_GEMINI_API_KEY")
     contents = [
         {"role": "model" if m["role"] == "assistant" else "user",

@@ -13,7 +13,13 @@ class VoiceConfigError(ValueError):
 
 
 def load_provider_environment(repo_root: Path) -> None:
-    """Load existing provider .env files, with valid POC-06 overrides, without printing values."""
+    """Load provider settings from process env, root .env, then legacy POC .env files.
+
+    Process environment has highest precedence. The repository-root .env is the
+    canonical local configuration file and overrides legacy POC-local files.
+    Existing POC files remain supported as a migration path for standalone POCs.
+    Values are never printed.
+    """
     folders = (
         "poc01_prisma_stt",
         "poc02_timbre_tts",
@@ -22,16 +28,35 @@ def load_provider_environment(repo_root: Path) -> None:
     )
     values: dict[str, str] = {}
     placeholders = {"replace_me", "your_actual_key", ""}
+
+    def is_placeholder(value: str) -> bool:
+        normalized = value.strip().casefold()
+        return (
+            normalized in placeholders
+            or normalized.startswith(("replace-", "replace_", "your-", "your_"))
+            or normalized.startswith("<")
+        )
+
     for folder in folders:
         env_path = repo_root / "pocs" / folder / ".env"
         if not env_path.is_file():
             continue
         for name, value in dotenv_values(env_path).items():
-            if value is not None and value.strip().casefold() not in placeholders:
+            if value is not None and not is_placeholder(value):
                 values[name] = value.strip()
+
+    # Pydantic Settings reads BHASHALEARN_* values from this same root file.
+    # The Gnani adapters use os.environ directly, so load their unprefixed
+    # settings here to make the documented root .env work for both providers.
+    central_env = repo_root / ".env"
+    if central_env.is_file():
+        for name, value in dotenv_values(central_env).items():
+            if value is not None and not is_placeholder(value):
+                values[name] = value.strip()
+
     for name, value in values.items():
         current = os.getenv(name, "").strip()
-        if not current or current.casefold() in placeholders:
+        if is_placeholder(current):
             os.environ[name] = value
 
 
