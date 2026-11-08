@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type DragEvent, type FormEvent } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ApiError, getToken, request } from "./auth";
 import { createDocumentUploadBody, validatePdfSelection } from "./documentModel";
 import "./documents.css";
@@ -112,15 +112,20 @@ export function DocumentsPage() {
 export function DocumentDetailPage() {
   useRequireLogin();
   const { documentId = "" } = useParams();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const [document, setDocument] = useState<DocumentItem | null>(null);
   const [pages, setPages] = useState<PageList | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [pageOffset, setPageOffset] = useState(0);
+  const [pageOffset, setPageOffset] = useState(() => Math.max(0, Math.floor((Number(searchParams.get("page")) - 1) / 5) * 5));
   const [indexState, setIndexState] = useState<IndexStatus | null>(null);
   const [indexBusy, setIndexBusy] = useState(false);
   const [indexError, setIndexError] = useState("");
+  useEffect(() => {
+    const page = Number(searchParams.get("page"));
+    if (Number.isInteger(page) && page > 0) setPageOffset(Math.floor((page - 1) / 5) * 5);
+  }, [documentId, searchParams]);
   useEffect(() => {
     let active = true;
     setLoading(true); setError("");
