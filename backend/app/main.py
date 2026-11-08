@@ -1,4 +1,6 @@
 """FastAPI entry point for the BHASHALEARN backend."""
+from uuid import UUID, uuid4
+
 from fastapi import FastAPI
 
 from .api.auth import router as auth_router
@@ -24,6 +26,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         version="0.1.0",
         description="Backend API for BHASHALEARN AI. Explicit document indexing and semantic search send extracted text and queries to the configured Gemini embedding provider.",
     )
+
+    @app.middleware("http")
+    async def correlate_request(request, call_next):
+        candidate = request.headers.get("x-request-id", "")
+        try:
+            request_id = str(UUID(candidate))
+        except (ValueError, AttributeError):
+            request_id = str(uuid4())
+        request.state.request_id = request_id
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
+
     app.include_router(auth_router, prefix=config.api_prefix)
     app.include_router(students_router, prefix=config.api_prefix)
     app.include_router(courses_router, prefix=config.api_prefix)

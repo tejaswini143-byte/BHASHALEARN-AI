@@ -1,5 +1,6 @@
 """AI tutor chat endpoint using saved sessions and student preferences."""
 from datetime import datetime, timedelta, timezone
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
@@ -41,6 +42,7 @@ def _next_turn_timestamps(latest_message_at: datetime | None) -> tuple[datetime,
 
 class TutorRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
+    language: Literal["telugu", "english", "mixed"] | None = None
 
     @field_validator("message")
     @classmethod
@@ -80,7 +82,7 @@ def tutor_chat(
     prefs = db.get(StudentPreferences, student.id)
     level = prefs.learning_level if prefs else "beginner"
     goal = prefs.learning_goal if prefs else None
-    language = prefs.preferred_language if prefs else session.language
+    language = payload.language or (prefs.preferred_language if prefs else session.language)
     learning_pace = prefs.learning_pace if prefs else "steady"
     visual_state = db.get(SessionVisualState, session_id)
     visual_lesson = (

@@ -180,6 +180,24 @@ class SessionVisualState(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
 
+class SessionVoiceState(Base):
+    """Per-session voice checkpoint and interruption state."""
+    __tablename__ = "session_voice_states"
+
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("learning_sessions.id", ondelete="CASCADE"), primary_key=True
+    )
+    lesson_step: Mapped[str] = mapped_column(String(120), default="introduction", nullable=False)
+    student_question: Mapped[str | None] = mapped_column(Text)
+    active_response_language: Mapped[str] = mapped_column(String(16), default="mixed", nullable=False)
+    playback_state: Mapped[str] = mapped_column(String(20), default="idle", nullable=False)
+    voice_transcript: Mapped[str | None] = mapped_column(Text)
+    checkpoint_message_id: Mapped[str | None] = mapped_column(String(36))
+    checkpoint_playback_ms: Mapped[int | None] = mapped_column(Integer)
+    resume_status: Mapped[str] = mapped_column(String(28), default="none", nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+
 class Document(Base):
     """Private PDF metadata owned by one student."""
     __tablename__ = "documents"

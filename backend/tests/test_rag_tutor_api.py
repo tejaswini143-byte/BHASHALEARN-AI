@@ -71,6 +71,7 @@ def call_chat(
     generated_text="A half is one of two equal parts. [S1]",
     hits=None,
     generator=None,
+    language=None,
 ):
     if generator is None:
         monkeypatch.setattr(
@@ -87,7 +88,7 @@ def call_chat(
     student = Student(id="student-1", email="student@example.test", display_name="Learner")
     return tutor_api.tutor_chat(
         "session-1",
-        tutor_api.TutorRequest(message="What is one half?"),
+        tutor_api.TutorRequest(message="What is one half?", language=language),
         student,
         db,
         provider,
@@ -140,6 +141,21 @@ def test_chat_returns_structured_citation_and_persists_complete_turn(monkeypatch
     assert [item.role for item in db.added] == ["user", "assistant"]
     assert db.commits == 1
     assert provider.calls == [(["What is one half?"], "RETRIEVAL_QUERY")]
+
+
+def test_explicit_response_language_overrides_session_language(monkeypatch):
+    captured = {}
+
+    def generate(instruction, _history):
+        captured["instruction"] = instruction
+        return "సమాధానం"
+
+    response = call_chat(
+        FakeDb(), FakeEmbeddingProvider(), monkeypatch, language="telugu",
+        generator=generate,
+    )
+    assert response.language == "telugu"
+    assert "Telugu Unicode script" in captured["instruction"]
 
 
 def test_foreign_session_stops_before_retrieval_or_persistence(monkeypatch):
