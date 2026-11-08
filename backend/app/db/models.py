@@ -115,6 +115,22 @@ class LearningAssessmentAttempt(Base):
     answered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class MissionCompletion(Base):
+    """An idempotent XP award for one student's mission instance."""
+    __tablename__ = "mission_completions"
+    __table_args__ = (
+        UniqueConstraint("student_id", "mission_id", name="uq_mission_completion_student_mission"),
+        CheckConstraint("xp_awarded >= 0", name="ck_mission_completion_xp_nonnegative"),
+        Index("ix_mission_completions_student_id", "student_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    student_id: Mapped[str] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), nullable=False)
+    mission_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    xp_awarded: Mapped[int] = mapped_column(Integer, nullable=False)
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
 
 class StudentPreferences(Base):
     """One set of learning preferences per student."""
