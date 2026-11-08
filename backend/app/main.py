@@ -14,6 +14,7 @@ from .api.voice import router as voice_router
 from .api.session_context import router as session_context_router
 from .api.documents import router as documents_router
 from .api.missions import router as missions_router
+from .api.analytics import router as analytics_router
 from .config import Settings, get_settings
 
 
@@ -38,6 +39,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(session_context_router, prefix=config.api_prefix)
     app.include_router(documents_router, prefix=config.api_prefix)
     app.include_router(missions_router, prefix=config.api_prefix)
+    app.include_router(analytics_router, prefix=config.api_prefix)
 
     @app.get("/health", tags=["health"])
     def health() -> dict[str, str]:
