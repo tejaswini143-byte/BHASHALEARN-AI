@@ -1,4 +1,4 @@
-import type { LearningPace, LearningPreferences, LearningProfile } from "./learningPreferences";
+import type { LearningLevel, LearningPace, LearningPreferences, LearningProfile } from "./learningPreferences";
 
 type Props = {
   preferences: LearningPreferences;
@@ -7,9 +7,10 @@ type Props = {
   error: string;
   disabled: boolean;
   onPaceChange: (pace: LearningPace) => void;
+  onLevelChange: (level: LearningLevel) => void;
 };
 
-export function LearningProfilePanel({ preferences, profile, loading, error, disabled, onPaceChange }: Props) {
+export function LearningProfilePanel({ preferences, profile, loading, error, disabled, onPaceChange, onLevelChange }: Props) {
   return <section className="cl-learning-profile" aria-label="Your learning profile">
     <div className="cl-profile-controls">
       <label htmlFor="cl-learning-pace">Learning pace</label>
@@ -17,6 +18,10 @@ export function LearningProfilePanel({ preferences, profile, loading, error, dis
         <option value="slow">Slow — one step at a time</option>
         <option value="steady">Steady — balanced examples</option>
         <option value="fast">Fast — brisk review</option>
+      </select>
+      <label htmlFor="cl-learning-level">Explanation level</label>
+      <select id="cl-learning-level" value={preferences.learning_level} disabled={disabled} onChange={event => onLevelChange(event.target.value as LearningLevel)}>
+        <option value="beginner">Beginner</option><option value="intermediate">Intermediate</option><option value="advanced">Advanced</option>
       </select>
       {loading && <span role="status">Loading learning profile…</span>}
     </div>
