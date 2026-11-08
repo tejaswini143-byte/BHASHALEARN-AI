@@ -37,6 +37,21 @@ class Settings(BaseSettings):
     document_max_pages: int = 100
     document_max_extracted_characters: int = 2_000_000
     document_max_filename_length: int = 255
+    assistant_token_encryption_key: str = ""
+    assistant_public_base_url: str = ""
+    google_oauth_client_id: str = ""
+    google_oauth_client_secret: str = ""
+    google_oauth_redirect_uri: str = ""
+    assistant_google_live_enabled: bool = False
+    assistant_live_operations_enabled: bool = False
+    twilio_live_calls_enabled: bool = False
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    twilio_from_number: str = ""
+    twilio_verify_service_sid: str = ""
+    twilio_status_callback_url: str = ""
+    twilio_allowed_destination_prefixes: str = ""
+    assistant_max_calls_per_day: int = Field(default=3, ge=1, le=20)
 
     model_config = SettingsConfigDict(
         env_prefix="BHASHALEARN_",
