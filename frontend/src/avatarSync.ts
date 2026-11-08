@@ -109,7 +109,16 @@ function phonemeVisemeAt(timeline: PhonemeFrame[], timeMs: number, language: Syn
 
 /** Coarse amplitude-to-mouth heuristics. These are not phoneme recognition or lip-sync. */
 function approximateViseme(language: SyncLanguage, timeMs: number, level?: number): Viseme {
-  if (level === undefined || !Number.isFinite(level) || level < 0.018) return "sil";
+  if (level === undefined || !Number.isFinite(level)) {
+    // If Web Audio analysis is unavailable, keep a conservative time-based fallback
+    // driven by HTMLMediaElement.currentTime rather than a competing wall clock.
+    const phase = Math.floor(timeMs / 135) % 6;
+    if (phase === 0 || phase === 5) return "sil";
+    if (language === "telugu") return phase % 2 ? "aa" : "oh";
+    if (language === "mixed") return phase % 2 ? "ee" : "aa";
+    return phase % 2 ? "ee" : "oh";
+  }
+  if (level < 0.018) return "sil";
   const phase = Math.floor(timeMs / 115) % 4;
   if (language === "telugu") {
     if (level < 0.075) return phase % 2 ? "mm" : "th";

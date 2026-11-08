@@ -55,3 +55,18 @@ test("lesson steps focus their holographic objects and the scene uses no convent
   assert.ok(world.includes("circleGeometry"));
   assert.ok(!world.includes("boxGeometry"));
 });
+
+
+test("immersive classroom renders the existing authenticated voice tutor and shared avatar clock", async () => {
+  const [scene, tutor, teacher] = await Promise.all([
+    readFile(resolve(sourceDir, "ImmersiveClassroom.tsx"), "utf8"),
+    readFile(resolve(sourceDir, "VoiceTutor.tsx"), "utf8"),
+    readFile(resolve(sourceDir, "TeacherPreview.tsx"), "utf8"),
+  ]);
+  assert.ok(scene.includes("useSyncExternalStore(immersiveVoiceBridge.subscribe"));
+  assert.ok(scene.includes("<VoiceTutor immersive forceDemo={offlineDemo} onClose"));
+  assert.ok(tutor.includes("AvatarSyncController"));
+  assert.ok(tutor.includes("immersiveVoiceBridge.acceptFrame(frame)"));
+  assert.ok(teacher.includes("immersiveVoiceBridge.getFrame().viseme"));
+  assert.ok(tutor.includes("navigator.mediaDevices?.getUserMedia"), "microphone access remains behind its explicit control");
+});

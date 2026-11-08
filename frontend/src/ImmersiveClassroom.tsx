@@ -1,10 +1,12 @@
-import { Component, Suspense, useCallback, useEffect, useRef, useState, type ErrorInfo, type ReactNode } from "react";
+import { Component, Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore, type ErrorInfo, type ReactNode } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Float, Html, OrbitControls, Stars } from "@react-three/drei";
 import * as THREE from "three";
 import { Link, useNavigate } from "react-router-dom";
 import { ApiError, clearToken, getCurrentStudent, getToken, type Student } from "./auth";
 import { ImmersiveTeacher } from "./TeacherPreview";
+import { VoiceTutor } from "./VoiceTutor";
+import { immersiveVoiceBridge } from "./immersiveVoiceBridge";
 import { playbackReducer, sampleLessons } from "./lessonEngine";
 import { cameraPresets, focusedLessonObjectIds, type CameraPreset } from "./immersiveCore";
 import "./immersive-classroom.css";
@@ -33,6 +35,12 @@ function ImmersiveRoom({ reduced }: { reduced: boolean }) {
     {[-7, 7].map(x => <group key={x} position={[x, 0, -4]}><mesh position={[0, 2.5, 0]}><cylinderGeometry args={[0.15, 0.22, 5, 20]}/><meshStandardMaterial color="#14213d" metalness={0.48} roughness={0.35} emissive="#4034a2" emissiveIntensity={0.18}/></mesh><pointLight position={[0, 3.3, 0]} intensity={8} distance={6} color="#8b69ff"/></group>)}
     <Stars radius={34} depth={42} count={750} factor={2.2} fade speed={reduced ? 0 : 0.12}/>
   </>;
+}
+
+function VoiceFrameScheduler({ reduced }: { reduced: boolean }) {
+  const { invalidate } = useThree();
+  useEffect(() => reduced ? immersiveVoiceBridge.subscribeFrames(invalidate) : undefined, [invalidate, reduced]);
+  return null;
 }
 
 function CameraDirector({ preset }: { preset: CameraPreset }) {
@@ -68,11 +76,12 @@ function HologramField({ lessonIndex, stepIndex, reduced }: { lessonIndex: numbe
   return <>{lessonObjects.map((item, index) => <Hologram key={item.id} item={item} index={index} active={focused.has(item.id)} reduced={reduced}/>)}</>;
 }
 
-function AccessGate({ children }: { children: (student: Student) => ReactNode }) {
+function AccessGate({ children }: { children: (student: Student, offlineDemo: boolean) => ReactNode }) {
   const navigate = useNavigate();
   const [student, setStudent] = useState<Student | null>(null);
   const [checking, setChecking] = useState(true);
   const [error, setError] = useState("");
+  const [offlineDemo, setOfflineDemo] = useState(false);
   useEffect(() => {
     let active = true;
     const token = getToken();
@@ -80,20 +89,24 @@ function AccessGate({ children }: { children: (student: Student) => ReactNode })
     getCurrentStudent(token).then(value => { if (active) setStudent(value); }).catch(cause => {
       if (!active) return;
       if (cause instanceof ApiError && cause.status === 401) { clearToken(); navigate("/login", { replace: true, state: { from: "/immersive" } }); }
-      else setError(cause instanceof Error ? cause.message : "Could not verify your student account.");
+      else if (cause instanceof ApiError && (cause.status === 0 || cause.status >= 500)) {
+        setOfflineDemo(true); setStudent({ id: "local-demo", email: "demo@local.invalid", display_name: "Local demo learner" });
+      } else setError(cause instanceof Error ? cause.message : "Could not verify your student account.");
     }).finally(() => { if (active) setChecking(false); });
     return () => { active = false; };
   }, [navigate]);
   if (checking) return <main className="ic-auth-state" role="status">Preparing your immersive classroom…</main>;
   if (!student) return <main className="ic-auth-state"><h1>Classroom unavailable</h1><p role="alert">{error}</p><Link to="/dashboard">Return to dashboard</Link></main>;
-  return children(student);
+  return children(student, offlineDemo);
 }
 
-function ImmersiveExperience({ student }: { student: Student }) {
+function ImmersiveExperience({ student, offlineDemo }: { student: Student; offlineDemo: boolean }) {
   const [lessonIndex, setLessonIndex] = useState(0);
   const [playback, setPlayback] = useState({ step: -1, playing: false });
   const [preset, setPreset] = useState<CameraPreset>("overview");
   const [reduced, setReduced] = useState(() => window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  const [voiceOpen, setVoiceOpen] = useState(false);
+  const voiceState = useSyncExternalStore(immersiveVoiceBridge.subscribe, immersiveVoiceBridge.getState, immersiveVoiceBridge.getState);
   const lesson = sampleLessons[lessonIndex];
   const cameraCycle: CameraPreset[] = ["overview", "teacher", "lesson"];
   const advance = useCallback((action: "next" | "previous") => setPlayback(current => playbackReducer(current, action, lesson.steps.length)), [lesson.steps.length]);
@@ -126,24 +139,26 @@ function ImmersiveExperience({ student }: { student: Student }) {
   const activeStep = playback.step >= 0 ? lesson.steps[playback.step] : null;
   return <main className="ic-experience" aria-label="Immersive classroom">
     <div className="ic-scene"><SceneBoundary><Canvas aria-label="Decorative immersive 3D classroom" shadows dpr={[1, 1.5]} camera={{ position: cameraPresets.overview.position, fov: 39 }} gl={{ antialias: true, alpha: false, powerPreference: "low-power" }} frameloop={reduced ? "demand" : "always"} fallback={<WebGLFallback/>}>
-      <CameraDirector preset={preset}/><ImmersiveRoom reduced={reduced}/><ImmersiveTeacher state={activeStep ? "explain" : "idle"} reduced={reduced}/><Suspense fallback={null}><HologramField lessonIndex={lessonIndex} stepIndex={playback.step} reduced={reduced}/></Suspense>
+      <CameraDirector preset={preset}/><VoiceFrameScheduler reduced={reduced}/><ImmersiveRoom reduced={reduced}/><ImmersiveTeacher state={activeStep ? "explain" : "idle"} reduced={reduced} voiceState={voiceState}/><Suspense fallback={null}><HologramField lessonIndex={lessonIndex} stepIndex={playback.step} reduced={reduced}/></Suspense>
       <OrbitControls makeDefault target={cameraPresets[preset].target} minDistance={5.5} maxDistance={14} minPolarAngle={0.55} maxPolarAngle={1.45} enablePan={false}/>
     </Canvas></SceneBoundary></div>
-    <header className="ic-topbar"><Link to="/dashboard" className="ic-brand" aria-label="BHASHALEARN AI dashboard"><span>✦</span> BHASHA<span className="ic-brand-accent">LEARN</span><small> AI</small></Link><div className="ic-student"><i aria-hidden="true"/>{student.display_name || "Student"}<span>·</span><span>IMMERSIVE CLASS</span></div><Link to="/dashboard" className="ic-exit">Exit classroom <span aria-hidden="true">↗</span></Link></header>
+    <header className="ic-topbar"><Link to="/dashboard" className="ic-brand" aria-label="BHASHALEARN AI dashboard"><span>✦</span> BHASHA<span className="ic-brand-accent">LEARN</span><small> AI</small></Link><div className="ic-student"><i aria-hidden="true"/>{student.display_name || "Student"}{offlineDemo && <span className="ic-offline-status">LOCAL DEMO - BACKEND UNAVAILABLE</span>}<span>·</span><span>IMMERSIVE CLASS</span></div><Link to="/dashboard" className="ic-exit">Exit classroom <span aria-hidden="true">↗</span></Link></header>
     <div className="ic-scene-label"><i aria-hidden="true"/> LIVE 3D LEARNING SPACE</div>
     <aside className="ic-hud" aria-label="Lesson controls">
       <div className="ic-hud-top"><div><span className="ic-eyebrow">{lesson.subject}</span><h1>{lesson.title}</h1></div><label className="ic-lesson-select">Lesson<select aria-label="Choose lesson" value={lessonIndex} onChange={event => { setLessonIndex(Number(event.target.value)); setPlayback({ step: -1, playing: false }); }}>{sampleLessons.map((item, index) => <option key={item.id} value={index}>{item.title}</option>)}</select></label></div>
       <p className="ic-explanation" aria-live="polite">{activeStep?.explanation || lesson.intro}</p>
       {activeStep && <div className="ic-step-name" aria-live="polite"><span>{String(playback.step + 1).padStart(2, "0")}</span>{activeStep.title}</div>}
+      <div className="ic-voice-controls"><span className={`ic-voice-state is-${voiceState}`} data-testid="immersive-voice-state"><i aria-hidden="true"/>{voiceState === "idle" ? "Voice ready - no audio" : voiceState === "listening" ? "Listening" : voiceState === "thinking" ? "Thinking" : voiceState === "speaking" ? "Speaking" : voiceState === "paused" ? "Paused" : voiceState === "interrupted" ? "Speech interrupted" : "Voice unavailable"}</span><button type="button" aria-expanded={voiceOpen} onClick={() => setVoiceOpen(value => !value)}>{voiceOpen ? "Hide voice tutor" : "Open voice tutor"}</button></div>
       <div className="ic-progress" aria-label={`Lesson step ${Math.max(0, playback.step + 1)} of ${lesson.steps.length}`}><span style={{ width: `${Math.max(0, (playback.step + 1) / lesson.steps.length * 100)}%` }}/></div>
       <div className="ic-controls"><button onClick={() => advance("previous")} aria-label="Previous lesson step" disabled={playback.step < 0}>←</button><button className="ic-play" onClick={() => setPlayback(current => playbackReducer(current, current.playing ? "pause" : "play", lesson.steps.length))} aria-label={playback.playing ? "Pause lesson" : "Play lesson"}>{playback.playing ? "Ⅱ" : "▶"}<span>{playback.playing ? "Pause" : "Play lesson"}</span></button><button onClick={() => advance("next")} aria-label="Next lesson step" disabled={playback.step >= lesson.steps.length - 1}>→</button><span className="ic-control-divider"/><label className="ic-motion"><input type="checkbox" checked={reduced} onChange={event => setReduced(event.target.checked)}/> Reduce motion</label></div>
       <details className="ic-shortcuts"><summary>Keyboard controls</summary><span>← → lesson steps · 1–3 camera · F fullscreen</span></details>
     </aside>
     <nav className="ic-camera-nav" aria-label="Camera presets">{cameraCycle.map((value, index) => <button key={value} className={preset === value ? "active" : ""} aria-pressed={preset === value} onClick={() => setPreset(value)}><span>{String(index + 1).padStart(2, "0")}</span>{cameraPresets[value].label}</button>)}<button className="ic-fullscreen" onClick={() => void fullscreen()} aria-label="Toggle fullscreen">⛶</button></nav>
+    {voiceOpen && <VoiceTutor immersive forceDemo={offlineDemo} onClose={() => setVoiceOpen(false)}/>}
     <span className="ic-sr-only" aria-live="polite">{playback.step < 0 ? "Lesson introduction" : `Step ${playback.step + 1}: ${activeStep?.title}`}</span>
   </main>;
 }
 
 export function ImmersiveClassroom() {
-  return <AccessGate>{student => <ImmersiveExperience student={student}/>}</AccessGate>;
+  return <AccessGate>{(student, offlineDemo) => <ImmersiveExperience student={student} offlineDemo={offlineDemo}/>}</AccessGate>;
 }
