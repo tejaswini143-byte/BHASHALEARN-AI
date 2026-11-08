@@ -55,6 +55,20 @@ def test_memory_student_isolation(client):
     assert client.delete(url + "/" + memory_id, headers=second).status_code == 404
     assert client.get(url).status_code == 401
 
+def test_memory_correction_is_owned_and_validated(client):
+    first = auth(client, "correct-first@example.com")
+    second = auth(client, "correct-second@example.com")
+    url = "/api/v1/memories"
+    memory = client.post(url, headers=first, json={"topic": "Fractions", "note": "Review halves"}).json()
+    updated = client.patch(url + "/" + memory["id"], headers=first, json={"note": "Use a visual fraction example"})
+    assert updated.status_code == 200
+    assert updated.json()["note"] == "Use a visual fraction example"
+    assert updated.json()["topic"] == "Fractions"
+    assert client.patch(url + "/" + memory["id"], headers=second, json={"note": "Changed"}).status_code == 404
+    assert client.patch(url + "/" + memory["id"], headers=first, json={"note": " "}).status_code == 422
+    assert client.patch(url + "/" + memory["id"], headers=first, json={"note": None}).status_code == 422
+    assert client.patch(url + "/" + memory["id"], headers=first, json={}).status_code == 422
+
 def test_memory_validation(client):
     headers = auth(client, "valid@example.com")
     url = "/api/v1/memories"

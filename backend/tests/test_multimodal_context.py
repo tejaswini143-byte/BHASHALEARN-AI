@@ -68,6 +68,7 @@ def test_shared_context_auth_owner_and_missing_session(client):
         "topic": "Fractions",
         "preferred_language": "mixed",
         "learning_level": "beginner",
+        "learning_pace": "steady",
         "learning_goal": None,
         "messages": [],
         "visual_lesson": None,

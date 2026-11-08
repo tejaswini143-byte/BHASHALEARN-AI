@@ -125,6 +125,7 @@ class StudentPreferences(Base):
     )
     preferred_language: Mapped[str] = mapped_column(String(16), default="mixed", nullable=False)
     learning_level: Mapped[str] = mapped_column(String(16), default="beginner", nullable=False)
+    learning_pace: Mapped[str] = mapped_column(String(16), default="steady", nullable=False)
     learning_goal: Mapped[str | None] = mapped_column(String(300))
 
 

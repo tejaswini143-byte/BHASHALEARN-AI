@@ -48,6 +48,7 @@ class SharedSessionContextResponse(BaseModel):
     topic: str
     preferred_language: Literal["telugu", "english", "mixed"]
     learning_level: Literal["beginner", "intermediate", "advanced"]
+    learning_pace: Literal["slow", "steady", "fast"]
     learning_goal: str | None
     messages: list[ContextMessage]
     visual_lesson: VisualLessonResponse | None
@@ -114,6 +115,7 @@ def get_shared_session_context(
         topic=session.topic,
         preferred_language=preferences.preferred_language if preferences else session.language,
         learning_level=preferences.learning_level if preferences else "beginner",
+        learning_pace=preferences.learning_pace if preferences else "steady",
         learning_goal=preferences.learning_goal if preferences else None,
         messages=[ContextMessage.model_validate(message) for message in reversed(recent)],
         visual_lesson=_visual_response(visual_state),

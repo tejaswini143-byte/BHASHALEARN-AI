@@ -1,7 +1,7 @@
 """Student-owned learning memory CRUD API."""
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from backend.app.api.auth import current_student
@@ -26,6 +26,29 @@ class MemoryResponse(MemoryCreate):
     model_config = ConfigDict(from_attributes=True)
     id: str
     created_at: datetime
+
+
+class MemoryUpdate(BaseModel):
+    topic: str | None = Field(default=None, min_length=1, max_length=200)
+    note: str | None = Field(default=None, min_length=1, max_length=2000)
+
+    @field_validator("topic", "note")
+    @classmethod
+    def nonblank_optional(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("Cannot be blank")
+        return value
+
+    @model_validator(mode="after")
+    def require_change(self):
+        if self.topic is None and self.note is None:
+            raise ValueError("Provide a topic or note to update")
+        if any(getattr(self, field) is None for field in self.model_fields_set):
+            raise ValueError("Updated values cannot be null")
+        return self
 
 def owned_memory(memory_id: str, student: Student, db: Session) -> LearningMemory:
     memory = db.get(LearningMemory, memory_id)
@@ -56,6 +79,22 @@ def list_memories(
 @router.get("/{memory_id}", response_model=MemoryResponse)
 def get_memory(memory_id: str, student: Student = Depends(current_student), db: Session = Depends(get_db)):
     return owned_memory(memory_id, student, db)
+
+
+@router.patch("/{memory_id}", response_model=MemoryResponse)
+def update_memory(
+    memory_id: str,
+    payload: MemoryUpdate,
+    student: Student = Depends(current_student),
+    db: Session = Depends(get_db),
+):
+    memory = owned_memory(memory_id, student, db)
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(memory, field, value)
+    db.add(memory)
+    db.commit()
+    db.refresh(memory)
+    return memory
 
 @router.delete("/{memory_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_memory(memory_id: str, student: Student = Depends(current_student), db: Session = Depends(get_db)):
