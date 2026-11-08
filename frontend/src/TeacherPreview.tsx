@@ -179,6 +179,12 @@ function Teacher(props: TeacherProps) {
   return props.model ? <LoadedTeacher state={props.state} expression={props.expression} viseme={props.viseme} walkTarget={props.walkTarget} lookTarget={props.lookTarget} reduced={props.reduced} model={props.model} /> : <PlaceholderTeacher state={props.state} expression={props.expression} target={props.target} walkTarget={props.walkTarget} lookTarget={props.lookTarget} viseme={props.viseme} reduced={props.reduced} />;
 }
 
+// Shared by the immersive scene; it reuses the prototype rendering contract
+// without importing the preview room or its board-oriented controls.
+export function ImmersiveTeacher({ state = "idle", reduced = false }: { state?: TeacherState; reduced?: boolean }) {
+  return <Teacher state={state} expression="neutral" target={null} walkTarget={[-2, -0.5]} lookTarget={[0, 1.5, -2]} viseme="sil" reduced={reduced} model={null} />;
+}
+
 function CameraRig({ cinematic }: { cinematic: boolean }) {
   const { camera } = useThree();
   useEffect(() => { camera.position.set(cinematic ? 0.4 : 1, 3, cinematic ? 8.4 : 10); camera.lookAt(0, 1.5, -2); }, [camera, cinematic]);
