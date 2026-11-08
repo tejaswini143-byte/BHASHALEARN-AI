@@ -131,6 +131,64 @@ class MissionCompletion(Base):
     completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
 
+class ResearchSession(Base):
+    """Private, student-owned public web research session."""
+    __tablename__ = "research_sessions"
+    __table_args__ = (Index("ix_research_sessions_student_created", "student_id", "created_at"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    student_id: Mapped[str] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), nullable=False)
+    question: Mapped[str] = mapped_column(String(1000), nullable=False)
+    language: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="drafted")
+    provider_mode: Mapped[str | None] = mapped_column(String(24))
+    summary_json: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+    sources: Mapped[list["ResearchSourceRecord"]] = relationship(cascade="all, delete-orphan")
+
+
+class ResearchSourceRecord(Base):
+    __tablename__ = "research_sources"
+    __table_args__ = (UniqueConstraint("session_id", "canonical_url", name="uq_research_source_session_url"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    session_id: Mapped[str] = mapped_column(ForeignKey("research_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(300), nullable=False)
+    canonical_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    publisher: Mapped[str] = mapped_column(String(255), nullable=False)
+    excerpt: Mapped[str] = mapped_column(Text, nullable=False)
+    retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ResearchTask(Base):
+    __tablename__ = "research_tasks"
+    __table_args__ = (
+        UniqueConstraint("student_id", "idempotency_key", name="uq_research_task_student_idempotency"),
+        CheckConstraint("status IN ('drafted','awaiting_approval','approved','executing','completed','failed','cancelled')", name="ck_research_task_status"),
+        Index("ix_research_tasks_student_created", "student_id", "created_at"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    student_id: Mapped[str] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), nullable=False)
+    research_session_id: Mapped[str | None] = mapped_column(ForeignKey("research_sessions.id", ondelete="SET NULL"))
+    action_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    payload_json: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="drafted")
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    approval_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+    executable: Mapped[bool] = mapped_column(default=False, nullable=False)
+
+
+class ResearchAudit(Base):
+    __tablename__ = "research_audit"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    student_id: Mapped[str] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), nullable=False, index=True)
+    task_id: Mapped[str | None] = mapped_column(ForeignKey("research_tasks.id", ondelete="SET NULL"), index=True)
+    event: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
 
 class StudentPreferences(Base):
     """One set of learning preferences per student."""

@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     gemini_embedding_api_key: str = ""
     gemini_embedding_model: str = "gemini-embedding-001"
     gemini_embedding_dimensions: int = 768
+    brave_search_api_key: str = ""
+    research_requests_per_minute: int = Field(default=10, ge=1, le=60)
     embedding_chunk_size: int = Field(default=1000, ge=1, le=10000)
     embedding_chunk_overlap: int = Field(default=150, ge=0, le=9999)
     embedding_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
