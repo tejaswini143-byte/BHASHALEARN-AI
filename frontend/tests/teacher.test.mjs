@@ -39,6 +39,28 @@ test("viseme timelines validate and select timed mouth shapes", () => {
   assert.throws(() => core.validateVisemeTimeline([{ atMs: 100, durationMs: 10, viseme: "aa" }, { atMs: 90, durationMs: 10, viseme: "ee" }]), /Invalid/);
 });
 
+test("teacher presentation modes are selectable and invalid mode values are rejected", () => {
+  assert.equal(core.validateTeacherMode("realistic"), "realistic");
+  assert.equal(core.validateTeacherMode("holographic"), "holographic");
+  assert.throws(() => core.validateTeacherMode("cartoon"), /Unknown teacher mode/);
+});
+
+test("teacher lesson summary uses shared session topic and visual context", () => {
+  assert.match(core.teacherLessonSummary(null).detail, /session ID/);
+  assert.deepEqual(core.teacherLessonSummary({
+    topic: "Algebra",
+    preferred_language: "mixed",
+    learning_level: "beginner",
+    learning_goal: "Solve equations",
+    visual_lesson: { title: "Balance model", concept: "Equality", description: "Keep both sides balanced." },
+  }), {
+    title: "Balance model",
+    detail: "Equality · Keep both sides balanced. · Solve equations",
+    language: "mixed",
+    level: "beginner",
+  });
+});
+
 test("teacher route exposes WebGL, loading and honest avatar fallbacks", async () => {
   const [app, component] = await Promise.all([
     readFile(new URL("../src/App.tsx", import.meta.url), "utf8"),
@@ -50,4 +72,9 @@ test("teacher route exposes WebGL, loading and honest avatar fallbacks", async (
   assert.ok(component.includes("Articulated geometric fallback"));
   assert.ok(component.includes("Loading local model"));
   assert.ok(component.includes("synthetic viseme demo"));
+  assert.ok(component.includes('aria-label="Teacher presentation mode"'));
+  assert.ok(component.includes("Holographic teacher"));
+  assert.ok(component.includes("Licensed rigged human asset needed"));
+  assert.ok(component.includes("getSharedSessionContext(sessionId)"));
+  assert.ok(component.includes("useSyncExternalStore(immersiveVoiceBridge.subscribeFrames"));
 });
