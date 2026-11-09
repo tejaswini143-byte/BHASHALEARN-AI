@@ -180,6 +180,59 @@ def test_new_student_has_explicit_empty_metrics_and_unknown_topics_are_other(ana
     assert len(data["trend"]) == 30
 
 
+def test_analytics_includes_only_completed_student_owned_int13_quizzes(analytics_app):
+    client, factory = analytics_app
+    owner_id, owner_headers = _auth(client, "quiz-analytics-owner@example.com")
+    other_id, other_headers = _auth(client, "quiz-analytics-other@example.com")
+    now = datetime.now(UTC)
+
+    with factory() as db:
+        for student_id, quiz_id, correct_values in (
+            (owner_id, "quiz-owner", (True, False)),
+            (other_id, "quiz-other", (True, True)),
+        ):
+            session = LearningSession(student_id=student_id, topic="Plants", language="english")
+            db.add(session)
+            db.flush()
+            for position, correct in enumerate(correct_values, 1):
+                db.add(LearningAssessmentAttempt(
+                    student_id=student_id, session_id=session.id, topic="Plants",
+                    normalized_topic_key="plants", question_id=f"int13:{quiz_id}:{position}",
+                    prompt="Private quiz prompt", options_json=f'{{"quiz_id":"{quiz_id}","position":{position}}}',
+                    expected_answer="A", idempotency_key=f"{quiz_id}-{position}",
+                    submitted_answer="A" if correct else "B", is_correct=correct,
+                    issued_at=now, answered_at=now,
+                ))
+            if student_id == owner_id:
+                # An answered fragment without position 2 is not a completed quiz.
+                db.add(LearningAssessmentAttempt(
+                    student_id=student_id, session_id=session.id, topic="Plants",
+                    normalized_topic_key="plants", question_id="int13:quiz-incomplete:1",
+                    prompt="Private fragment", options_json='{"quiz_id":"quiz-incomplete","position":1}',
+                    expected_answer="A", idempotency_key="quiz-incomplete-1",
+                    submitted_answer="A", is_correct=True, issued_at=now, answered_at=now,
+                ))
+        db.commit()
+
+    owner = client.get("/api/v1/analytics?range_days=7", headers=owner_headers)
+    assert owner.status_code == 200, owner.text
+    assert owner.json()["quiz_analytics"] == {
+        "available": True,
+        "completed_quizzes": 1,
+        "completed_questions": 2,
+        "average_score": 50.0,
+        "integration": "INT-13 student-owned completed quiz attempts",
+    }
+    assert owner.json()["range_totals"]["completed_quizzes"] == 1
+    assert "Private quiz prompt" not in owner.text
+
+    other = client.get("/api/v1/analytics?range_days=7", headers=other_headers)
+    assert other.status_code == 200, other.text
+    assert other.json()["quiz_analytics"]["completed_quizzes"] == 1
+    assert other.json()["quiz_analytics"]["average_score"] == 100.0
+    assert "quiz-owner" not in other.text
+
+
 def test_timeline_is_bounded_and_quiz_seam_accepts_only_valid_scored_results(tmp_path):
     engine = create_engine(f"sqlite:///{(tmp_path / 'bounded-analytics.db').as_posix()}")
     Base.metadata.create_all(engine)

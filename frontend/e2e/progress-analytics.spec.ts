@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 const dashboardData = {
   range_days: 7, timezone: "UTC", date_rule: "UTC calendar days",
   overview: { learning_sessions: 4, completed_activities: 6, completed_assessments: 5, learning_time_minutes: null, learning_time_status: "not_recorded" },
-  range_totals: { sessions: 2, completed_assessments: 3, mission_completions: 1 },
+  range_totals: { sessions: 2, completed_assessments: 3, mission_completions: 1, completed_quizzes: 1 },
   trend: Array.from({ length: 7 }, (_, index) => ({
     date: "2026-11-" + String(index + 2).padStart(2, "0"), sessions: index === 5 ? 1 : 0,
     completed_assessments: index === 5 ? 2 : 0, mission_completions: index === 6 ? 1 : 0,
@@ -17,7 +17,7 @@ const dashboardData = {
   streak: { days: 2, as_of_utc_date: "2026-11-08", timezone: "UTC", lower_bound: false },
   recent_activity: [{ kind: "assessment", title: "Practiced Equivalent Fractions", occurred_at: "2026-11-08T09:00:00Z", detail: "Correct" }],
   recommendations: [{ topic: "Equivalent Fractions", recommendation: "Review the prerequisite step.", reason: "Recorded accuracy is between 50% and 79%." }],
-  quiz_analytics: { available: false, integration: "Future adapter" },
+  quiz_analytics: { available: true, completed_quizzes: 1, completed_questions: 3, average_score: 66.7, integration: "INT-13 student-owned completed quiz attempts" },
 };
 
 async function authenticateLocally(page) {
@@ -46,6 +46,7 @@ test("analytics renders real-shaped mocked data, supports range changes, and rem
   await expect(page.getByRole("img", { name: /Recorded learning activity across/ })).toBeVisible();
   await expect(page.getByRole("progressbar", { name: "Mathematics mastery" })).toHaveAttribute("aria-valuenow", "75");
   await expect(page.getByText("Practiced Equivalent Fractions", { exact: true })).toBeVisible();
+  await expect(page.getByText(/1 completed quiz.*3 answered quiz questions.*66\.7% average quiz score/)).toBeVisible();
   await page.getByRole("button", { name: "30 days" }).click();
   await expect(page.getByRole("button", { name: "30 days" })).toHaveAttribute("aria-pressed", "true");
   await expect.poll(() => requestedRanges).toContain("30");
