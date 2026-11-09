@@ -31,6 +31,14 @@ test("aborted mock provider calls report typed interruption errors", async () =>
   assert.equal(events[0].error.code, "interrupted");
 });
 
+test("aborted mock Timbre synthesis reports a retryable interruption without audio", async () => {
+  const provider = new contract.MockVoiceTransport();
+  const controller = new AbortController(); controller.abort();
+  const events = [];
+  for await (const event of provider.synthesize({ sessionId: "s1", language: "mixed", text: "Hello నమస్కారం" }, controller.signal)) events.push(event);
+  assert.deepEqual(events, [{ type: "synthesis_failed", error: { code: "interrupted", message: "Synthesis was cancelled.", retryable: true } }]);
+});
+
 test("teacher bridge follows playback state, requires viseme timing, and accepts board coordinates", () => {
   const audio = { url: "mock://reply.wav", contentType: "audio/wav" };
   assert.deepEqual(contract.teacherActionsForVoiceEvent({ type: "playback_started", audio }), [{ type: "teacher_state", state: "explain" }]);
