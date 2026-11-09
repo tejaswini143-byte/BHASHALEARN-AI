@@ -131,7 +131,7 @@ def test_tutor_history_language_switch_and_message_persistence(client, monkeypat
     assert first.status_code == 200, first.text
     assert first.json()["language"] == "english"
     assert first.json()["learning_level"] == "intermediate"
-    assert "Current topic: Fractions" in calls[0][0]
+    assert '"current_topic": "Fractions"' in calls[0][0]
     assert "Prepare for algebra" in calls[0][0]
     assert LANGUAGE_GUIDANCE["english"] in calls[0][0]
     assert calls[0][1][:2] == [
