@@ -3,3 +3,29 @@
 /* Dedicated experience launchpad */
 .db-experiences{margin:32px 0}.db-experience-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.db-experience{display:flex;flex-direction:column;position:relative;min-height:245px;overflow:hidden;padding:24px;border:1px solid #6370b177;border-radius:20px;background:radial-gradient(circle at 100% 0%,#5c5bc955,transparent 65%),linear-gradient(145deg,#202c56,#111a37);color:#eef3ff;transition:transform .2s,border-color .2s}.db-experience:hover{transform:translateY(-5px);border-color:#95c5ff}.db-exp-voice{background:radial-gradient(circle at 85% 20%,#a75de55c,transparent 60%),linear-gradient(140deg,#2d2054,#111a37)}.db-exp-visual{background:radial-gradient(circle at 85% 20%,#3dbcd45a,transparent 60%),linear-gradient(140deg,#133a53,#111a37)}.db-exp-chat{background:radial-gradient(circle at 85% 20%,#5269df66,transparent 60%),linear-gradient(140deg,#222d63,#111a37)}.db-exp-icon{display:grid;place-items:center;width:55px;height:55px;border-radius:17px;background:#ffffff18;font-size:30px;color:#b7e7ff;margin-bottom:16px}.db-exp-tag{font-size:10px;letter-spacing:.17em;color:#a5c9f7;font-weight:800}.db-experience h3{font:800 22px Outfit,sans-serif;margin:8px 0}.db-experience p{color:#b2c2e2;font-size:12px;line-height:1.8;flex:1;margin:0 0 20px}.db-experience strong{font-size:12px;color:#b7f2ff}.db-upcoming a{display:block}.db-upcoming a:hover{color:#9ce7f6}@media(max-width:1100px){.db-experience-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:650px){.db-experience-grid{grid-template-columns:1fr}.db-experience{min-height:215px}}
 .db-analytics-link{display:inline-block;margin-top:18px;color:#91dff4;font-size:11px;font-weight:800}.db-analytics-link:hover{color:#c7b4ff}
+
+/* Keyboard, loading, and narrow-screen navigation polish for the integrated HoloOS dashboard. */
+.db-sidebar-backdrop{display:none}
+.db-top-actions button:focus-visible,.db-menu-toggle:focus-visible,.db-start input:focus-visible,.db-search input:focus-visible,.db-start form button:focus-visible{outline:3px solid #7ee9ff;outline-offset:3px}
+.db-start input:focus-visible,.db-search:focus-within{border-color:#82ddfa;box-shadow:0 0 0 3px #62dff52b}
+.db-bar-track[role="progressbar"]{outline-offset:3px}
+.db-feedback-error{color:#ffc3d0;border:1px solid #d56c8b;border-radius:9px;background:#64243c70;padding:11px 13px}
+.db-start form button:disabled{cursor:not-allowed}
+.db-session-list[aria-live]{min-height:42px}
+@media(max-width:800px){
+  .db-sidebar{visibility:hidden;transition:transform .25s ease,visibility .25s}
+  .db-sidebar.db-sidebar-open{visibility:visible}
+  .db-sidebar-backdrop{display:block;position:fixed;inset:0;z-index:39;border:0;background:#050918b8;opacity:0;visibility:hidden;pointer-events:none;transition:opacity .2s ease,visibility .2s}
+  .db-sidebar-backdrop-open{opacity:1;visibility:visible;pointer-events:auto}
+  .db-topbar{position:sticky;top:0;z-index:30}
+}
+@media(max-width:510px){
+  .db-topbar{min-height:64px}
+  .db-top-actions button{white-space:nowrap}
+  .db-hero{border-radius:17px}
+  .db-card-heading{align-items:flex-start}
+  .db-session-tag{padding:9px 3px 9px 8px}
+  .db-search{min-height:46px}
+  .db-start input{min-height:46px;font-size:16px}
+}
+@media(prefers-reduced-motion:reduce){.db-sidebar,.db-sidebar-backdrop{transition:none}}
