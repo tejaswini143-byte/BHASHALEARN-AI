@@ -1,6 +1,31 @@
 export type TeacherState = "idle" | "walk" | "turn" | "explain" | "point" | "listen" | "celebrate";
 export type Expression = "neutral" | "happy" | "curious" | "encouraging" | "thinking";
+export type TeacherMode = "realistic" | "holographic";
 export type Viseme = "sil" | "aa" | "ee" | "oh" | "mm" | "fv" | "th";
+
+export type TeacherLessonContext = {
+  topic: string;
+  preferred_language: "english" | "telugu" | "mixed";
+  learning_level: "beginner" | "intermediate" | "advanced";
+  learning_goal: string | null;
+  visual_lesson: { title: string; concept: string; description: string } | null;
+};
+
+export function validateTeacherMode(value: string): TeacherMode {
+  if (value === "realistic" || value === "holographic") return value;
+  throw new Error("Unknown teacher mode");
+}
+
+export function teacherLessonSummary(context: TeacherLessonContext | null): { title: string; detail: string; language: string; level: string } {
+  if (!context) return { title: "Lesson context not connected", detail: "Pass the active session ID to share its topic, language, level, and visual lesson.", language: "—", level: "—" };
+  const visual = context.visual_lesson;
+  return {
+    title: visual?.title || context.topic || "Untitled lesson",
+    detail: [visual?.concept, visual?.description, context.learning_goal].filter(Boolean).join(" · ") || context.topic,
+    language: context.preferred_language,
+    level: context.learning_level,
+  };
+}
 
 export type BoardTarget = { x: number; y: number };
 export type TeacherAction =
