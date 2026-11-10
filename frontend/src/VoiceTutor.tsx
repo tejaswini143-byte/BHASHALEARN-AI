@@ -7,13 +7,22 @@ import { SessionModeNav } from "./SessionModeNav";
 import { PracticeAssessment } from "./PracticeAssessment";
 import { AvatarSyncController, type SyncMode } from "./avatarSync";
 import { immersiveVoiceBridge } from "./immersiveVoiceBridge";
+import { matchVoiceNavigationCommand } from "./voiceNavigation.mjs";
 import "./voice.css";
 
 type Language = "english" | "telugu" | "mixed";
 type Session = { id: string; topic: string; language: Language; created_at: string };
-type Message = { id: string; role: "user" | "assistant"; content: string; created_at: string };
+type Message = { id: string; role: "user" | "assistant"; content: string; created_at: string; language?: Language };
 type TutorReply = { reply: string; session_id: string; language: string; learning_level: string };
 type Preferences = LearningPreferences;
+type PlaybackState = "idle" | "listening" | "thinking" | "speaking" | "paused" | "interrupted" | "error";
+type ResumeStatus = "none" | "awaiting_confirmation" | "resumed" | "dismissed";
+type VoiceLessonState = {
+  session_id: string; topic: string; lesson_step: string; student_question: string | null;
+  active_response_language: Language; playback_state: PlaybackState; voice_transcript: string | null;
+  checkpoint_message_id: string | null; checkpoint_playback_ms: number | null;
+  resume_status: ResumeStatus; updated_at?: string | null;
+};
 const headers = () => ({ Authorization: "Bearer " + getToken() });
 function errorText(cause: unknown) { return cause instanceof Error ? cause.message : "Something went wrong."; }
 function optimisticPlaceholder(content: string): Message { return { id: "local-demo-user-" + Date.now(), role: "user", content, created_at: new Date().toISOString() }; }
@@ -95,6 +104,7 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
   const [preferences, setPreferences] = useState<Preferences>(DEFAULT_LEARNING_PREFERENCES);
   const [topic, setTopic] = useState("");
   const [draft, setDraft] = useState("");
+  const pendingNavigation = matchVoiceNavigationCommand(draft);
   const [messages, setMessages] = useState<Message[]>([]);
   const [recording, setRecording] = useState(false);
   const [micStarting, setMicStarting] = useState(false);
@@ -117,6 +127,10 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
   const [localDemoAvailable, setLocalDemoAvailable] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [replyLatencyMs, setReplyLatencyMs] = useState<number | null>(null);
+  const [voiceState, setVoiceState] = useState<VoiceLessonState | null>(null);
+  const [resumePrompt, setResumePrompt] = useState(false);
+  const [providerConfigured, setProviderConfigured] = useState<boolean | null>(null);
   const [mobileMenu, setMobileMenu] = useState(false);
   const scrollBottom = useRef<HTMLDivElement>(null);
   const activeHistory = useRef(0);
@@ -129,6 +143,10 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
   const chunksRef = useRef<Float32Array[]>([]);
   const audioCache = useRef(new Map<string, string>());
   const audioRef = useRef<HTMLAudioElement>(null);
+  const pendingPlaybackOffsetRef = useRef(0);
+  const interruptingRef = useRef(false);
+  const voiceStateRef = useRef<VoiceLessonState | null>(null);
+  const voiceStateWriteRef = useRef<Promise<void>>(Promise.resolve());
   const syncGenerationRef = useRef<number | null>(null);
   const audioLanguageRef = useRef<Language>("mixed");
   const mouthVisemeRef = useRef("sil");
@@ -144,6 +162,7 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
     if (mouthVisemeRef.current !== frame.viseme) { mouthVisemeRef.current = frame.viseme; setMouthViseme(frame.viseme); }
   });
   const speechRequestRef = useRef<AbortController | null>(null);
+  const transcriptionRequestRef = useRef<AbortController | null>(null);
   const recordingActive = useRef(false);
   const micRequestActive = useRef(false);
   const voiceTurnActive = useRef(false);
@@ -177,6 +196,9 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
     const token = getToken();
     if (!token) { signOut(); return; }
     if (forceDemo) { enableLocalDemo(); setLoading(false); return () => { active = false; }; }
+    request<{ configured: boolean }>("/voice/sessions/provider-mode", { headers: { Authorization: "Bearer " + token } })
+      .then(status => { if (active) setProviderConfigured(status.configured); })
+      .catch(() => { if (active) setProviderConfigured(false); });
     Promise.all([
       getCurrentStudent(token),
       request<Session[]>("/sessions?limit=100", { headers: { Authorization: "Bearer " + token } }),
@@ -200,16 +222,25 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
   useEffect(() => {
     selectedRef.current = selected;
     const loadId = ++activeHistory.current;
+    voiceStateRef.current = null;
+    setVoiceState(null);
+    setResumePrompt(false);
     if (demoMode || forceDemo) { setHistoryLoading(false); return; }
     setMessages([]);
     if (!selected) { setHistoryLoading(false); return; }
     setHistoryLoading(true);
-    getSharedSessionContext(selected)
-      .then(context => {
+    Promise.all([
+      getSharedSessionContext(selected),
+      request<VoiceLessonState>(`/voice/sessions/${encodeURIComponent(selected)}/state`, { headers: headers() }).catch(() => null),
+    ])
+      .then(([context, state]) => {
         if (loadId !== activeHistory.current) return;
         setMessages(context.messages);
-        setLanguage(context.preferred_language);
+        setLanguage(state?.active_response_language || context.preferred_language);
         setPreferences({ preferred_language: context.preferred_language, learning_level: context.learning_level, learning_pace: context.learning_pace, learning_goal: context.learning_goal });
+        voiceStateRef.current = state;
+        setVoiceState(state);
+        setResumePrompt(state?.resume_status === "awaiting_confirmation" && Boolean(state.checkpoint_message_id));
       })
       .catch(cause => { if (loadId === activeHistory.current) handleError(cause); })
       .finally(() => { if (loadId === activeHistory.current) setHistoryLoading(false); });
@@ -218,6 +249,10 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
   useEffect(() => { scrollBottom.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [messages, busy]);
   useEffect(() => {
     if (!audioUrl || !audioRef.current) return;
+    if (pendingPlaybackOffsetRef.current > 0) {
+      audioRef.current.currentTime = pendingPlaybackOffsetRef.current;
+      pendingPlaybackOffsetRef.current = 0;
+    }
     const generation = syncControllerRef.current!.begin({}, audioLanguageRef.current);
     syncGenerationRef.current = generation;
     void audioRef.current.play().catch(() => {
@@ -254,6 +289,7 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
       if (recordingTimer.current !== null) window.clearInterval(recordingTimer.current);
       void releaseMicrophone();
       speechRequestRef.current?.abort(); speechRequestRef.current = null;
+      transcriptionRequestRef.current?.abort(); transcriptionRequestRef.current = null;
       syncControllerRef.current?.cancel();
       syncGenerationRef.current = null;
       audioRef.current?.pause();
@@ -265,14 +301,69 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
     };
   }, [releaseMicrophone]);
 
-  function stopPlayback() {
+  async function saveVoiceState(patch: Partial<VoiceLessonState>, sessionId = selected) {
+    if (!sessionId) return;
+    const write = voiceStateWriteRef.current.catch(() => undefined).then(async () => {
+      const previous = voiceStateRef.current?.session_id === sessionId ? voiceStateRef.current : null;
+      const next = {
+        lesson_step: previous?.lesson_step || "introduction",
+        student_question: previous?.student_question ?? null,
+        active_response_language: previous?.active_response_language || language,
+        playback_state: previous?.playback_state || "idle",
+        voice_transcript: previous?.voice_transcript ?? null,
+        checkpoint_message_id: previous?.checkpoint_message_id ?? null,
+        checkpoint_playback_ms: previous?.checkpoint_playback_ms ?? null,
+        resume_status: previous?.resume_status || "none",
+        ...patch,
+      };
+      try {
+        const updated = await request<VoiceLessonState>(`/voice/sessions/${encodeURIComponent(sessionId)}/state`, {
+          method: "PUT", headers: headers(), body: JSON.stringify(next),
+        });
+        if (selectedRef.current === sessionId) {
+          voiceStateRef.current = updated;
+          setVoiceState(updated);
+        }
+      } catch (cause) {
+        if (selectedRef.current === sessionId) {
+          if (cause instanceof ApiError && cause.status === 401) handleError(cause);
+          else setNotice("Voice checkpoint could not be saved: " + errorText(cause));
+        }
+      }
+    });
+    voiceStateWriteRef.current = write;
+    await write;
+  }
+
+  function stopPlayback(preservePosition = false) {
     speechRequestRef.current?.abort(); speechRequestRef.current = null;
     const wasActive = syncGenerationRef.current !== null || speaking || speechLoading;
     if (syncGenerationRef.current !== null) syncControllerRef.current?.cancel(syncGenerationRef.current);
     syncGenerationRef.current = null;
     if (wasActive) immersiveVoiceBridge.setState("interrupted");
-    if (audioRef.current) { audioRef.current.pause(); audioRef.current.currentTime = 0; }
+    if (audioRef.current) { audioRef.current.pause(); if (!preservePosition) audioRef.current.currentTime = 0; }
     setSpeaking(false); setSpeechLoading(false);
+  }
+
+  function interruptSpeechForQuestion() {
+    if (!speaking && !speechLoading) return;
+    const latestAssistant = [...messages].reverse().find(message => message.role === "assistant");
+    const checkpoint = {
+      checkpoint_message_id: latestAssistant?.id || null,
+      checkpoint_playback_ms: Math.max(0, Math.round((audioRef.current?.currentTime || 0) * 1000)),
+      student_question: null,
+      active_response_language: language,
+      playback_state: "interrupted" as const,
+      resume_status: latestAssistant ? "awaiting_confirmation" as const : "none" as const,
+    };
+    setResumePrompt(Boolean(latestAssistant));
+    void saveVoiceState(checkpoint);
+    interruptingRef.current = true;
+    immersiveVoiceBridge.setState("interrupted");
+    stopPlayback(true);
+    window.setTimeout(() => {
+      if (interruptingRef.current && (!audioRef.current || audioRef.current.paused)) interruptingRef.current = false;
+    }, 1000);
   }
   function startPlaybackSync(elementKey = playbackElementKey) {
     if (!mounted.current || elementKey !== playbackElementKey) return;
@@ -294,17 +385,23 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
       } catch { /* Playback continues; the controller labels its timing-based mouth motion as approximate. */ }
     }
     setSpeaking(true); setPlaybackRun(value => value + 1);
+    immersiveVoiceBridge.setState("speaking");
+    if (!demoMode) void saveVoiceState({ playback_state: "speaking" });
   }
   function pausePlaybackSync(elementKey = playbackElementKey) {
+    if (interruptingRef.current) { interruptingRef.current = false; setSpeaking(false); return; }
     if (!mounted.current || elementKey !== playbackElementKey || !audioRef.current || audioRef.current.ended || syncGenerationRef.current === null) return;
     syncControllerRef.current?.pause(syncGenerationRef.current);
     setSpeaking(false);
+    immersiveVoiceBridge.setState("paused");
+    if (!demoMode) void saveVoiceState({ playback_state: "paused" });
   }
   function completePlaybackSync(elementKey = playbackElementKey) {
     if (!mounted.current || elementKey !== playbackElementKey) return;
     if (syncGenerationRef.current !== null) syncControllerRef.current?.complete(syncGenerationRef.current);
     else immersiveVoiceBridge.setState("idle");
     setSpeaking(false);
+    if (!demoMode) void saveVoiceState({ playback_state: "idle" });
   }
   function chooseSession(id: string) {
     if (busy || transcribing || recording) return;
@@ -328,23 +425,28 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
     try {
       const updated = await request<Preferences>("/students/me/preferences", { method: "PUT", headers: headers(), body: JSON.stringify(mergeLearningPreferences(preferences, { preferred_language: value })) });
       setPreferences(updated); setNotice("Tutor language updated. Your session and conversation remain unchanged.");
+      if (!demoMode) void saveVoiceState({ active_response_language: value });
     } catch (cause) { setLanguage(previous); handleError(cause); }
   }
 
   async function transcribeWav(blob: Blob) {
     const sessionId = selected;
     if (!sessionId) return;
+    transcriptionRequestRef.current?.abort();
+    const controller = new AbortController();
+    transcriptionRequestRef.current = controller;
     setTranscribing(true); setError(""); setNotice("Sending PCM WAV to Gnani Prisma…");
     try {
       const form = new FormData(); form.append("audio", blob, "microphone.wav"); form.append("language", language);
-      const response = await fetch(`/api/v1/voice/sessions/${encodeURIComponent(sessionId)}/transcribe`, { method: "POST", headers: headers(), body: form });
+      const response = await fetch(`/api/v1/voice/sessions/${encodeURIComponent(sessionId)}/transcribe`, { method: "POST", headers: { ...headers(), "X-Request-ID": crypto.randomUUID() }, body: form, signal: controller.signal });
       const body = await response.json().catch(() => null) as { transcript?: unknown; detail?: unknown } | null;
       if (!response.ok) throw new ApiError(response.status, typeof body?.detail === "string" ? body.detail : "Speech transcription failed. You can type your question instead.");
       if (selectedRef.current !== sessionId) return;
       if (typeof body?.transcript !== "string" || !body.transcript.trim()) throw new Error("Prisma did not recognize speech. Try again or type your question.");
       setDraft(body.transcript); setNotice("Transcript ready. Review or correct it, then send it to your tutor.");
-    } catch (cause) { handleError(cause); }
-    finally { setTranscribing(false); }
+      if (!demoMode) void saveVoiceState({ voice_transcript: body.transcript, playback_state: resumePrompt ? "interrupted" : "idle" }, sessionId);
+    } catch (cause) { if (!controller.signal.aborted) handleError(cause); }
+    finally { if (transcriptionRequestRef.current === controller) transcriptionRequestRef.current = null; setTranscribing(false); }
   }
 
   async function finishRecording() {
@@ -365,7 +467,7 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
 
   async function toggleRecording() {
     if (recordingActive.current) { await finishRecording(); return; }
-    setError(""); setNotice(""); stopPlayback();
+    setError(""); setNotice(""); interruptSpeechForQuestion();
     if (demoMode) { setError("Microphone capture is unavailable in local demo mode. Type a question to continue."); immersiveVoiceBridge.setState("error"); return; }
     if (!selected || busy || transcribing || voiceTurnActive.current || micRequestActive.current) return;
     if (!navigator.mediaDevices?.getUserMedia || typeof AudioContext === "undefined") { setError("Microphone recording is unavailable in this browser. Type your question instead."); immersiveVoiceBridge.setState("error"); return; }
@@ -388,6 +490,7 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
       processor.onaudioprocess = event => chunksRef.current.push(new Float32Array(event.inputBuffer.getChannelData(0)));
       source.connect(processor); processor.connect(mute); mute.connect(context.destination);
       recordingActive.current = true; setRecording(true);
+      if (!demoMode) void saveVoiceState({ playback_state: "listening" });
       const started = Date.now();
       const timer = window.setInterval(() => {
         const elapsed = Math.floor((Date.now() - started) / 1000); setRecordingSeconds(elapsed);
@@ -411,16 +514,16 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
     setNotice("Playing a local demo tone for avatar timing; this is not generated speech.");
   }
 
-  async function generateSpeech(text: string, sessionId: string, mode: Language) {
+  async function generateSpeech(text: string, sessionId: string, mode: Language, offsetMs = 0) {
     audioLanguageRef.current = mode;
     const cacheKey = `${sessionId}:${mode}:${text}`;
     const cached = audioCache.current.get(cacheKey);
     if (demoMode) { generateLocalDemo(text, sessionId, mode); return; }
     if (cached) {
       if (audioUrl === cached && audioRef.current) {
-        stopPlayback();
-        setPlaybackElementKey(value => value + 1);
-      } else { stopPlayback(); setAudioUrl(cached); }
+        audioRef.current.currentTime = Math.max(0, offsetMs) / 1000;
+        void audioRef.current.play().catch(() => setNotice("Audio is ready. Press Play to start playback."));
+      } else { stopPlayback(); pendingPlaybackOffsetRef.current = Math.max(0, offsetMs) / 1000; setAudioUrl(cached); }
       return;
     }
     stopPlayback(); setAudioUrl("");
@@ -433,7 +536,7 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
       });
       const blob = await readAudioResponse(response);
       if (controller.signal.aborted) return;
-      const url = URL.createObjectURL(blob); audioCache.current.set(cacheKey, url); setAudioUrl(url); setNotice("Timbre audio is ready.");
+      const url = URL.createObjectURL(blob); audioCache.current.set(cacheKey, url); pendingPlaybackOffsetRef.current = Math.max(0, offsetMs) / 1000; setAudioUrl(url); setNotice("Timbre audio is ready.");
       if (audioCache.current.size > 20) {
         const oldest = audioCache.current.keys().next().value;
         if (oldest) { URL.revokeObjectURL(audioCache.current.get(oldest)!); audioCache.current.delete(oldest); }
@@ -452,6 +555,9 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
     const message = draft.trim();
     if (!message || !selected || busy || transcribing || recording || historyLoading) return;
     const sessionId = selected;
+    const checkpoint = voiceStateRef.current?.session_id === sessionId
+      && Boolean(voiceStateRef.current.checkpoint_message_id)
+      && voiceStateRef.current.resume_status === "awaiting_confirmation";
     setBusy(true); setError(""); setNotice(""); setDraft(""); stopPlayback(); immersiveVoiceBridge.setState("thinking");
     if (demoMode) {
       const localReply: Message = { id: "local-demo-reply-" + Date.now(), role: "assistant", content: "I heard your typed question in this local demo. The response is example text and no backend was contacted.", created_at: new Date().toISOString() };
@@ -460,19 +566,48 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
       if (autoSpeak) generateLocalDemo(localReply.content, sessionId, language);
       return;
     }
+    void saveVoiceState({ student_question: message, voice_transcript: message, active_response_language: language, playback_state: "thinking" }, sessionId);
     const optimistic: Message = { id: "pending-" + Date.now(), role: "user", content: message, created_at: new Date().toISOString() };
     setMessages(items => [...items, optimistic]);
+    const requestStartedAt = performance.now();
     try {
-      const result = await request<TutorReply>(`/tutor/sessions/${encodeURIComponent(sessionId)}/chat`, { method: "POST", headers: headers(), body: JSON.stringify({ message }) });
-      if (selectedRef.current === sessionId) setMessages(items => [...items, { id: "reply-" + Date.now(), role: "assistant", content: result.reply, created_at: new Date().toISOString() }]);
-      try {
-        const saved = await request<Message[]>(`/sessions/${encodeURIComponent(sessionId)}/messages?limit=500`, { headers: headers() });
-        if (selectedRef.current === sessionId) setMessages(saved);
-      } catch { setNotice("Reply received, but saved history could not be refreshed."); }
-      if (autoSpeak && selectedRef.current === sessionId) await generateSpeech(result.reply, sessionId, language);
+      const result = await request<TutorReply>(`/tutor/sessions/${encodeURIComponent(sessionId)}/chat`, { method: "POST", headers: headers(), body: JSON.stringify({ message, language }) });
+      setReplyLatencyMs(Math.round(performance.now() - requestStartedAt));
+      if (selectedRef.current === sessionId) setMessages(items => [...items, { id: "reply-" + Date.now(), role: "assistant", content: result.reply, created_at: new Date().toISOString(), language: result.language as Language }]);
+      if (autoSpeak && selectedRef.current === sessionId) await generateSpeech(result.reply, sessionId, result.language as Language);
+      if (selectedRef.current === sessionId && !demoMode) {
+        void saveVoiceState({
+          student_question: checkpoint ? message : null,
+          voice_transcript: message,
+          active_response_language: language,
+          playback_state: autoSpeak ? "speaking" : "idle",
+          resume_status: checkpoint ? "awaiting_confirmation" : "none",
+        }, sessionId);
+        if (checkpoint) setResumePrompt(true);
+      }
     } catch (cause) {
       setMessages(items => items.filter(item => item.id !== optimistic.id)); setDraft(message); handleError(cause);
     } finally { setBusy(false); if (!speaking && immersiveVoiceBridge.getState() === "thinking") immersiveVoiceBridge.setState("idle"); }
+  }
+
+  async function resumeCheckpoint() {
+    const checkpoint = voiceStateRef.current;
+    if (!checkpoint?.checkpoint_message_id) return;
+    const message = messages.find(item => item.id === checkpoint.checkpoint_message_id && item.role === "assistant");
+    if (!message) {
+      setResumePrompt(false);
+      await saveVoiceState({ resume_status: "dismissed", playback_state: "idle" }, checkpoint.session_id);
+      setNotice("The saved lesson audio is no longer available. Choose a tutor reply to continue.");
+      return;
+    }
+    setResumePrompt(false);
+    await saveVoiceState({ resume_status: "resumed", playback_state: "speaking", student_question: null }, checkpoint.session_id);
+    await generateSpeech(message.content, checkpoint.session_id, checkpoint.active_response_language, checkpoint.checkpoint_playback_ms || 0);
+  }
+
+  async function dismissResume() {
+    setResumePrompt(false);
+    await saveVoiceState({ resume_status: "dismissed", playback_state: "idle", student_question: null });
   }
 
   const current = sessions.find(session => session.id === selected);
@@ -494,15 +629,15 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
         <div className={recording ? "vt-wave vt-wave-active" : "vt-wave"} aria-hidden="true">{Array.from({length: 35}, (_, index) => <i key={index} style={{ height: `${12 + Math.abs(Math.sin(index * 1.43)) * 38}px`, animationDelay: `${index * 37}ms` }}/>)}</div>
         <div className="vt-status" role="status">{micStarting ? "Requesting microphone permission…" : recording ? `Recording… ${recordingSeconds}s / 30s — tap the orb to stop` : transcribing ? "Transcribing with Gnani Prisma…" : speaking ? "Tutor audio is playing…" : speechLoading ? "Generating tutor audio with Gnani Timbre…" : busy ? "Gemini tutor is thinking…" : selected ? "Tap the orb to record a question" : "Choose a learning session first"}</div>
         <label className="vt-autospeak"><input type="checkbox" checked={autoSpeak} onChange={event => setAutoSpeak(event.target.checked)}/> Generate and play tutor replies automatically</label>
-        {speechLoading && !audioUrl && <button type="button" className="vt-stop-generation" onClick={stopPlayback}>Cancel speech generation</button>}
+        {speechLoading && !audioUrl && <button type="button" className="vt-stop-generation" onClick={() => stopPlayback()}>Cancel speech generation</button>}
         {localDemoAvailable && !demoMode && <button type="button" className="vt-demo-play" onClick={() => { const last = [...messages].reverse().find(item => item.role === "assistant"); if (last && selected) generateLocalDemo(last.content, selected, language); }}>Play local demo tone</button>}
-        {audioUrl && <div className="vt-playback"><audio key={`${audioUrl}:${playbackElementKey}`} ref={audioRef} src={audioUrl} controls onPlay={() => startPlaybackSync(playbackElementKey)} onPause={() => pausePlaybackSync(playbackElementKey)} onEnded={() => completePlaybackSync(playbackElementKey)} onError={() => { if (!mounted.current) return; if (syncGenerationRef.current !== null) syncControllerRef.current?.fail(syncGenerationRef.current); else immersiveVoiceBridge.setState("error"); setSpeaking(false); }}>Your browser cannot play this WAV audio.</audio><button type="button" onClick={stopPlayback}>Stop audio</button><small>{syncMode === "timestamped-visemes" ? "Timestamped viseme cues" : syncMode === "timestamped-phonemes-approximate" ? "Timestamped phonemes · approximate mouth shapes" : "Approximate audio-driven mouth animation · no phoneme alignment"} · {mouthViseme} mouth shape</small></div>}
+        {audioUrl && <div className="vt-playback"><audio key={`${audioUrl}:${playbackElementKey}`} ref={audioRef} src={audioUrl} controls onPlay={() => startPlaybackSync(playbackElementKey)} onPause={() => pausePlaybackSync(playbackElementKey)} onEnded={() => completePlaybackSync(playbackElementKey)} onError={() => { if (!mounted.current) return; if (syncGenerationRef.current !== null) syncControllerRef.current?.fail(syncGenerationRef.current); else immersiveVoiceBridge.setState("error"); setSpeaking(false); if (!demoMode) void saveVoiceState({ playback_state: "error" }); }}>Your browser cannot play this WAV audio.</audio><button type="button" disabled={!speaking && !speechLoading} onClick={interruptSpeechForQuestion}>Interrupt tutor speech</button><button type="button" onClick={() => stopPlayback()}>Stop audio</button><small>{syncMode === "timestamped-visemes" ? "Timestamped viseme cues" : syncMode === "timestamped-phonemes-approximate" ? "Timestamped phonemes · approximate mouth shapes" : "Approximate audio-driven mouth animation · no phoneme alignment"} · {mouthViseme} mouth shape</small></div>}
         <div className="vt-stage-note">{demoMode ? "Local demo mode: generated tone only, no microphone recording, backend request, or Gnani speech." : "Microphone audio is converted to bounded mono PCM WAV and sent to the authenticated backend. Browser playback uses the WAV returned by Gnani Timbre."}</div>
         <div className="vt-new-topic"><form onSubmit={createSession}><label htmlFor="vt-topic">New learning topic</label><div><input id="vt-topic" value={topic} maxLength={200} onChange={event => setTopic(event.target.value)} placeholder="e.g. Everyday English" required/><button disabled={!topic.trim() || creating || busy || recording}>{creating ? "Creating…" : "+ Create"}</button></div></form></div>
       </section>
-      <section className="vt-chat"><div className="vt-chat-header"><div><span className="vt-eyebrow">CONVERSATION TRANSCRIPT</span><h3>AI Tutor <span>✦</span></h3></div><span className="vt-chat-badge">PRISMA + GEMINI + TIMBRE</span></div>
-        <div className="vt-transcript">{historyLoading ? <p className="vt-empty">Loading saved conversation…</p> : messages.length ? messages.map(message => <article key={message.id} className={message.role === "user" ? "vt-message vt-user" : "vt-message vt-ai"}><div className="vt-msg-label"><span>{message.role === "user" ? "YOU" : "✦ AI TUTOR"}</span>{message.role === "assistant" && <button disabled={speechLoading} onClick={() => void generateSpeech(message.content, selected, language)} aria-label="Generate or replay tutor speech">{speechLoading ? "Preparing…" : "▶ Listen / replay"}</button>}</div><p>{message.content}</p></article>) : <div className="vt-empty"><div>✦</div><h3>Your conversation starts here</h3><p>Record your question, review the Prisma transcript, then send it to your AI tutor.</p></div>}{busy && <p className="vt-thinking">✦ Tutor is preparing your reply…</p>}<div ref={scrollBottom}/></div>
-        <div className="vt-compose">{error && <p className="vt-error" role="alert">{error}</p>}{notice && <p className="vt-notice" role="status">{notice}</p>}{(draft || transcribing) && <p className="vt-interim">{transcribing ? "Processing microphone recording…" : "Prisma transcript — review or edit before sending"}</p>}<form onSubmit={sendMessage}><textarea aria-label="Prisma transcript or typed message" placeholder="Your Prisma transcript appears here. Review it or type a message…" value={draft} maxLength={4000} onChange={event => setDraft(event.target.value)} rows={3} disabled={busy || transcribing || recording || historyLoading}/><button disabled={!selected || !draft.trim() || busy || transcribing || recording || historyLoading}>{busy ? "Thinking…" : "Send to tutor ↗"}</button></form><small>Only the transcript you send enters Gemini and the saved session history. Microphone audio is not saved.</small></div>
+      <section className="vt-chat"><div className="vt-chat-header"><div><span className="vt-eyebrow">CONVERSATION TRANSCRIPT</span><h3>AI Tutor <span>✦</span></h3></div><span className="vt-chat-badge">{replyLatencyMs !== null ? `LAST TUTOR ROUND-TRIP · ${(replyLatencyMs / 1000).toFixed(1)} S` : "LATENCY MEASURES END-TO-END, NOT PROVIDER-ONLY"} · {providerConfigured === null ? "CHECKING VOICE PROVIDER…" : providerConfigured ? "GNANI CREDENTIALS CONFIGURED · LIVE CALLS ON DEMAND" : "GNANI UNAVAILABLE · TEXT CLASSROOM AVAILABLE"}</span></div>
+        <div className="vt-transcript">{historyLoading ? <p className="vt-empty">Loading saved conversation…</p> : messages.length ? messages.map(message => <article key={message.id} className={message.role === "user" ? "vt-message vt-user" : "vt-message vt-ai"}><div className="vt-msg-label"><span>{message.role === "user" ? "YOU" : "✦ AI TUTOR"}</span>{message.role === "assistant" && <button disabled={speechLoading} onClick={() => void generateSpeech(message.content, selected, message.language || language)} aria-label="Generate or replay tutor speech">{speechLoading ? "Preparing…" : "▶ Listen / replay"}</button>}</div><p>{message.content}</p></article>) : <div className="vt-empty"><div>✦</div><h3>Your conversation starts here</h3><p>Record your question, review the Prisma transcript, then send it to your AI tutor.</p></div>}{busy && <p className="vt-thinking">✦ Tutor is preparing your reply…</p>}<div ref={scrollBottom}/></div>
+        <div className="vt-compose">{error && <p className="vt-error" role="alert">{error}</p>}{notice && <p className="vt-notice" role="status">{notice}</p>}{pendingNavigation && <div className="vt-resume-prompt" role="group" aria-label="Voice navigation confirmation"><p>Voice navigation command recognized: {pendingNavigation.label}.</p><button type="button" onClick={() => { if (pendingNavigation.path === "__back__") navigate(-1); else navigate(pendingNavigation.path); setDraft(""); }}>Open {pendingNavigation.label}</button><button type="button" onClick={() => setDraft("")}>Dismiss</button></div>}{resumePrompt && <div className="vt-resume-prompt" role="group" aria-label="Lesson continuation"><p>Your question was answered. The lesson is paused at {Math.round((voiceState?.checkpoint_playback_ms || 0) / 1000)} seconds.</p><button type="button" onClick={() => void resumeCheckpoint()}>Resume lesson</button><button type="button" onClick={() => void dismissResume()}>Continue later</button></div>}{(draft || transcribing) && <p className="vt-interim">{transcribing ? "Processing microphone recording…" : "Prisma transcript — review or edit before sending"}</p>}<form onSubmit={sendMessage}><textarea aria-label="Prisma transcript or typed message" placeholder="Your Prisma transcript appears here. Review it or type a message…" value={draft} maxLength={4000} onChange={event => setDraft(event.target.value)} rows={3} disabled={busy || transcribing || recording || historyLoading}/><button disabled={!selected || !draft.trim() || busy || transcribing || recording || historyLoading}>{busy ? "Thinking…" : "Send to tutor ↗"}</button></form><small>Only the transcript you send enters Gemini and the saved session history. Microphone audio is not saved.</small></div>
         {!immersive && <PracticeAssessment sessionId={selected}/>}
       </section></div>
     </MainElement>

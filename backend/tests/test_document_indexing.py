@@ -118,6 +118,18 @@ def test_search_filters_student_and_stable_cosine_ranking(db):
     assert own[0]["score"] == pytest.approx(1.0)
 
 
+def test_search_can_be_restricted_to_selected_student_documents(db):
+    student = add_student(db)
+    first = add_document(db, student.id, "first selected lesson", "first")
+    second = add_document(db, student.id, "second unselected lesson", "second")
+    provider = ControlledProvider()
+    index_document(db, document_id=first.id, student_id=student.id, provider=provider)
+    index_document(db, document_id=second.id, student_id=student.id, provider=provider)
+    results = search_documents(db, student_id=student.id, query_vector=[1.0] + [0.0] * 767,
+                               model=provider.model, top_k=5, document_ids=[first.id])
+    assert [item["document_id"] for item in results] == [first.id]
+
+
 def test_partial_batch_failure_writes_no_visible_chunks(db):
     student = add_student(db)
     document = add_document(db, student.id, "one two three four five six seven eight nine ten", "partial")

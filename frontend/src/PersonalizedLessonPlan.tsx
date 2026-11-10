@@ -2,9 +2,10 @@ import { useCallback, useEffect, useState } from "react";
 import { ApiError, getToken, request } from "./auth";
 import { validatePersonalizedLesson, type PersonalizedLessonResponse } from "./personalizedTeaching";
 import "./personalized-lesson.css";
+import { GuidedLessonPlayer } from "./GuidedLessonPlayer";
 
-type Props = { sessionId: string; language: string; onUnauthorized: () => void };
-export function PersonalizedLessonPlan({ sessionId, language, onUnauthorized }: Props) {
+type Props = { sessionId: string; language: string; onUnauthorized: () => void; onAskAboutStep: (question: string) => void };
+export function PersonalizedLessonPlan({ sessionId, language, onUnauthorized, onAskAboutStep }: Props) {
   const [result, setResult] = useState<PersonalizedLessonResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -50,6 +51,7 @@ export function PersonalizedLessonPlan({ sessionId, language, onUnauthorized }: 
           </form>
         </article>
       </div>
+      <GuidedLessonPlayer sessionId={sessionId} language={language} result={result} onAskAboutStep={onAskAboutStep} onUnauthorized={onUnauthorized}/>
       <div className="cl-plan-next"><div><small>RECOMMENDED NEXT TOPIC</small><strong>{plan.recommended_topic || "Keep exploring"}</strong><p>{plan.recommendation_reason}</p></div><p>{plan.suggested_next_activity}</p></div>
       {result?.citations.length ? <p className="cl-plan-sources">Grounded in your authorized material: {result.citations.map(item => `${item.document_title}, p. ${item.page_number}`).join(" · ")}</p> : plan.grounded && <p className="cl-plan-sources">Grounded in course lesson material.</p>}
       {notice && <p className="cl-personalized-notice" role="status">{notice}</p>}

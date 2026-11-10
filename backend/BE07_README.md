@@ -6,7 +6,7 @@ The endpoint checks session ownership, uses the student's preferred language, le
 
 ## Configuration
 
-In Windows CMD, set `BHASHALEARN_GEMINI_API_KEY` to your Gemini API key (never commit or share it). Optionally set `BHASHALEARN_GEMINI_MODEL` (default `gemini-2.5-flash`). This key is separate from the Gnani API key.
+In Windows CMD, set `BHASHALEARN_GEMINI_API_KEY` to your Gemini API key (never commit or share it). Optionally set `BHASHALEARN_GEMINI_MODEL` (default `gemini-3.5-flash-lite`). This key is separate from the Gnani API key.
 
 ## Tests
 

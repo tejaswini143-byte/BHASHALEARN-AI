@@ -59,6 +59,16 @@ async function openImmersiveVoice(page: Page, localDemo = false) {
       if (audio.__paused === false) { audio.__paused = true; audio.dispatchEvent(new Event("pause")); }
     };
   });
+  // Keep dashboard route changes hermetic too; these suites intentionally run without a backend.
+  await page.route("**/api/v1/**", async route => {
+    const url = new URL(route.request().url());
+    const path = url.pathname.replace("/api/v1", "");
+    if (path === "/progress") return route.fulfill({ json: [] });
+    if (path === "/sessions" && route.request().method() === "GET") return route.fulfill({ json: [session] });
+    if (path === "/students/me/preferences") return route.fulfill({ json: prefs });
+    if (path === "/missions") return route.fulfill({ json: { missions: [], xp: 0, level: 1, xp_into_level: 0, xp_to_next_level: 100, badges: [] } });
+    return route.fulfill({ status: 404, json: { detail: "Unexpected mocked API request" } });
+  });
   await page.route("**/api/v1/auth/me", route => localDemo ? route.abort() : route.fulfill({ json: { id: "student-10c", email: "learner@example.test", display_name: "Voice Learner" } }));
   await page.route("**/api/v1/sessions?limit=100", route => localDemo ? route.abort() : route.fulfill({ json: [session] }));
   await page.route("**/api/v1/students/me/preferences", route => localDemo ? route.abort() : route.fulfill({ json: prefs }));

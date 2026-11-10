@@ -33,6 +33,7 @@ class RetrievalRequest:
     query: str
     topic: str
     limit: int = MAX_PASSAGES
+    document_ids: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -123,13 +124,15 @@ class VectorPassageRetriever:
         )
         if len(vectors) != 1:
             raise EmbeddingError("Gemini embedding provider returned an invalid query vector")
-        hits = search_documents(
-            self.db,
-            student_id=request.student_id,
-            query_vector=vectors[0],
-            model=self.embedding_provider.model,
-            top_k=min(MAX_PASSAGES, request.limit),
-        )
+        search_args = {
+            "student_id": request.student_id,
+            "query_vector": vectors[0],
+            "model": self.embedding_provider.model,
+            "top_k": min(MAX_PASSAGES, request.limit),
+        }
+        if request.document_ids is not None:
+            search_args["document_ids"] = request.document_ids
+        hits = search_documents(self.db, **search_args)
         passages: list[RetrievedPassage] = []
         for hit in hits:
             text = hit.get("content")

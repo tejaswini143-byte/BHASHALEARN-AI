@@ -7,7 +7,7 @@ type TrendDay = { date: string; sessions: number; completed_assessments: number;
 type Analytics = {
   range_days: number; timezone: string;
   overview: { learning_sessions: number; completed_activities: number; completed_assessments: number; learning_time_minutes: number | null; learning_time_status: string };
-  range_totals: { sessions: number; completed_assessments: number; mission_completions: number };
+  range_totals: { sessions: number; completed_assessments: number; mission_completions: number; completed_quizzes: number };
   trend: TrendDay[];
   topics: { topic: string; subject: string; mastery_score: number | null; scored_attempts: number; correct_attempts: number }[];
   subjects: { subject: string; mastery_score: number; scored_attempts: number }[];
@@ -17,7 +17,7 @@ type Analytics = {
   streak: { days: number; as_of_utc_date: string; timezone: string; lower_bound: boolean };
   recent_activity: { kind: string; title: string; occurred_at: string; detail: string | null }[];
   recommendations: { topic: string | null; recommendation: string; reason: string }[];
-  quiz_analytics: { available: boolean; integration: string };
+  quiz_analytics: { available: boolean; completed_quizzes: number; completed_questions: number; average_score: number | null; integration: string };
 };
 const ranges = [7, 30, 90] as const;
 type RangeDays = (typeof ranges)[number];
@@ -111,7 +111,7 @@ export function ProgressAnalyticsPage() {
         <section className="pa-card"><div className="pa-card-head"><div><span className="pa-eyebrow">ADAPTIVE NEXT STEPS</span><h2>Recommended for you</h2></div></div><ul className="pa-recommendations">{data.recommendations.map((item, index) => <li key={(item.topic || "start") + "-" + index}><span>{item.topic || "First learning baseline"}</span><p>{item.recommendation}</p><small>{item.reason}</small></li>)}</ul></section>
       </div>
       <section className="pa-card pa-timeline"><div className="pa-card-head"><div><span className="pa-eyebrow">RECENT EVENTS</span><h2>Learning timeline</h2></div><span className="pa-chip">UTC · up to 12 events</span></div>{data.recent_activity.length ? <ol>{data.recent_activity.map((event, index) => <li key={event.kind + "-" + event.occurred_at + "-" + index}><span className={"pa-event-dot pa-event-" + event.kind} aria-hidden="true" /><div><strong>{event.title}</strong>{event.detail && <small>{event.detail}</small>}</div><time dateTime={event.occurred_at}>{new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "UTC", timeZoneName: "short" }).format(new Date(event.occurred_at))}</time></li>)}</ol> : <p className="pa-muted">Recorded session starts, answered practice, and mission claims will appear here.</p>}</section>
-      {!data.quiz_analytics.available && <p className="pa-integration-note">Quiz result analytics can connect when the separate assessment integration is available. This dashboard currently uses recorded session, objective practice, and mission data.</p>}
+      <p className="pa-integration-note">{data.quiz_analytics.available ? `${data.quiz_analytics.completed_quizzes} completed ${data.quiz_analytics.completed_quizzes === 1 ? "quiz" : "quizzes"} &middot; ${data.quiz_analytics.completed_questions} answered quiz questions &middot; ${data.quiz_analytics.average_score === null ? "no quiz score yet" : `${data.quiz_analytics.average_score}% average quiz score`} in this window.` : "Quiz analytics are unavailable; no sample quiz scores are shown."}</p>
     </>}
     <footer className="pa-footer"><Link to="/dashboard">← Back to dashboard</Link><span>Progress is calculated from your student-owned learning records.</span></footer>
   </main>;

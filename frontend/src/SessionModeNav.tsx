@@ -1,12 +1,13 @@
 import { Link } from "react-router-dom";
 import "./session-modes.css";
 
-type Mode = "chat" | "voice" | "visual";
+type Mode = "chat" | "voice" | "visual" | "teacher";
 type Props = { sessionId?: string | null; active: Mode };
 const modes: Array<{ id: Mode; label: string; path: string }> = [
   { id: "chat", label: "Chat", path: "/classroom" },
   { id: "voice", label: "Voice", path: "/voice" },
   { id: "visual", label: "Visual", path: "/visual" },
+  { id: "teacher", label: "Teacher", path: "/teacher" },
 ];
 
 export function SessionModeNav({ sessionId, active }: Props) {

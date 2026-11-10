@@ -20,7 +20,7 @@ Playback start drives the existing `explain` teacher state; playback end/interru
 
 ## Connectivity status
 
-The repo's POC-02 report records successful live English and Telugu Timbre WAV generation (2026-11-04), but this turn did not repeat those paid calls. POC-01 does not record an accepted live Prisma transcript for English, Telugu, or mixed speech. The available workspace has no local Gnani `.env` file; no key value was read. Therefore this deliverable makes no claim of current live Prisma connectivity or end-to-end live classroom acceptance. REST is documented; streaming/websocket APIs were not found in the official materials recorded here and are not assumed.
+The repo's POC-02 report records successful live English and Telugu Timbre WAV generation (2026-11-04); those artifacts still exist in the original project worktree and their mono 48 kHz/16-bit WAV metadata was rechecked read-only. This audit did not repeat those paid calls or assess the audio by listening. POC-01 does not record an accepted live Prisma transcript for English, Telugu, or mixed speech. Non-placeholder Gnani API-key and endpoint settings are present in original-project POC-01/POC-02 local `.env` files; the values were not displayed or validated. The RC/recovery environment has no Gnani config. No current provider call was approved or made, so this does not establish current live Prisma connectivity or end-to-end live classroom acceptance. REST is documented; streaming/websocket APIs were not found in the official materials recorded here and are not assumed.
 
 ## Verification
 

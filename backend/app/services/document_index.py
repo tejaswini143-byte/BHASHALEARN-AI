@@ -198,6 +198,7 @@ def search_documents(
     query_vector: list[float],
     model: str,
     top_k: int,
+    document_ids: list[str] | tuple[str, ...] | None = None,
 ) -> list[dict]:
     """Search only active generations owned by the authenticated student."""
     from backend.app.db.models import Document
@@ -217,6 +218,10 @@ def search_documents(
             DocumentChunk.embedding_dimensions == 768,
         )
     )
+    if document_ids is not None:
+        if not document_ids:
+            return []
+        statement = statement.where(DocumentChunk.document_id.in_(document_ids))
     if db.bind.dialect.name == "postgresql":
         distance = DocumentChunk.embedding.cosine_distance(query_vector)
         rows = db.execute(statement.add_columns(distance.label("distance")).order_by(distance.asc(), DocumentChunk.id.asc()).limit(top_k)).all()

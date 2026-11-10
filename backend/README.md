@@ -17,6 +17,11 @@ python -m uvicorn backend.app.main:app --reload
 Visit http://127.0.0.1:8000/docs for the API documentation and
 http://127.0.0.1:8000/api/v1/health for the health endpoint.
 
+`/health` and `/api/v1/health` are liveness checks and do not test PostgreSQL.
+`/ready` and `/api/v1/ready` execute a lightweight `SELECT 1` through the
+configured database engine. They return HTTP 503 with a generic message when
+the database is unavailable; driver details and credentials are not returned.
+
 ## Private PDF documents
 
 The authenticated document API stores uploaded PDFs outside public static assets
@@ -31,6 +36,12 @@ Expected health response:
 
 ```json
 {"status":"ok","service":"bhashalearn-api"}
+```
+
+Expected ready response:
+
+```json
+{"status":"ready","database":"ok"}
 ```
 
 ## Configuration
@@ -80,7 +91,7 @@ repository-root `.env` for live Gemini responses:
 | Variable | Purpose | Default |
 | --- | --- | --- |
 | `BHASHALEARN_GEMINI_API_KEY` | Server-side Gemini API credential | Required for live tutoring |
-| `BHASHALEARN_GEMINI_MODEL` | Gemini `generateContent` model ID | `gemini-2.5-flash` |
+| `BHASHALEARN_GEMINI_MODEL` | Gemini `generateContent` model ID | `gemini-3.5-flash-lite` |
 
 Placeholders are in `backend/.env.example`. Keep the key in the backend
 environment; never put it in frontend `VITE_*` variables, print it, or commit

@@ -92,8 +92,8 @@ export function DocumentsPage() {
     <section className="documents-card" aria-labelledby="upload-heading"><div className="documents-card-heading"><div><span className="documents-kicker">PRIVATE PDF STORAGE</span><h2 id="upload-heading">Add a study document</h2></div><span className="documents-limit">PDF · up to 10 MB</span></div>
       <div className={dragging ? "document-dropzone is-dragging" : "document-dropzone"} onDragOver={event => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={onDrop}>
         <span className="document-file-icon" aria-hidden="true">PDF</span><strong>Drop your PDF here</strong><span>or choose a file from your device</span>
-        <button type="button" className="document-secondary" onClick={() => input.current?.click()}>Browse files</button>
-        <input ref={input} className="document-file-input" type="file" accept="application/pdf,.pdf" onChange={onFile} aria-label="Choose PDF file" />
+        <label htmlFor="study-pdf-input" className="document-secondary document-file-picker" tabIndex={0} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); input.current?.click(); } }}>Browse files</label>
+        <input id="study-pdf-input" ref={input} className="document-file-input" type="file" accept="application/pdf,.pdf" onChange={onFile} aria-label="Choose PDF file" />
       </div>
       {file && <div className="document-selected"><span><strong>{file.name}</strong><small>{sizeLabel(file.size)}</small></span><button type="button" aria-label="Remove selected file" onClick={() => setFile(null)}>Remove</button></div>}
       {error && <p className="document-alert" role="alert">{error}</p>}{notice && <p className="document-success" role="status">{notice}</p>}

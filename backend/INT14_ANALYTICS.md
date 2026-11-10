@@ -12,9 +12,11 @@ The authenticated endpoint is GET /api/v1/analytics?range_days=7|30|90. Its only
 - Study time is unavailable because the current schema records session start timestamps but no session end or trusted duration.
 - Free-text topics without a recognized mapping are grouped under Other; the mapping currently recognizes equivalent fractions, Dijkstra shortest path, and common language topic terms.
 
-## Future quiz analytics seam
+## Quiz analytics integration
 
-backend.app.services.quiz_analytics contains a provider-neutral QuizAnalyticsProvider protocol and QuizAttemptEvidence value type. A future adapter may read its own completed quiz results and return deduplicated, student-authorized attempts for the requested time window. The adapter must verify ownership, bound the result set, deduplicate by its stable attempt_key, reject incomplete or invalid scores, and preserve the source completion timestamp. The analytics layer can then combine the returned score and maximum score with the matching subject/topic evidence. No INT-13 module, migration, API, or table is assumed or imported today; current dashboard metrics work without that provider.
+The analytics response also summarizes INT-13 quizzes from answered quiz questions in the same authenticated student's assessment-attempt rows. It reports completed quizzes, answered question count, and mean score across completed quizzes for the selected UTC window. Groups with missing or duplicate positions, unanswered items, or no quiz metadata are excluded. Legacy objective practice is not mistaken for a quiz. INT-13 evidence already updates the shared topic progress counters, so mastery and recommendations include those submitted answers.
+
+`backend.app.services.quiz_analytics` retains a provider-neutral contract for a future quiz source stored outside the current assessment-attempt table. Any such adapter must verify ownership, deduplicate by a stable attempt key, reject incomplete or invalid scores, and preserve source completion time.
 
 ## Schema and migration
 

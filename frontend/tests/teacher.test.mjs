@@ -61,7 +61,7 @@ test("teacher lesson summary uses shared session topic and visual context", () =
   });
 });
 
-test("teacher route exposes WebGL, loading and honest avatar fallbacks", async () => {
+test("teacher route shows only rigged assets and integrates the lesson board", async () => {
   const [app, component] = await Promise.all([
     readFile(new URL("../src/App.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/TeacherPreview.tsx", import.meta.url), "utf8"),
@@ -69,12 +69,16 @@ test("teacher route exposes WebGL, loading and honest avatar fallbacks", async (
   assert.ok(app.includes('path="/teacher"'));
   assert.ok(component.includes("<Canvas"));
   assert.ok(component.includes("WebGL preview unavailable"));
-  assert.ok(component.includes("Articulated geometric fallback"));
+  assert.ok(component.includes("NO HUMAN AVATAR"));
+  assert.ok(component.includes("Realistic teacher asset not configured"));
+  assert.ok(component.includes("Interactive lesson board"));
+  assert.ok(component.includes("tp-stage-board"));
+  assert.ok(component.includes("Open live AI tutor and microphone"));
+  assert.ok(!component.includes("Holographic teacher"));
+  assert.ok(!component.includes("Articulated geometric fallback"));
   assert.ok(component.includes("Loading local model"));
-  assert.ok(component.includes("synthetic viseme demo"));
-  assert.ok(component.includes('aria-label="Teacher presentation mode"'));
-  assert.ok(component.includes("Holographic teacher"));
-  assert.ok(component.includes("Licensed rigged human asset needed"));
+  assert.ok(!component.includes("synthetic viseme demo"));
+  assert.ok(component.includes("licensed rigged character asset"));
   assert.ok(component.includes("getSharedSessionContext(sessionId)"));
   assert.ok(component.includes("useSyncExternalStore(immersiveVoiceBridge.subscribeFrames"));
 });

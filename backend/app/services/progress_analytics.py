@@ -5,6 +5,7 @@ matching the application's historical UTC timestamp convention.
 """
 from __future__ import annotations
 
+import json
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
@@ -83,6 +84,91 @@ def _adaptation_for(row: LearningProgress, student_id: str, db: Session) -> tupl
     return policy.recommendation, policy.reason, policy.strategy
 
 
+def _completed_quiz_analytics(db: Session, student_id: str, start_at: datetime, end_at: datetime) -> dict:
+    """Summarize completed INT-13 quizzes from this student's answered items.
+
+    INT-13 stores each question as a LearningAssessmentAttempt and puts the quiz
+    identity/position in server-authored options_json. Legacy objective checks
+    have no quiz_id and are deliberately excluded.
+    """
+    answered_attempts = db.execute(
+        select(LearningAssessmentAttempt.options_json)
+        .where(
+            LearningAssessmentAttempt.student_id == student_id,
+            LearningAssessmentAttempt.answered_at >= start_at,
+            LearningAssessmentAttempt.answered_at < end_at,
+            LearningAssessmentAttempt.is_correct.is_not(None),
+        )
+    ).scalars().all()
+    candidate_quiz_ids: set[str] = set()
+    for options_json in answered_attempts:
+        try:
+            metadata = json.loads(options_json)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(metadata, dict):
+            continue
+        quiz_id = metadata.get("quiz_id")
+        position = metadata.get("position")
+        if (not isinstance(quiz_id, str) or not quiz_id
+                or isinstance(position, bool) or not isinstance(position, int) or position < 1):
+            continue
+        candidate_quiz_ids.add(quiz_id)
+
+    scores: list[float] = []
+    question_count = 0
+    for quiz_id in candidate_quiz_ids:
+        # Quiz identity is also embedded in the server-generated question ID.
+        # Load every issued question for this student so an unanswered item
+        # cannot make a partial quiz look complete.
+        rows = db.execute(
+            select(
+                LearningAssessmentAttempt.options_json,
+                LearningAssessmentAttempt.is_correct,
+                LearningAssessmentAttempt.submitted_answer,
+            ).where(
+                LearningAssessmentAttempt.student_id == student_id,
+                LearningAssessmentAttempt.question_id.like(f"int13:{quiz_id}:%"),
+            )
+        ).all()
+        items: dict[int, tuple[bool | None, str | None]] = {}
+        valid = bool(rows)
+        for options_json, is_correct, submitted_answer in rows:
+            try:
+                metadata = json.loads(options_json)
+            except (TypeError, ValueError):
+                valid = False
+                break
+            position = metadata.get("position") if isinstance(metadata, dict) else None
+            if (not isinstance(metadata, dict) or metadata.get("quiz_id") != quiz_id
+                    or isinstance(position, bool) or not isinstance(position, int) or position < 1
+                    or position in items):
+                valid = False
+                break
+            items[position] = (is_correct, submitted_answer)
+        if not valid:
+            continue
+        positions = list(items)
+        # A completed quiz has exactly one answered attempt for every issued
+        # position. Reject malformed, duplicated, and partially persisted sets.
+        expected_count = max(positions, default=0)
+        if expected_count == 0 or len(positions) != expected_count or set(positions) != set(range(1, expected_count + 1)):
+            continue
+        if any(correct is None or not answer or not answer.strip() for correct, answer in items.values()):
+            continue
+        correct_count = sum(bool(correct) for correct, _answer in items.values())
+        scores.append(100 * correct_count / expected_count)
+        question_count += expected_count
+
+    return {
+        "available": True,
+        "completed_quizzes": len(scores),
+        "completed_questions": question_count,
+        "average_score": round(sum(scores) / len(scores), 1) if scores else None,
+        "integration": "INT-13 student-owned completed quiz attempts",
+    }
+
+
 def build_analytics(db: Session, student_id: str, range_days: int, now: datetime | None = None) -> dict:
     """Aggregate one authenticated student's recorded activity for a bounded window."""
     if range_days not in ALLOWED_RANGES:
@@ -142,6 +228,7 @@ def build_analytics(db: Session, student_id: str, range_days: int, now: datetime
     range_assessment_count = sum(item["completed_assessments"] for item in trend)
     range_session_count = sum(item["sessions"] for item in trend)
     range_mission_count = sum(item["mission_completions"] for item in trend)
+    quiz_analytics = _completed_quiz_analytics(db, student_id, start_at, end_at)
 
     topic_stmt = (
         select(
@@ -296,6 +383,7 @@ def build_analytics(db: Session, student_id: str, range_days: int, now: datetime
             "sessions": range_session_count,
             "completed_assessments": range_assessment_count,
             "mission_completions": range_mission_count,
+            "completed_quizzes": quiz_analytics["completed_quizzes"],
         },
         "trend": trend,
         "topics": topics,
@@ -316,5 +404,5 @@ def build_analytics(db: Session, student_id: str, range_days: int, now: datetime
             for event in timeline[:12]
         ],
         "recommendations": recommendations,
-        "quiz_analytics": {"available": False, "integration": "Future quiz adapters may provide completed, student-owned scored outcomes; current analytics remains independent."},
+        "quiz_analytics": quiz_analytics,
     }

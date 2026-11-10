@@ -235,3 +235,83 @@ def test_transcript_then_existing_chat_persists_exactly_one_turn(client, monkeyp
     assert [(turn["role"], turn["content"]) for turn in client.get(f"/api/v1/sessions/{session_id}/messages", headers=headers).json()] == [
         ("user", "What is one half?"), ("assistant", "One of two equal parts."),
     ]
+
+
+def test_voice_checkpoint_persists_and_is_scoped_to_owned_session(client, monkeypatch):
+    owner = auth(client, "voice-state-owner@example.com")
+    other = auth(client, "voice-state-other@example.com")
+    session_id = make_session(client, owner, "mixed")
+    state_url = f"/api/v1/voice/sessions/{session_id}/state"
+    initial = client.get(state_url, headers=owner)
+    assert initial.status_code == 200
+    assert initial.json()["topic"] == "Fractions"
+    assert initial.json()["active_response_language"] == "mixed"
+    assert client.get(state_url).status_code == 401
+    assert client.get(state_url, headers=other).status_code == 404
+
+    instructions = []
+    monkeypatch.setattr(
+        "backend.app.api.tutor.generate_tutor_reply",
+        lambda instruction, *_: instructions.append(instruction) or "A fraction is part of a whole.",
+    )
+    chat = client.post(
+        f"/api/v1/tutor/sessions/{session_id}/chat",
+        headers=owner,
+        json={"message": "Define fraction", "language": "telugu"},
+    )
+    assert chat.status_code == 200
+    assert chat.json()["language"] == "telugu"
+    assert "natural Telugu sentences" in instructions[0]
+    assistant_id = client.get(f"/api/v1/sessions/{session_id}/messages", headers=owner).json()[-1]["id"]
+    payload = {
+        "lesson_step": "fractions:equal-parts",
+        "student_question": "What does denominator mean?",
+        "active_response_language": "telugu",
+        "playback_state": "interrupted",
+        "voice_transcript": "denominator ante enti?",
+        "checkpoint_message_id": assistant_id,
+        "checkpoint_playback_ms": 2400,
+        "resume_status": "awaiting_confirmation",
+    }
+    saved = client.put(state_url, headers=owner, json=payload)
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["topic"] == "Fractions"
+    assert client.get(state_url, headers=owner).json()["checkpoint_playback_ms"] == 2400
+    assert client.get(state_url, headers=other).status_code == 404
+    invalid_checkpoint = {**payload, "checkpoint_message_id": "not-an-assistant-message"}
+    assert client.put(state_url, headers=owner, json=invalid_checkpoint).status_code == 422
+    assert client.put(state_url, headers=owner, json={**payload, "playback_state": "restarting"}).status_code == 422
+
+
+def test_provider_mode_is_credential_readiness_only_and_does_not_call_provider(client, monkeypatch):
+    from backend.app.services.gnani_voice import VoiceProviderNotConfigured
+
+    headers = auth(client, "voice-provider-mode@example.com")
+    monkeypatch.setattr("backend.app.api.voice.create_prisma_client", lambda: object())
+    monkeypatch.setattr("backend.app.api.voice.create_timbre_adapter", lambda _folder: object())
+    response = client.get("/api/v1/voice/sessions/provider-mode", headers=headers)
+    assert response.status_code == 200
+    assert response.json() == {"mode": "live", "configured": True}
+    monkeypatch.setattr(
+        "backend.app.api.voice.create_prisma_client",
+        lambda: (_ for _ in ()).throw(VoiceProviderNotConfigured("not configured")),
+    )
+    unavailable = client.get("/api/v1/voice/sessions/provider-mode", headers=headers)
+    assert unavailable.status_code == 200
+    assert unavailable.json() == {"mode": "unavailable", "configured": False}
+
+
+def test_provider_requests_are_rate_limited_per_student(client, monkeypatch):
+    headers = auth(client, "voice-rate-limit@example.com")
+    session_id = make_session(client, headers)
+    calls = []
+    stub = StubPrisma()
+    monkeypatch.setattr("backend.app.api.voice.create_prisma_client", lambda: calls.append(True) or stub)
+    monkeypatch.setattr("backend.app.api.voice._VOICE_RATE_LIMITS", {"transcribe": (1, 60.0), "speech": (20, 60.0)})
+    url = f"/api/v1/voice/sessions/{session_id}/transcribe"
+    request = {"headers": headers, "files": {"audio": ("speech.wav", pcm_wav(), "audio/wav")}, "data": {"language": "mixed"}}
+    assert client.post(url, **request).status_code == 200
+    limited = client.post(url, **request)
+    assert limited.status_code == 429
+    assert int(limited.headers["retry-after"]) > 0
+    assert len(calls) == 1
