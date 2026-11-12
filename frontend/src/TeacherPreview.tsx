@@ -10,6 +10,8 @@ import { immersiveVoiceBridge, type ImmersiveVoiceState } from "./immersiveVoice
 import { getSharedSessionContext, type SharedSessionContext } from "./sessionContext";
 import { getToken, request } from "./auth";
 import { AvatarSyncController, type SyncLanguage } from "./avatarSync";
+import { PhotoTeacher } from "./PhotoTeacher";
+import { disposeTeacherPhoto, loadTeacherPhoto, type TeacherPhotoAsset } from "./teacherPhoto";
 import { generateClassroomExplanation } from "./classroomTutor";
 import "./teacher-preview.css";
 
@@ -17,9 +19,9 @@ const states: TeacherState[] = ["idle", "walk", "turn", "explain", "point", "lis
 const expressions: Expression[] = ["neutral", "happy", "curious", "encouraging", "thinking"];
 const demoTimeline: VisemeFrame[] = [{ atMs: 0, durationMs: 240, viseme: "aa" }, { atMs: 240, durationMs: 190, viseme: "ee" }, { atMs: 430, durationMs: 210, viseme: "mm" }, { atMs: 640, durationMs: 250, viseme: "oh" }, { atMs: 890, durationMs: 160, viseme: "fv" }, { atMs: 1050, durationMs: 200, viseme: "aa" }];
 
-type TeacherProps = { state: TeacherState; expression: Expression; target: BoardTarget | null; walkTarget: [number, number]; lookTarget: [number, number, number]; viseme: string; reduced: boolean; model: LoadedModel | null; mode: TeacherMode; voiceState: ImmersiveVoiceState };
+type TeacherProps = { state: TeacherState; expression: Expression; target: BoardTarget | null; walkTarget: [number, number]; lookTarget: [number, number, number]; viseme: string; reduced: boolean; model: LoadedModel | null; photo: TeacherPhotoAsset | null; mode: TeacherMode; voiceState: ImmersiveVoiceState };
 type LoadedModel = { scene: Group; clips: AnimationClip[] };
-type LoadedTeacherProps = Omit<TeacherProps, "target" | "model" | "mode" | "voiceState"> & { model: LoadedModel };
+type LoadedTeacherProps = Omit<TeacherProps, "target" | "model" | "photo" | "mode" | "voiceState"> & { model: LoadedModel };
 
 class SceneErrorBoundary extends Component<{ children: ReactNode; onError: () => void }, { failed: boolean }> {
   state = { failed: false };
@@ -48,7 +50,7 @@ function Room({ mode }: { mode: TeacherMode }) {
   </>;
 }
 
-function PlaceholderTeacher({ state, expression, target, walkTarget, lookTarget, viseme, reduced, mode }: Omit<TeacherProps, "model">) {
+function PlaceholderTeacher({ state, expression, target, walkTarget, lookTarget, viseme, reduced, mode }: Omit<TeacherProps, "model" | "photo">) {
   const root = useRef<THREE.Group>(null);
   const leftArm = useRef<THREE.Group>(null);
   const rightArm = useRef<THREE.Group>(null);
@@ -221,7 +223,7 @@ function Teacher(props: TeacherProps) {
   const voiceTeacherState: TeacherState = voiceState === "listening" ? "listen" : voiceState === "speaking" || voiceState === "thinking" ? "explain" : props.state;
   const expression = voiceState === "thinking" ? "thinking" : props.expression;
   return <>
-    {props.model ? <LoadedTeacher state={voiceTeacherState} expression={expression} viseme={viseme} walkTarget={props.walkTarget} lookTarget={props.lookTarget} reduced={props.reduced} model={props.model} /> : <PlaceholderTeacher state={voiceTeacherState} expression={expression} target={props.target} walkTarget={props.walkTarget} lookTarget={props.lookTarget} viseme={viseme} reduced={props.reduced} mode={props.mode} voiceState={voiceState} />}
+    {props.photo ? <PhotoTeacher photo={props.photo} mode={props.mode} /> : props.model ? <LoadedTeacher state={voiceTeacherState} expression={expression} viseme={viseme} walkTarget={props.walkTarget} lookTarget={props.lookTarget} reduced={props.reduced} model={props.model} /> : <PlaceholderTeacher state={voiceTeacherState} expression={expression} target={props.target} walkTarget={props.walkTarget} lookTarget={props.lookTarget} viseme={viseme} reduced={props.reduced} mode={props.mode} voiceState={voiceState} />}
     {props.mode === "holographic" && <HologramProjection />}
   </>;
 }
@@ -229,7 +231,7 @@ function Teacher(props: TeacherProps) {
 // Shared by the immersive scene; it reuses the prototype rendering contract
 // without importing the preview room or its board-oriented controls.
 export function ImmersiveTeacher({ state = "idle", reduced = false, voiceState = "idle", mode = "holographic" }: { state?: TeacherState; reduced?: boolean; voiceState?: ImmersiveVoiceState; mode?: TeacherMode }) {
-  return <Teacher state={state} expression={voiceState === "thinking" ? "thinking" : "neutral"} target={null} walkTarget={[-2, -0.5]} lookTarget={[0, 1.5, -2]} viseme="sil" reduced={reduced} model={null} mode={mode} voiceState={voiceState} />;
+  return <Teacher state={state} expression={voiceState === "thinking" ? "thinking" : "neutral"} target={null} walkTarget={[-2, -0.5]} lookTarget={[0, 1.5, -2]} viseme="sil" reduced={reduced} model={null} photo={null} mode={mode} voiceState={voiceState} />;
 }
 
 function CameraRig({ cinematic }: { cinematic: boolean }) {
@@ -253,6 +255,7 @@ export function TeacherPreview({ sessionId }: { sessionId?: string } = {}) {
   const [sceneError, setSceneError] = useState(false);
   const [model, setModel] = useState<LoadedModel | null>(null);
   const [modelStatus, setModelStatus] = useState("No local character model loaded");
+  const [photoAsset,setPhotoAsset]=useState<TeacherPhotoAsset|null>(null),[photoPermission,setPhotoPermission]=useState(false),[photoError,setPhotoError]=useState(""),[photoBusy,setPhotoBusy]=useState(false);
   const [reduced, setReduced] = useState(() => window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   const [cinematic, setCinematic] = useState(true);
   const [mode, setMode] = useState<TeacherMode>(() => params.get("mode") === "holographic" ? "holographic" : "realistic");
@@ -264,6 +267,7 @@ export function TeacherPreview({ sessionId }: { sessionId?: string } = {}) {
   const [followup, setFollowup] = useState("");
   const [audioUrl, setAudioUrl] = useState("");
   const [speechBusy, setSpeechBusy] = useState(false);
+  const [audioPlaying,setAudioPlaying]=useState(false);
   const [language, setLanguage] = useState<SyncLanguage>("mixed");
   const audioRef = useRef<HTMLAudioElement>(null);
   const syncGeneration = useRef<number | null>(null);
@@ -277,6 +281,8 @@ export function TeacherPreview({ sessionId }: { sessionId?: string } = {}) {
   }, []);
   useEffect(() => () => { if (transitionTimer.current !== undefined) window.clearTimeout(transitionTimer.current); }, []);
   useEffect(() => () => { if (model) disposeLoadedModel(model); }, [model]);
+  useEffect(() => () => { if (photoAsset) disposeTeacherPhoto(photoAsset); }, [photoAsset]);
+  useEffect(() => () => { if (audioUrl) URL.revokeObjectURL(audioUrl); }, [audioUrl]);
   useEffect(() => {
     let active = true;
     setLessonContext(null);
@@ -320,6 +326,7 @@ export function TeacherPreview({ sessionId }: { sessionId?: string } = {}) {
     const element = audioRef.current;
     if (element) { element.pause(); element.currentTime = 0; }
     if (syncGeneration.current !== null) syncController.current.cancel(syncGeneration.current);
+    setAudioPlaying(false);
     syncGeneration.current = null;
     immersiveVoiceBridge.setState("idle");
     setAudioUrl("");
@@ -376,11 +383,13 @@ export function TeacherPreview({ sessionId }: { sessionId?: string } = {}) {
     const generation = syncController.current.begin({}, language);
     syncGeneration.current = generation;
     syncController.current.play(generation);
+    setAudioPlaying(true);
     immersiveVoiceBridge.setState("speaking");
     setState("explain");
   }
   function pausePlayback() {
     if (syncGeneration.current !== null) syncController.current.pause(syncGeneration.current);
+    setAudioPlaying(false);
     immersiveVoiceBridge.setState("paused");
     setState("idle");
   }
@@ -390,6 +399,7 @@ export function TeacherPreview({ sessionId }: { sessionId?: string } = {}) {
   }
   function finishPlayback() {
     if (syncGeneration.current !== null) syncController.current.complete(syncGeneration.current);
+    setAudioPlaying(false);
     syncGeneration.current = null;
     immersiveVoiceBridge.setState("idle");
     setState("idle");
@@ -404,6 +414,8 @@ export function TeacherPreview({ sessionId }: { sessionId?: string } = {}) {
     setFullscreen(Boolean(document.fullscreenElement));
   }, []);
   useEffect(() => { const listener = () => setFullscreen(Boolean(document.fullscreenElement)); document.addEventListener("fullscreenchange", listener); return () => document.removeEventListener("fullscreenchange", listener); }, []);
+  const loadPhoto=async(event:ChangeEvent<HTMLInputElement>)=>{const file=event.target.files?.[0];event.target.value="";if(!file)return;setPhotoError("");setPhotoBusy(true);try{setPhotoAsset(await loadTeacherPhoto(file,photoPermission))}catch(cause){setPhotoError(cause instanceof Error?cause.message:"Image preview failed.")}finally{setPhotoBusy(false)}};
+  const removePhoto=()=>{setPhotoAsset(null);setPhotoError("")};
   const loadLocalModel = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]; if (!file) return;
     if (!file.name.toLowerCase().endsWith(".glb")) { setModelStatus("Choose a single-file .glb model."); return; }
@@ -420,8 +432,8 @@ export function TeacherPreview({ sessionId }: { sessionId?: string } = {}) {
   };
   const lesson = teacherLessonSummary(lessonContext as TeacherLessonContext | null);
   const controls = <>
-    <label className="tp-control">Animation<select value={state} onChange={event => setState(event.target.value as TeacherState)}>{states.map(item => <option key={item} value={item}>{item}</option>)}</select></label>
-    <label className="tp-control">Expression<select value={expression} onChange={event => { const value = event.target.value as Expression; setExpression(value); runAction({ type: "setExpression", expression: value }); }}>{expressions.map(item => <option key={item} value={item}>{item}</option>)}</select></label>
+    <label className="tp-control">Animation<select disabled={Boolean(photoAsset)} value={state} onChange={event => setState(event.target.value as TeacherState)}>{states.map(item => <option key={item} value={item}>{item}</option>)}</select></label>
+    <label className="tp-control">Expression<select disabled={Boolean(photoAsset)} value={expression} onChange={event => { const value = event.target.value as Expression; setExpression(value); runAction({ type: "setExpression", expression: value }); }}>{expressions.map(item => <option key={item} value={item}>{item}</option>)}</select></label>
   </>;
   const lessonControls = <section className="tp-live-lesson" aria-label="Interactive lesson controls">
     <span className="tp-label">CLASSROOM EXPLANATION</span>
@@ -433,17 +445,18 @@ export function TeacherPreview({ sessionId }: { sessionId?: string } = {}) {
     <label className="tp-control">Explanation language<select value={language} disabled={lessonBusy} onChange={event => void changeLanguage(event.target.value as SyncLanguage)}><option value="mixed">Telugu + English</option><option value="english">English</option><option value="telugu">తెలుగు</option></select></label>
     {lessonAnswer && <form className="tp-followup" onSubmit={event => { event.preventDefault(); const text = followup.trim(); if (!text) return; setFollowup(""); void askTeacher(text); }}><label htmlFor="tp-followup">Ask another doubt</label><div><input id="tp-followup" value={followup} onFocus={() => setState("listen")} onChange={event => setFollowup(event.target.value)} placeholder="Ask a follow-up question"/><button type="submit" disabled={lessonBusy || !followup.trim()}>Ask</button></div></form>}
     {lessonError && <p role="alert" className="tp-lesson-error">{lessonError}</p>}
-    {audioUrl && <small>Approximate audio-timed mouth motion; no phoneme alignment is available.</small>}
+    {audioUrl&&!photoAsset&&<small>Approximate audio-timed mouth motion; no phoneme alignment is available. Compatible rigged face targets are required.</small>}{audioUrl&&photoAsset&&<small>Speech is indicated on screen; a static photograph has no mouth animation.</small>}
   </section>;
   return <main className="teacher-page">
     <header className="tp-header"><Link to="/" className="tp-brand">✦ BHASHA<span>LEARN</span><small> AI</small></Link><div className="tp-header-right"><span>INTERACTIVE CLASSROOM · {lessonContext?.topic || "Loading session"}</span><Link to={activeSessionId ? `/chat?session=${encodeURIComponent(activeSessionId)}` : "/chat"}>Return to chat ↗</Link></div></header>
-    <section className="tp-intro"><div><span className="tp-kicker">YOUR AI CLASSROOM</span><h1>Meet your <span>AI teacher.</span></h1><p>Choose a human presentation or a holographic classroom projection. Speech state drives listening, speaking, and facial visemes. Articulated geometric fallback available.</p></div><div className="tp-local-note"><b>{mode === "realistic" ? "HUMAN TEACHER" : "HOLOGRAPHIC TEACHER"}</b><span>{model ? "Locally loaded character" : "Licensed rigged human asset needed"}</span></div></section>
+    <section className="tp-intro"><div><span className="tp-kicker">YOUR AI CLASSROOM</span><h1>Meet your <span>AI teacher.</span></h1><p>Choose a browser-local photo for a static teacher appearance, or a compatible rigged local model for supported movement and approximate face cues. Articulated geometric fallback available. Switch to hologram styling at any time.</p></div><div className="tp-local-note"><b>{mode === "realistic" ? "HUMAN TEACHER" : "HOLOGRAPHIC TEACHER"}</b><span>{photoAsset ? "Selected photo · browser-local" : model ? "Locally loaded character" : "Licensed rigged human asset needed"}</span></div></section>
     <section className="tp-layout">
       <section className={`tp-stage-shell tp-stage-${mode}`} ref={stageRef} aria-label="Interactive 3D classroom">
-        {!sceneError ? <SceneErrorBoundary onError={() => setSceneError(true)}><Canvas shadows dpr={[1, 1.5]} camera={{ position: [0.4, 3, 8.4], fov: 42 }} gl={{ antialias: true, alpha: false, powerPreference: "low-power" }} frameloop={reduced ? "demand" : "always"} aria-label="Three dimensional classroom scene"><CameraRig cinematic={cinematic}/><Room mode={mode}/><Suspense fallback={null}><Teacher state={state} expression={expression} target={target} walkTarget={walkTarget} lookTarget={lookTarget} viseme={demoViseme} reduced={reduced} model={model} mode={mode} voiceState="idle"/></Suspense><OrbitControls makeDefault target={[0, 1.5, -2]} minDistance={5.5} maxDistance={13} minPolarAngle={0.45} maxPolarAngle={1.48} enablePan={false} /></Canvas></SceneErrorBoundary> : <div className="tp-webgl-fallback" role="alert"><strong>WebGL preview unavailable</strong><span>Enable WebGL in your browser or try a recent desktop browser.</span></div>}
-        <div className="tp-stage-label"><i/> {mode === "holographic" ? "HOLOGRAPHIC CLASSROOM" : "HUMAN TEACHER CLASSROOM"} · {model ? "LOCAL RIG" : "GEOMETRIC FALLBACK"}</div>
+        {!sceneError ? <SceneErrorBoundary onError={() => setSceneError(true)}><Canvas shadows dpr={[1, 1.5]} camera={{ position: [0.4, 3, 8.4], fov: 42 }} gl={{ antialias: true, alpha: false, powerPreference: "low-power" }} frameloop={reduced ? "demand" : "always"} aria-label="Three dimensional classroom scene"><CameraRig cinematic={cinematic}/><Room mode={mode}/><Suspense fallback={null}><Teacher state={state} expression={expression} target={target} walkTarget={walkTarget} lookTarget={lookTarget} viseme={demoViseme} reduced={reduced} model={model} photo={photoAsset} mode={mode} voiceState="idle"/></Suspense><OrbitControls makeDefault target={[0, 1.5, -2]} minDistance={5.5} maxDistance={13} minPolarAngle={0.45} maxPolarAngle={1.48} enablePan={false} /></Canvas></SceneErrorBoundary> : <div className="tp-webgl-fallback" role="alert"><strong>WebGL preview unavailable</strong><span>Enable WebGL in your browser or try a recent desktop browser.</span></div>}
+        <div className="tp-stage-label"><i/> {mode === "holographic" ? "HOLOGRAPHIC CLASSROOM" : "HUMAN TEACHER CLASSROOM"} · {photoAsset ? "BROWSER-LOCAL PHOTO" : model ? "LOCAL RIG" : "GEOMETRIC FALLBACK"}</div>
+        {photoAsset && audioPlaying && <div className="tp-photo-speaking" role="status" aria-live="polite"><i/>Teacher speech playing · photograph is static</div>}
         <div className="tp-stage-actions"><button onClick={() => setCinematic(value => !value)} aria-pressed={cinematic}>Camera: {cinematic ? "Cinematic" : "Wide"}</button><button onClick={() => void fullscreenToggle()}>{fullscreen ? "Exit fullscreen" : "Fullscreen"}</button></div>
-        <div className="tp-stage-caption" aria-live="polite">{state === "point" ? "Look at the highlighted board position" : `${expression} · ${state}`}</div>
+        <div className="tp-stage-caption" aria-live="polite">{photoAsset ? (audioPlaying ? "Photo teacher - speaking" : "Photo teacher - static appearance") : state === "point" ? "Look at the highlighted board position" : expression + " · " + state}</div>
       </section>
       <aside className="tp-panel" aria-label="Teacher controls">
         <div className="tp-panel-heading"><span className="tp-kicker">TEACHER STUDIO</span><h2>Direct the lesson</h2></div>
@@ -460,10 +473,19 @@ export function TeacherPreview({ sessionId }: { sessionId?: string } = {}) {
         </section>
         {lessonControls}
         <div className="tp-control-grid">{controls}</div>
-        <div className="tp-control-block"><span className="tp-label">MOVEMENT</span><div className="tp-buttons"><button onClick={() => runAction({ type: "walkTo", x: 0, z: -0.5 })}>Walk</button><button onClick={() => runAction({ type: "lookAt", x: 0, y: 2, z: -5 })}>Turn to board</button><button onClick={() => runAction({ type: "explain", durationMs: 2600 })}>Explain</button><button onClick={() => runAction({ type: "gesture", name: "wave" })}>Celebrate</button></div></div>
-        <div className="tp-control-block"><span className="tp-label">SMARTBOARD POINTING</span><label className="tp-control">Board position<select onChange={event => { const [x, y] = event.target.value.split(",").map(Number); runAction({ type: "pointAt", target: { x, y } }); }} defaultValue="0.72,0.34"><option value="0.72,0.34">Upper right · (0.72, 0.34)</option><option value="0.28,0.58">Center left · (0.28, 0.58)</option><option value="0.5,0.5">Center · (0.5, 0.5)</option></select></label></div>
-        <div className="tp-control-block"><span className="tp-label">FACE & SPEECH FOUNDATION</span><button className="tp-demo-button" aria-pressed={demoRunning} onClick={() => { if (demoRunning) setDemoRunning(false); else runAction({ type: "speak", timeline: demoTimeline }); }}>{demoRunning ? "Stop synthetic viseme demo" : "Play synthetic viseme demo"}</button><small>Timed mouth-shape demo only; no audio or phoneme alignment.</small></div>
-        <div className="tp-control-block tp-upload"><span className="tp-label">LOCAL AVATAR ASSET</span><label className="tp-upload-button">Choose GLB<input type="file" accept=".glb,model/gltf-binary" onChange={loadLocalModel}/></label><small>{modelStatus}</small><small>Use an asset you have rights to use. Nothing is downloaded remotely.</small></div>
+        <div className="tp-control-block"><span className="tp-label">MOVEMENT & GESTURES</span>{photoAsset?<small role="note">Static photograph: movement and gestures require a compatible rigged GLB.</small>:<div className="tp-buttons"><button onClick={() => runAction({ type: "walkTo", x: 0, z: -0.5 })}>Walk</button><button onClick={() => runAction({ type: "lookAt", x: 0, y: 2, z: -5 })}>Turn to board</button><button onClick={() => runAction({ type: "explain", durationMs: 2600 })}>Explain</button><button onClick={() => runAction({ type: "gesture", name: "wave" })}>Celebrate</button></div>}</div>
+        {!photoAsset && (<div className="tp-control-block"><span className="tp-label">SMARTBOARD POINTING</span><label className="tp-control">Board position<select onChange={event => { const [x, y] = event.target.value.split(",").map(Number); runAction({ type: "pointAt", target: { x, y } }); }} defaultValue="0.72,0.34"><option value="0.72,0.34">Upper right · (0.72, 0.34)</option><option value="0.28,0.58">Center left · (0.28, 0.58)</option><option value="0.5,0.5">Center · (0.5, 0.5)</option></select></label></div>)}
+        {!photoAsset && (<div className="tp-control-block"><span className="tp-label">FACE & SPEECH FOUNDATION</span><button className="tp-demo-button" aria-pressed={demoRunning} onClick={() => { if (demoRunning) setDemoRunning(false); else runAction({ type: "speak", timeline: demoTimeline }); }}>{demoRunning ? "Stop synthetic viseme demo" : "Play synthetic viseme demo"}</button><small>Timed mouth-shape demo only; no audio or phoneme alignment.</small></div>)}
+        <section className="tp-control-block tp-upload tp-photo-upload" aria-label="Photo teacher">
+          <span className="tp-label">PHOTO-BASED HUMAN TEACHER</span>
+          <label className="tp-photo-consent"><input type="checkbox" checked={photoPermission} onChange={event=>{setPhotoPermission(event.target.checked);if(!event.target.checked)removePhoto()}}/> I have permission to use this person's likeness.</label>
+          <label className="tp-upload-button">Choose full-body photo<input type="file" accept="image/png,image/jpeg,image/webp" aria-label="Choose full-body teacher photo" disabled={!photoPermission||photoBusy} onChange={loadPhoto}/></label>
+          {photoBusy&&<small role="status">Checking and previewing photo…</small>}
+          {photoAsset&&<div className="tp-photo-preview"><img src={photoAsset.previewUrl} alt={"Selected teacher photo: "+photoAsset.name}/><div><strong>{photoAsset.name}</strong><small>{photoAsset.width} x {photoAsset.height} · stays in this browser</small><button type="button" onClick={removePhoto}>Remove photo</button></div></div>}
+          {photoError&&<p className="tp-photo-error" role="alert">{photoError}</p>}
+          <small>Photo stays in this browser and is never sent to Gemini or Gnani. It is static; use a rigged GLB for movement or approximate mouth cues.</small>
+        </section>
+        <div className="tp-control-block tp-upload"><span className="tp-label">OPTIONAL RIGGED AVATAR</span><label className="tp-upload-button">Choose GLB<input type="file" accept=".glb,model/gltf-binary" onChange={loadLocalModel}/></label><small>{modelStatus}</small><small>Photo takes visual priority. Removing it returns to the GLB or geometric fallback. Use only authorized assets.</small></div>
         <label className="tp-motion-toggle"><input type="checkbox" checked={reduced} onChange={event => setReduced(event.target.checked)}/> Reduce motion</label>
       </aside>
     </section>
