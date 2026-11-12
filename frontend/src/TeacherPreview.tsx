@@ -4,10 +4,13 @@ import { OrbitControls, Stars } from "@react-three/drei";
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { AnimationMixer, type AnimationClip, type Group, type Object3D } from "three";
-import { Link } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { mapBoardTarget, settledTeacherState, teacherLessonSummary, validateTeacherAction, validateTeacherMode, validateVisemeTimeline, visemeAt, type BoardTarget, type Expression, type TeacherAction, type TeacherLessonContext, type TeacherMode, type TeacherState, type VisemeFrame } from "./teacherCore";
 import { immersiveVoiceBridge, type ImmersiveVoiceState } from "./immersiveVoiceBridge";
 import { getSharedSessionContext, type SharedSessionContext } from "./sessionContext";
+import { getToken, request } from "./auth";
+import { AvatarSyncController, type SyncLanguage } from "./avatarSync";
+import { generateClassroomExplanation } from "./classroomTutor";
 import "./teacher-preview.css";
 
 const states: TeacherState[] = ["idle", "walk", "turn", "explain", "point", "listen", "celebrate"];
@@ -236,6 +239,10 @@ function CameraRig({ cinematic }: { cinematic: boolean }) {
 }
 
 export function TeacherPreview({ sessionId }: { sessionId?: string } = {}) {
+  const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
+  const activeSessionId = sessionId || params.get("session") || "";
+  const originalQuestion = params.get("question") || "";
   const [state, setState] = useState<TeacherState>("idle");
   const [expression, setExpression] = useState<Expression>("neutral");
   const [target, setTarget] = useState<BoardTarget | null>(null);
@@ -249,9 +256,20 @@ export function TeacherPreview({ sessionId }: { sessionId?: string } = {}) {
   const [modelStatus, setModelStatus] = useState("No local character model loaded");
   const [reduced, setReduced] = useState(() => window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   const [cinematic, setCinematic] = useState(true);
-  const [mode, setMode] = useState<TeacherMode>("realistic");
+  const [mode, setMode] = useState<TeacherMode>(() => params.get("mode") === "holographic" ? "holographic" : "realistic");
   const [lessonContext, setLessonContext] = useState<SharedSessionContext | null>(null);
   const [contextError, setContextError] = useState("");
+  const [lessonAnswer, setLessonAnswer] = useState("");
+  const [lessonBusy, setLessonBusy] = useState(false);
+  const [lessonError, setLessonError] = useState("");
+  const [followup, setFollowup] = useState("");
+  const [audioUrl, setAudioUrl] = useState("");
+  const [speechBusy, setSpeechBusy] = useState(false);
+  const [language, setLanguage] = useState<SyncLanguage>("mixed");
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const syncGeneration = useRef<number | null>(null);
+  const speechAbort = useRef<AbortController | null>(null);
+  const syncController = useRef(new AvatarSyncController(frame => immersiveVoiceBridge.acceptFrame(frame)));
   const stageRef = useRef<HTMLElement>(null);
   const transitionTimer = useRef<number | undefined>(undefined);
   useEffect(() => {
@@ -264,12 +282,13 @@ export function TeacherPreview({ sessionId }: { sessionId?: string } = {}) {
     let active = true;
     setLessonContext(null);
     setContextError("");
-    if (!sessionId) return () => { active = false; };
-    getSharedSessionContext(sessionId).then(context => { if (active) setLessonContext(context); }).catch(cause => {
+    if (!activeSessionId) return () => { active = false; };
+    getSharedSessionContext(activeSessionId).then(context => { if (active) { setLessonContext(context); setLanguage(context.preferred_language); } }).catch(cause => {
       if (active) setContextError(cause instanceof Error ? cause.message : "Shared lesson context is unavailable.");
     });
     return () => { active = false; };
-  }, [sessionId]);
+  }, [activeSessionId]);
+  useEffect(() => { runAction({ type: "walkTo", x: -1.6, z: -0.5 }); }, [runAction]);
   useEffect(() => {
     if (!demoRunning) { setDemoViseme("sil"); return; }
     const start = performance.now();
@@ -297,6 +316,89 @@ export function TeacherPreview({ sessionId }: { sessionId?: string } = {}) {
       case "speak": setDemoRunning(true); break;
     }
   }, []);
+  const stopSpeech = useCallback(() => {
+    speechAbort.current?.abort(); speechAbort.current = null;
+    const element = audioRef.current;
+    if (element) { element.pause(); element.currentTime = 0; }
+    if (syncGeneration.current !== null) syncController.current.cancel(syncGeneration.current);
+    syncGeneration.current = null;
+    immersiveVoiceBridge.setState("idle");
+    setAudioUrl("");
+    setSpeechBusy(false);
+    setState("idle");
+  }, []);
+  async function startSpeech(text: string) {
+    if (!activeSessionId) { setLessonError("Open this classroom from a saved chat session to generate speech."); return; }
+    stopSpeech(); setSpeechBusy(true); immersiveVoiceBridge.setState("thinking");
+    const controller = new AbortController(); speechAbort.current = controller;
+    try {
+      const response = await fetch(`/api/v1/voice/sessions/${encodeURIComponent(activeSessionId)}/speech`, {
+        method: "POST", headers: { Authorization: `Bearer ${getToken()}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ text, language }), signal: controller.signal,
+      });
+      if (!response.ok) { const body = await response.json().catch(() => null); throw new Error(body?.detail || "Speech generation failed."); }
+      setAudioUrl(URL.createObjectURL(await response.blob()));
+    } catch (cause) {
+      if (controller.signal.aborted) return;
+      immersiveVoiceBridge.setState("error");
+      setLessonError(cause instanceof Error ? `Explanation is saved as text. Speech is unavailable: ${cause.message}` : "Explanation is saved as text. Speech is unavailable.");
+    } finally { if (speechAbort.current === controller) speechAbort.current = null; setSpeechBusy(false); }
+  }
+  async function askTeacher(message: string) {
+    if (!activeSessionId || lessonBusy || !message.trim()) return;
+    setLessonBusy(true); setLessonError(""); setState("explain"); immersiveVoiceBridge.setState("thinking");
+    try {
+      const send = (sessionId: string, text: string) => request<{ reply: string }>(`/tutor/sessions/${encodeURIComponent(sessionId)}/chat`, {
+        method: "POST", headers: { Authorization: `Bearer ${getToken()}` }, body: JSON.stringify({ message: text }),
+      });
+      const result = originalQuestion && !lessonAnswer
+        ? await generateClassroomExplanation({ sessionId: activeSessionId, question: originalQuestion, language, learningLevel: lessonContext?.learning_level || "beginner" }, send)
+        : await send(activeSessionId, message);
+      setLessonAnswer(result.reply);
+      setState("point");
+      setTarget({ x: 0.72, y: 0.34 });
+      void startSpeech(result.reply);
+    } catch (cause) {
+      immersiveVoiceBridge.setState("idle");
+      setState("idle");
+      setLessonError(cause instanceof Error ? cause.message : "The classroom could not generate an explanation. Your original doubt is still available.");
+    } finally { setLessonBusy(false); }
+  }
+  async function changeLanguage(value: SyncLanguage) {
+    setLanguage(value);
+    if (!getToken()) return;
+    try {
+      await request("/students/me/preferences", { method: "PUT", headers: { Authorization: `Bearer ${getToken()}` }, body: JSON.stringify({ preferred_language: value, learning_level: lessonContext?.learning_level || "beginner", learning_pace: lessonContext?.learning_pace || "steady", learning_goal: lessonContext?.learning_goal || null }) });
+    } catch (cause) {
+      setLessonError(cause instanceof Error ? `Language changed for this lesson, but the preference could not be saved: ${cause.message}` : "Language preference could not be saved.");
+    }
+  }
+  function beginPlayback() {
+    const generation = syncController.current.begin({}, language);
+    syncGeneration.current = generation;
+    syncController.current.play(generation);
+    immersiveVoiceBridge.setState("speaking");
+    setState("speak");
+  }
+  function pausePlayback() {
+    if (syncGeneration.current !== null) syncController.current.pause(syncGeneration.current);
+    immersiveVoiceBridge.setState("paused");
+    setState("idle");
+  }
+  function updatePlayback() {
+    const element = audioRef.current;
+    if (element && syncGeneration.current !== null) syncController.current.tick(syncGeneration.current, { currentTime: element.currentTime, paused: element.paused, ended: element.ended, duration: element.duration });
+  }
+  function finishPlayback() {
+    if (syncGeneration.current !== null) syncController.current.complete(syncGeneration.current);
+    syncGeneration.current = null;
+    immersiveVoiceBridge.setState("idle");
+    setState("idle");
+  }
+  function selectMode(value: TeacherMode) {
+    setMode(validateTeacherMode(value));
+    setParams(current => { const next = new URLSearchParams(current); next.set("mode", value); return next; });
+  }
   const fullscreenToggle = useCallback(async () => {
     if (!stageRef.current) return;
     if (!document.fullscreenElement) await stageRef.current.requestFullscreen?.(); else await document.exitFullscreen();
@@ -322,8 +424,20 @@ export function TeacherPreview({ sessionId }: { sessionId?: string } = {}) {
     <label className="tp-control">Animation<select value={state} onChange={event => setState(event.target.value as TeacherState)}>{states.map(item => <option key={item} value={item}>{item}</option>)}</select></label>
     <label className="tp-control">Expression<select value={expression} onChange={event => { const value = event.target.value as Expression; setExpression(value); runAction({ type: "setExpression", expression: value }); }}>{expressions.map(item => <option key={item} value={item}>{item}</option>)}</select></label>
   </>;
+  const lessonControls = <section className="tp-live-lesson" aria-label="Interactive lesson controls">
+    <span className="tp-label">CLASSROOM EXPLANATION</span>
+    {originalQuestion ? <blockquote><b>Student doubt</b><br/>{originalQuestion}</blockquote> : <p>Ask a doubt from chat, then open this classroom to keep its full context.</p>}
+    {!lessonAnswer && <button className="tp-primary-action" type="button" disabled={!activeSessionId || lessonBusy || !originalQuestion} onClick={() => void askTeacher(originalQuestion)}>Start explanation</button>}
+    {(lessonBusy || speechBusy) && <p className="tp-live-status" role="status">{lessonBusy ? "Teacher is thinking…" : "Generating Gnani speech…"}</p>}
+    {lessonAnswer && <div className="tp-lesson-answer"><strong>Lesson explanation</strong><p>{lessonAnswer}</p></div>}
+    {audioUrl && <div className="tp-audio-controls"><audio ref={audioRef} src={audioUrl} onPlay={beginPlayback} onPause={event => { if (!event.currentTarget.ended) pausePlayback(); }} onTimeUpdate={updatePlayback} onEnded={finishPlayback} onError={() => { finishPlayback(); setLessonError("Audio playback failed. The text explanation is still available."); }}>Audio playback unavailable.</audio><button type="button" onClick={() => audioRef.current?.paused ? void audioRef.current.play() : audioRef.current?.pause()}>{audioRef.current?.paused ? "Resume" : "Pause / resume"}</button><button type="button" onClick={() => void startSpeech(lessonAnswer)}>Repeat</button><button type="button" onClick={stopSpeech}>Stop</button></div>}
+    <label className="tp-control">Explanation language<select value={language} disabled={lessonBusy} onChange={event => void changeLanguage(event.target.value as SyncLanguage)}><option value="mixed">Telugu + English</option><option value="english">English</option><option value="telugu">తెలుగు</option></select></label>
+    {lessonAnswer && <form className="tp-followup" onSubmit={event => { event.preventDefault(); const text = followup.trim(); if (!text) return; setFollowup(""); void askTeacher(text); }}><label htmlFor="tp-followup">Ask another doubt</label><div><input id="tp-followup" value={followup} onFocus={() => setState("listen")} onChange={event => setFollowup(event.target.value)} placeholder="Ask a follow-up question"/><button type="submit" disabled={lessonBusy || !followup.trim()}>Ask</button></div></form>}
+    {lessonError && <p role="alert" className="tp-lesson-error">{lessonError}</p>}
+    {audioUrl && <small>Approximate audio-timed mouth motion; no phoneme alignment is available.</small>}
+  </section>;
   return <main className="teacher-page">
-    <header className="tp-header"><Link to="/" className="tp-brand">✦ BHASHA<span>LEARN</span><small> AI</small></Link><div className="tp-header-right"><span>ADV-05 · 3D TEACHER PREVIEW</span><Link to="/classroom">Text classroom ↗</Link></div></header>
+    <header className="tp-header"><Link to="/" className="tp-brand">✦ BHASHA<span>LEARN</span><small> AI</small></Link><div className="tp-header-right"><span>INTERACTIVE CLASSROOM · {lessonContext?.topic || "Loading session"}</span><Link to={activeSessionId ? `/chat?session=${encodeURIComponent(activeSessionId)}` : "/chat"}>Return to chat ↗</Link></div></header>
     <section className="tp-intro"><div><span className="tp-kicker">YOUR AI CLASSROOM</span><h1>Meet your <span>AI teacher.</span></h1><p>Choose a human presentation or a holographic classroom projection. Speech state drives listening, speaking, and facial visemes. Articulated geometric fallback available.</p></div><div className="tp-local-note"><b>{mode === "realistic" ? "HUMAN TEACHER" : "HOLOGRAPHIC TEACHER"}</b><span>{model ? "Locally loaded character" : "Licensed rigged human asset needed"}</span></div></section>
     <section className="tp-layout">
       <section className={`tp-stage-shell tp-stage-${mode}`} ref={stageRef} aria-label="Interactive 3D classroom">
@@ -335,16 +449,17 @@ export function TeacherPreview({ sessionId }: { sessionId?: string } = {}) {
       <aside className="tp-panel" aria-label="Teacher controls">
         <div className="tp-panel-heading"><span className="tp-kicker">TEACHER STUDIO</span><h2>Direct the lesson</h2></div>
         <div className="tp-mode-picker" role="group" aria-label="Teacher presentation mode">
-          <button type="button" aria-pressed={mode === "realistic"} onClick={() => setMode(validateTeacherMode("realistic"))}><strong>Human teacher</strong><span>Natural classroom look</span></button>
-          <button type="button" aria-pressed={mode === "holographic"} onClick={() => setMode(validateTeacherMode("holographic"))}><strong>Holographic teacher</strong><span>Futuristic projection</span></button>
+          <button type="button" aria-pressed={mode === "realistic"} onClick={() => selectMode("realistic")}><strong>Human teacher</strong><span>Animated preview; rigged asset required for realistic identity</span></button>
+          <button type="button" aria-pressed={mode === "holographic"} onClick={() => selectMode("holographic")}><strong>Holographic teacher</strong><span>Blue/cyan hologram projection</span></button>
         </div>
         <section className="tp-lesson-context" aria-label="Shared lesson context">
           <span className="tp-label">SHARED LESSON</span>
           <strong>{lesson.title}</strong>
           <p>{lesson.detail}</p>
           {lessonContext && <small>{lesson.language} · {lesson.level}</small>}
-          {!lessonContext && <small role={contextError ? "alert" : "status"}>{contextError || (sessionId ? "Loading shared session…" : "Connect a session to load its lesson context.")}</small>}
+          {!lessonContext && <small role={contextError ? "alert" : "status"}>{contextError || (activeSessionId ? "Loading shared session…" : "Connect a session to load its lesson context.")}</small>}
         </section>
+        {lessonControls}
         <div className="tp-control-grid">{controls}</div>
         <div className="tp-control-block"><span className="tp-label">MOVEMENT</span><div className="tp-buttons"><button onClick={() => runAction({ type: "walkTo", x: 0, z: -0.5 })}>Walk</button><button onClick={() => runAction({ type: "lookAt", x: 0, y: 2, z: -5 })}>Turn to board</button><button onClick={() => runAction({ type: "explain", durationMs: 2600 })}>Explain</button><button onClick={() => runAction({ type: "gesture", name: "wave" })}>Celebrate</button></div></div>
         <div className="tp-control-block"><span className="tp-label">SMARTBOARD POINTING</span><label className="tp-control">Board position<select onChange={event => { const [x, y] = event.target.value.split(",").map(Number); runAction({ type: "pointAt", target: { x, y } }); }} defaultValue="0.72,0.34"><option value="0.72,0.34">Upper right · (0.72, 0.34)</option><option value="0.28,0.58">Center left · (0.28, 0.58)</option><option value="0.5,0.5">Center · (0.5, 0.5)</option></select></label></div>

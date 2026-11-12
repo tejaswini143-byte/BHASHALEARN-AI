@@ -75,6 +75,6 @@ test("teacher route exposes WebGL, loading and honest avatar fallbacks", async (
   assert.ok(component.includes('aria-label="Teacher presentation mode"'));
   assert.ok(component.includes("Holographic teacher"));
   assert.ok(component.includes("Licensed rigged human asset needed"));
-  assert.ok(component.includes("getSharedSessionContext(sessionId)"));
+  assert.ok(component.includes("getSharedSessionContext(activeSessionId)"));
   assert.ok(component.includes("useSyncExternalStore(immersiveVoiceBridge.subscribeFrames"));
 });
