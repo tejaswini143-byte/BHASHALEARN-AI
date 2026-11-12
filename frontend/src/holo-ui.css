@@ -1,0 +1,68 @@
+:root {
+  color-scheme: dark;
+  --holo-ink: #080d22;
+  --holo-surface: #101832;
+  --holo-surface-raised: #182342;
+  --holo-glass: rgb(20 31 61 / 88%);
+  --holo-line: rgb(153 178 226 / 24%);
+  --holo-text: #f4f7ff;
+  --holo-muted: #b2bfd9;
+  --holo-cyan: #69dff4;
+  --holo-violet: #a18bff;
+  --holo-success: #79e2bd;
+  --holo-warning: #ffd17d;
+  --holo-danger: #ff9dac;
+  --holo-focus: #82e9ff;
+  --holo-type-xs: .75rem;
+  --holo-type-sm: .875rem;
+  --holo-type-md: 1rem;
+  --holo-type-lg: 1.25rem;
+  --holo-type-xl: clamp(1.75rem, 4vw, 3rem);
+  --holo-space-1: .25rem;
+  --holo-space-2: .5rem;
+  --holo-space-3: .75rem;
+  --holo-space-4: 1rem;
+  --holo-space-6: 1.5rem;
+  --holo-space-8: 2rem;
+  --holo-space-12: 3rem;
+  --holo-radius: 1rem;
+  --holo-shadow: 0 20px 55px rgb(0 0 0 / 34%);
+  --holo-duration-fast: 140ms;
+  --holo-duration-normal: 220ms;
+  --holo-breakpoint-mobile: 40rem;
+  --holo-breakpoint-tablet: 64rem;
+}
+
+.holo-card,.holo-panel {
+  color: var(--holo-text);
+  background: linear-gradient(145deg, rgb(26 39 75 / 94%), rgb(13 22 45 / 96%));
+  border: 1px solid var(--holo-line);
+  border-radius: var(--holo-radius);
+  box-shadow: var(--holo-shadow);
+  backdrop-filter: blur(16px);
+}
+.holo-panel { padding: var(--holo-space-6); }
+.holo-header { position: relative; z-index: 20; }
+.holo-sidebar { color: var(--holo-text); }
+.holo-button { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: .6rem; border: 1px solid rgb(121 212 248 / 38%); border-radius: .75rem; padding: .7rem 1rem; color: white; background: linear-gradient(110deg,#347aca,#684ac2); font: inherit; font-weight: 750; text-decoration: none; cursor: pointer; transition: transform var(--holo-duration-fast), border-color var(--holo-duration-fast), filter var(--holo-duration-fast); }
+.holo-button:hover { transform: translateY(-1px); filter: brightness(1.1); border-color: var(--holo-cyan); }
+.holo-button:disabled { opacity: .58; cursor: not-allowed; transform: none; }
+.holo-status { display: inline-flex; align-items: center; gap: .5rem; color: var(--holo-muted); font-size: var(--holo-type-xs); }
+.holo-status>span { width: .55rem; height: .55rem; border-radius: 50%; background: var(--holo-success); }
+.holo-status-busy>span { background: var(--holo-warning); }
+.holo-status-idle>span { background: #8190ad; }
+.holo-status-error>span { background: var(--holo-danger); }
+.holo-skeleton { width: min(32rem,90vw); padding: var(--holo-space-6); display: grid; gap: var(--holo-space-3); border: 1px solid var(--holo-line); border-radius: var(--holo-radius); background: var(--holo-glass); }
+.holo-skeleton-title,.holo-skeleton-line { display: block; height: .8rem; border-radius: 1rem; background: linear-gradient(90deg,#26375e,#425982,#26375e); background-size: 200% 100%; animation: holo-sheen 1.5s ease-in-out infinite; }
+.holo-skeleton-title { width: 48%; height: 1rem; }
+.holo-skeleton-line:last-of-type { width: 72%; }
+.route-loading { min-height: 100svh; display: grid; place-items: center; padding: 1rem; background: var(--holo-ink); }
+.holo-state { max-width: 42rem; margin: 1rem auto; padding: clamp(1.25rem,4vw,2rem); text-align: center; border: 1px solid var(--holo-line); border-radius: var(--holo-radius); background: var(--holo-glass); }
+.holo-state h2 { margin: .75rem 0; font-size: var(--holo-type-lg); }
+.holo-state p { color: var(--holo-muted); line-height: 1.65; }
+.holo-state-mark { width: 2.5rem; height: 2.5rem; margin: 0 auto; display: grid; place-items: center; border: 1px solid var(--holo-cyan); border-radius: 50%; color: var(--holo-cyan); }
+.holo-error .holo-state-mark { color: var(--holo-danger); border-color: var(--holo-danger); }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+@keyframes holo-sheen { to { background-position: -200% 0; } }
+@media (max-width: 40rem) { .holo-panel { padding: var(--holo-space-4); } }
+@media (prefers-reduced-motion: reduce) { .holo-button,.holo-skeleton-title,.holo-skeleton-line { transition: none; animation: none; } }

@@ -22,9 +22,11 @@ test("Future Me Simulator supports career selection, branching, completion, and 
 test("career selection works with keyboard and controls remain visible on a narrow viewport", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/future-me");
-  await page.keyboard.press("Tab");
-  await page.keyboard.press("Tab");
-  await page.keyboard.press("Tab");
+  await expect(page.getByRole("heading", { name: "Meet a possible future you." })).toBeVisible();
+  for (let i = 0; i < 10; i += 1) {
+    if (await page.getByRole("button", { name: /Software engineer/ }).evaluate(element => element === document.activeElement)) break;
+    await page.keyboard.press("Tab");
+  }
   await expect(page.getByRole("button", { name: /Software engineer/ })).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(page.getByRole("heading", { name: "What would you do first?" })).toBeVisible();

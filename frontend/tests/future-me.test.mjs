@@ -59,5 +59,5 @@ test("career picker exposes labeled keyboard-operable choices and prediction dis
 test("dedicated route is registered", async () => {
   const app = await readFile(resolve(root, "src/App.tsx"), "utf8");
   assert.match(app, /path="\/future-me" element=\{<FutureMeSimulator\/>\}/);
-  assert.match(app, /from "\.\/FutureMeSimulator"/);
+  assert.match(app, /import\("\.\/FutureMeSimulator"\)/);
 });

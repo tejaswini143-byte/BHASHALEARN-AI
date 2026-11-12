@@ -1,0 +1,46 @@
+/* Shared refinements layered over feature-owned layouts. */
+html { scroll-padding-top: 5rem; }
+body { color: var(--holo-text, #f4f7ff); overflow-x: clip; }
+button, a, input, textarea, select { -webkit-tap-highlight-color: transparent; }
+:where(button, a, input, textarea, select, [tabindex]):focus-visible {
+  outline: 3px solid var(--holo-focus, #82e9ff);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 5px rgb(8 13 34 / 88%);
+}
+.nav-links { gap: clamp(.45rem, .9vw, 1rem); flex-wrap: wrap; justify-content: flex-end; }
+.nav-links a { min-height: 40px; display: inline-flex; align-items: center; }
+.mobile-menu { min-width: 44px; min-height: 44px; }
+.voice-orb, .experience-tab, .feature-card, .cl-menu, .cl-session-nav button { min-height: 44px; }
+.cl-workspace { position: relative; isolation: isolate; }
+.cl-conversation { position: relative; }
+.cl-conversation::before { content: ""; position: absolute; inset: 0 0 auto; height: 1px; pointer-events: none; background: linear-gradient(90deg, transparent, rgb(103 223 245 / 42%), rgb(161 139 255 / 34%), transparent); }
+.cl-intro, .cl-message, .cl-composer-wrap { position: relative; z-index: 1; }
+.cl-header { flex-wrap: wrap; }
+.cl-header-actions { min-width: 0; flex-wrap: wrap; }
+.holo-feature-adapter { border: 1px solid var(--holo-line); border-radius: var(--holo-radius); background: var(--holo-glass); }
+.db-sidebar, .cl-sidebar { overscroll-behavior: contain; }
+.db-content, .cl-workspace, .auth-screen { overflow-wrap: anywhere; }
+.db-experience, .db-card, .feature-card, .experience-preview { min-width: 0; }
+@media (max-width: 1050px) {
+  .nav-links { gap: .45rem; font-size: 11px; }
+  .nav-wrap { align-items: flex-start; }
+}
+@media (max-width: 760px) {
+  .nav-wrap { align-items: center; }
+  .nav-links { align-items: stretch; gap: 0; }
+  .nav-links a { min-height: 46px; }
+  .nav-open { padding: .5rem 0 1rem; }
+  .cl-header { padding: 12px 16px; }
+  .cl-header-actions { justify-content: flex-end; }
+  .cl-header-actions .holo-status { display: none; }
+}
+@media (max-width: 420px) {
+  .section-wrap { padding-left: 18px; padding-right: 18px; }
+  .experience-preview { padding: 18px; }
+  .cl-header-actions { gap: 6px; }
+  .hero-halo { width: min(100vw, 100%); height: min(100vw, 100%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .cl-conversation::before { display: none; }
+}
