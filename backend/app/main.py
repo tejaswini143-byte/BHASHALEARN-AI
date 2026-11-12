@@ -1,4 +1,8 @@
 """FastAPI entry point for the BHASHALEARN backend."""
+from contextlib import asynccontextmanager
+import logging
+import threading
+
 from fastapi import FastAPI, HTTPException
 from sqlalchemy import text
 
@@ -21,16 +25,46 @@ from .api.knowledge import router as knowledge_router
 from .api.research import router as research_router
 from .api.career import router as career_router
 from .config import Settings, get_settings
-from .db.session import get_engine
+from .db.session import get_engine, get_session_factory
+from .services.assistant_worker import run_due_jobs
+
+logger = logging.getLogger(__name__)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     config = settings if settings is not None else get_settings()
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        stop_scheduler = threading.Event()
+        worker = None
+        if config.local_scheduler_enabled:
+            def scheduler_loop():
+                while not stop_scheduler.is_set():
+                    try:
+                        with get_session_factory()() as session:
+                            run_due_jobs(session, limit=25, allow_live_operations=False)
+                            session.commit()
+                    except Exception:
+                        # Never log environment values, database URLs, or user content.
+                        logger.exception("Local reminder scheduler iteration failed")
+                    stop_scheduler.wait(3)
+
+            worker = threading.Thread(target=scheduler_loop, name="bhashalearn-local-reminder-scheduler", daemon=True)
+            worker.start()
+        try:
+            yield
+        finally:
+            stop_scheduler.set()
+            if worker is not None:
+                worker.join(timeout=5)
+
     app = FastAPI(
         title=config.app_name,
         debug=config.debug,
         version="0.1.0",
         description="Backend API for BHASHALEARN AI. Explicit document indexing and semantic search send extracted text and queries to the configured Gemini embedding provider.",
+        lifespan=lifespan,
     )
     app.include_router(auth_router, prefix=config.api_prefix)
     app.include_router(students_router, prefix=config.api_prefix)

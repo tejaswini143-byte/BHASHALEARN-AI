@@ -4,6 +4,7 @@ The POC-03 prompt is the shared teaching foundation. Production adds explicit
 session adaptation and keeps session metadata separate from trusted instructions.
 """
 import json
+import time
 
 import httpx
 from fastapi import HTTPException
@@ -36,6 +37,10 @@ LEVEL_GUIDANCE = {
     "intermediate": "Connect ideas and show the reasoning between steps; introduce terms with brief definitions.",
     "advanced": "Use precise terminology, explain assumptions, and include a meaningful extension when useful.",
 }
+
+GEMINI_MAX_ATTEMPTS = 3
+GEMINI_RETRY_BACKOFF_SECONDS = (0.25, 0.75)
+GEMINI_RETRYABLE_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504}
 
 
 def build_instruction(
@@ -94,17 +99,29 @@ def generate_tutor_reply(instruction: str, history: list[dict[str, str]]) -> str
         for m in history
     ]
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{settings.gemini_model}:generateContent"
+    data = None
     try:
-        with httpx.Client(timeout=30.0) as client:
-            response = client.post(
-                url,
-                headers={"x-goog-api-key": api_key},
-                json={"systemInstruction": {"parts": [{"text": instruction}]},
-                      "contents": contents,
-                      "generationConfig": {"temperature": 0.5, "maxOutputTokens": 800}},
-            )
-            response.raise_for_status()
-            data = response.json()
+        for attempt in range(GEMINI_MAX_ATTEMPTS):
+            try:
+                with httpx.Client(timeout=30.0) as client:
+                    response = client.post(
+                        url,
+                        headers={"x-goog-api-key": api_key},
+                        json={"systemInstruction": {"parts": [{"text": instruction}]},
+                              "contents": contents,
+                              "generationConfig": {"temperature": 0.5, "maxOutputTokens": 800}},
+                    )
+                if (getattr(response, "status_code", None) in GEMINI_RETRYABLE_STATUS_CODES
+                        and attempt + 1 < GEMINI_MAX_ATTEMPTS):
+                    time.sleep(GEMINI_RETRY_BACKOFF_SECONDS[attempt])
+                    continue
+                response.raise_for_status()
+                data = response.json()
+                break
+            except httpx.TransportError:
+                if attempt + 1 >= GEMINI_MAX_ATTEMPTS:
+                    raise
+                time.sleep(GEMINI_RETRY_BACKOFF_SECONDS[attempt])
         if not isinstance(data, dict):
             raise ValueError("AI returned an invalid response object")
         candidates = data.get("candidates")

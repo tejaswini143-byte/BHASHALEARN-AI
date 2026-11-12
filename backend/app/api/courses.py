@@ -12,8 +12,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend.app.api.auth import current_student
-from backend.app.db.models import Course, Lesson, Student
+from backend.app.db.models import Course, Lesson, Student, StudentCourseProgress
 from backend.app.db.session import get_db
+from backend.app.services.course_catalog import all_courses, find_course
 
 router = APIRouter(prefix="/courses", tags=["courses"])
 
@@ -70,6 +71,88 @@ def list_courses(
     return db.scalars(stmt).all()
 
 
+
+def _course_payload(course: dict, progress: StudentCourseProgress | None) -> dict:
+    completed = set(progress.completed_lesson_ids or []) if progress else set()
+    lessons = course["lessons"]
+    next_lesson = next((lesson for lesson in lessons if lesson["id"] not in completed), None)
+    return {
+        **course,
+        "lessons_completed": len(completed),
+        "progress_percent": round(100 * len(completed) / len(lessons)) if lessons else 0,
+        "enrolled": progress is not None,
+        "completed_lesson_ids": sorted(completed),
+        "lessons_count": len(lessons),
+        "next_lesson_id": next_lesson["id"] if next_lesson else None,
+        "completed": bool(progress and progress.completed_at),
+        "enrolled_at": progress.enrolled_at if progress else None,
+    }
+
+
+@router.get("/catalog")
+def list_in_app_catalog(student: Student = Depends(current_student), db: Session = Depends(get_db)):
+    rows = db.scalars(select(StudentCourseProgress).where(StudentCourseProgress.student_id == student.id)).all()
+    by_course = {row.course_key: row for row in rows}
+    return [{key: value for key, value in _course_payload(course, by_course.get(course["id"])).items() if key != "lessons"}
+            for course in all_courses()]
+
+
+@router.get("/catalog/{course_id}")
+def get_in_app_course(course_id: str, student: Student = Depends(current_student), db: Session = Depends(get_db)):
+    course = find_course(course_id)
+    if course is None:
+        raise HTTPException(status_code=404, detail="Course not found")
+    progress = db.scalar(select(StudentCourseProgress).where(
+        StudentCourseProgress.student_id == student.id, StudentCourseProgress.course_key == course_id,
+    ))
+    return _course_payload(course, progress)
+
+
+@router.post("/catalog/{course_id}/enroll")
+def enroll_in_app_course(course_id: str, student: Student = Depends(current_student), db: Session = Depends(get_db)):
+    course = find_course(course_id)
+    if course is None:
+        raise HTTPException(status_code=404, detail="Course not found")
+    progress = db.scalar(select(StudentCourseProgress).where(
+        StudentCourseProgress.student_id == student.id, StudentCourseProgress.course_key == course_id,
+    ))
+    if progress is None:
+        progress = StudentCourseProgress(student_id=student.id, course_key=course_id, completed_lesson_ids=[])
+        db.add(progress)
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            progress = db.scalar(select(StudentCourseProgress).where(
+                StudentCourseProgress.student_id == student.id, StudentCourseProgress.course_key == course_id,
+            ))
+        if progress is None:
+            raise HTTPException(status_code=409, detail="Could not save course enrollment")
+        db.refresh(progress)
+    return _course_payload(course, progress)
+
+
+@router.post("/catalog/{course_id}/lessons/{lesson_id}/complete")
+def complete_in_app_lesson(course_id: str, lesson_id: str, student: Student = Depends(current_student), db: Session = Depends(get_db)):
+    course = find_course(course_id)
+    if course is None:
+        raise HTTPException(status_code=404, detail="Course not found")
+    if not any(lesson["id"] == lesson_id for lesson in course["lessons"]):
+        raise HTTPException(status_code=404, detail="Lesson not found")
+    progress = db.scalar(select(StudentCourseProgress).where(
+        StudentCourseProgress.student_id == student.id, StudentCourseProgress.course_key == course_id,
+    ))
+    if progress is None:
+        raise HTTPException(status_code=409, detail="Enroll in the course before completing a lesson")
+    completed = set(progress.completed_lesson_ids or [])
+    completed.add(lesson_id)
+    progress.completed_lesson_ids = sorted(completed)
+    if len(completed) == len(course["lessons"]):
+        from backend.app.db.models import utc_now
+        progress.completed_at = progress.completed_at or utc_now()
+    db.commit()
+    db.refresh(progress)
+    return _course_payload(course, progress)
 @router.post("", response_model=CourseResponse, status_code=status.HTTP_201_CREATED)
 def create_course(
     payload: CourseCreate,

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone, time
+import json
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
@@ -11,7 +12,7 @@ from sqlalchemy import func
 from backend.app.config import get_settings
 from backend.app.db.models import (AssistantAccount, AssistantAuditEvent, AssistantCallAttempt,
     AssistantCalendarEvent, AssistantDeadline, AssistantDeadlineCandidate, AssistantDraft,
-    AssistantEmailMessage, AssistantJob, AssistantSettings)
+    AssistantEmailMessage, AssistantJob, AssistantLocalCall, AssistantSettings)
 from backend.app.services.assistant_providers import (ProviderFailure, ProviderUnavailable,
     google_ready, twilio_create_call, twilio_destination_allowed, twilio_live_ready)
 from backend.app.services.assistant_google import list_calendar_events, sync_gmail
@@ -52,6 +53,26 @@ def run_due_jobs(db: Session, *, now: datetime | None = None, limit: int = 25,
         .where(AssistantDeadline.status == "upcoming", AssistantDeadline.due_at < current)
         .values(status="overdue")
     )
+    active_calls = db.scalars(select(AssistantLocalCall).where(AssistantLocalCall.status == "answered")).all()
+    for local_call in active_calls:
+        answered_at = local_call.answered_at
+        if answered_at is None:
+            continue
+        if answered_at.tzinfo is None:
+            answered_at = answered_at.replace(tzinfo=timezone.utc)
+        if current < answered_at + timedelta(minutes=local_call.max_duration_minutes):
+            continue
+        local_call.status = "ended"; local_call.ended_at = current
+        local_call.mic_authorization_hash = None
+        local_call.mic_authorization_expires_at = None
+        settings = db.get(AssistantSettings, local_call.student_id)
+        try:
+            save_transcripts = bool(json.loads(settings.notifications_json or "{}").get("save_call_transcripts", False)) if settings else False
+        except (TypeError, ValueError):
+            save_transcripts = False
+        if not save_transcripts:
+            local_call.turns_json = "[]"
+        _worker_audit(db, local_call.student_id, "local_call.duration_limit", local_call.id, "ended")
     stale_before = current - timedelta(minutes=5)
     stale_jobs = db.scalars(select(AssistantJob).where(AssistantJob.status == "running",
         AssistantJob.claimed_at.is_not(None), AssistantJob.claimed_at < stale_before)).all()
@@ -115,6 +136,17 @@ def run_due_jobs(db: Session, *, now: datetime | None = None, limit: int = 25,
         if quiet_until:
             job.run_at = quiet_until
             continue
+        if job.kind == "reminder":
+            active_call = db.scalar(select(AssistantLocalCall.id).where(
+                AssistantLocalCall.student_id == job.student_id,
+                AssistantLocalCall.status.in_(["ringing", "answered"]),
+            ).limit(1))
+            if active_call is not None:
+                # Keep due reminders durable, but never ring over an existing call.
+                # The worker will retry promptly after the current call ends.
+                job.run_at = current + timedelta(seconds=30)
+                job.last_error = "deferred_for_active_call"
+                continue
         # Conditional state change prevents duplicate execution under concurrent workers.
         result = db.execute(
             AssistantJob.__table__.update()
@@ -125,13 +157,34 @@ def run_due_jobs(db: Session, *, now: datetime | None = None, limit: int = 25,
             continue
         db.flush()
         deadline = db.get(AssistantDeadline, job.deadline_id) if job.deadline_id else None
-        if job.kind == "reminder" and (deadline is None or deadline.status != "upcoming"):
+        if job.kind == "reminder" and (
+            deadline is None
+            or deadline.status not in {"upcoming", "overdue"}
+        ):
             job.status = "canceled"
             job.provider_status = "not_attempted"
             job.last_error = "Deadline is no longer active"
             job.claimed_at = None
         else:
             cfg = get_settings()
+            try:
+                notifications = json.loads(settings.notifications_json or "{}")
+            except (TypeError, ValueError):
+                notifications = {}
+            if job.kind == "reminder" and notifications.get("desktop_call") is True:
+                existing_local_call = db.scalar(select(AssistantLocalCall).where(AssistantLocalCall.job_id == job.id))
+                if existing_local_call is None:
+                    local_call = AssistantLocalCall(student_id=job.student_id, deadline_id=deadline.id,
+                        job_id=job.id, status="ringing", language=settings.preferred_language,
+                        max_duration_minutes=settings.max_call_duration_minutes)
+                    db.add(local_call)
+                    db.flush()
+                    _worker_audit(db, job.student_id, "local_call.ringing", local_call.id, "desktop_pending",
+                                  {"deadline_id": deadline.id})
+                job.status = "completed"; job.provider_status = "desktop_pending"; job.last_error = None
+                job.claimed_at = None
+                executed += 1
+                continue
             live = (allow_live_operations and cfg.app_env == "production" and cfg.assistant_live_operations_enabled
                     and twilio_live_ready(cfg) and settings.phone_verified and settings.call_consent_at
                     and settings.reminder_phone)

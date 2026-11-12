@@ -175,6 +175,22 @@ def _generate_from_sources(*, passages, instruction: str, question: str, languag
     return answer, cited, generated_text
 
 
+def _parse_quiz_json(raw_answer: str) -> dict:
+    """Accept a JSON object even when Gemini wraps it in a code fence or lead-in."""
+    text = raw_answer.strip()
+    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE)
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError:
+        start, end = text.find("{"), text.rfind("}")
+        if start < 0 or end <= start:
+            raise ValueError("missing JSON object") from None
+        value = json.loads(text[start : end + 1])
+    if not isinstance(value, dict):
+        raise ValueError("quiz response is not an object")
+    return value
+
+
 @router.post("/ask")
 def ask_documents(
     payload: AskRequest,
@@ -217,7 +233,7 @@ def generate_learning_material(
         "concepts": "Extract the key concepts and explain each briefly using only retrieved evidence.",
         "flashcards": "Create 5 study flashcards as Front: ... / Back: ... pairs from the retrieved evidence.",
         "practice": "Create 5 document-grounded practice questions followed by short model answers and explanations.",
-        "quiz": "Return ONLY valid JSON: an object with a questions array of 5 multiple-choice questions. Each item must contain question, choices (4 distinct strings), correct_index (0-based integer), explanation, citation_ids (array of supplied IDs such as S1). Every answer and explanation must be supported by the retrieved passages. Include [S#] markers in explanations and never invent source IDs.",
+        "quiz": "Return one JSON object and nothing else: {\"questions\":[...]}. Do not include markdown, a code fence, or prose before or after the object. Create exactly 5 multiple-choice questions. Each item must contain question, choices (4 distinct strings), correct_index (0-based integer), explanation, and citation_ids (a non-empty array containing only supplied IDs such as S1). Every question and correct answer must be supported by the retrieved passages. Put a valid [S#] marker in every explanation and include the same ID in citation_ids. Never invent source IDs.",
     }[payload.mode]
     try:
         passages = _retrieve(db, student.id, payload.document_ids, topic if payload.mode != "summary" else "main ideas, chapter sections and key concepts", provider)
@@ -236,8 +252,8 @@ def generate_learning_material(
         return {"mode": payload.mode, "content": answer, "questions": [], "citations": [CitationResponse(**c.__dict__) for c in citations], "grounded": bool(citations)}
     # Quiz JSON is schema-checked before it reaches the browser; citations are restricted to retrieved IDs.
     try:
-        parsed = json.loads(raw_answer)
-        raw_questions = parsed["questions"] if isinstance(parsed, dict) else None
+        parsed = _parse_quiz_json(raw_answer)
+        raw_questions = parsed.get("questions")
         if not isinstance(raw_questions, list) or not 1 <= len(raw_questions) <= 5:
             raise ValueError("invalid question count")
         questions = [QuizQuestion.model_validate(item) for item in raw_questions]

@@ -2,6 +2,10 @@
 
 Adaptive Telugu–English learning assistant for the GNANI challenge.
 
+## Integration release candidate
+
+The current local integration demo setup, provider configuration boundaries, test commands, and verified feature limits are documented in [the local demo runbook](docs/LOCAL-DEMO-SETUP.md). The current release gate is **not ready for deployment**; see [release readiness](docs/RELEASE-READINESS.md).
+
 ## Roadmap
 
 1. **Architecture & AI proof of concept** — Prisma STT, Timbre TTS, teaching LLM, adaptive learning, shared context, Telugu–English testing.

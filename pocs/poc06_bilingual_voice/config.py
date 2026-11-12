@@ -12,6 +12,20 @@ class VoiceConfigError(ValueError):
     """Safe local configuration error; never includes credential contents."""
 
 
+PROVIDER_ENV_NAMES = frozenset({
+    "BHASHALEARN_GEMINI_API_KEY", "BHASHALEARN_GEMINI_MODEL",
+    "BHASHALEARN_GEMINI_EMBEDDING_API_KEY", "BHASHALEARN_GEMINI_EMBEDDING_MODEL",
+    "BHASHALEARN_GEMINI_EMBEDDING_DIMENSIONS", "BHASHALEARN_EMBEDDING_CHUNK_SIZE",
+    "BHASHALEARN_EMBEDDING_CHUNK_OVERLAP", "BHASHALEARN_EMBEDDING_TIMEOUT_SECONDS",
+    "BHASHALEARN_EMBEDDING_MAX_RETRIES", "BHASHALEARN_BRAVE_SEARCH_API_KEY",
+    "GNANI_API_KEY", "GNANI_STT_URL", "GNANI_AUTH_HEADER", "GNANI_MODEL",
+    "GNANI_LANGUAGE", "GNANI_OUTPUT_FORMAT", "GNANI_TIMEOUT_SECONDS",
+    "GNANI_TTS_URL", "GNANI_TTS_MODEL", "GNANI_TTS_VOICE", "GNANI_TTS_TIMEOUT_SECONDS",
+    "POC06_SAMPLE_RATE", "POC06_CHANNELS", "POC06_RECORDING_SECONDS",
+    "POC06_MAX_RECORDING_SECONDS", "POC06_AUDIO_OUTPUT_DIR",
+})
+
+
 def load_provider_environment(repo_root: Path) -> None:
     """Load provider settings from process env, root .env, then legacy POC .env files.
 
@@ -37,12 +51,21 @@ def load_provider_environment(repo_root: Path) -> None:
             or normalized.startswith("<")
         )
 
+    # Parent project .env is a fallback for this linked RC worktree. Only
+    # provider settings are read; database URLs, JWTs, OAuth, and other secrets
+    # never enter this loader. RC process variables still win over every file.
+    parent_env = repo_root.parent / ".env"
+    if parent_env.is_file():
+        for name, value in dotenv_values(parent_env).items():
+            if name in PROVIDER_ENV_NAMES and value is not None and not is_placeholder(value):
+                values[name] = value.strip()
+
     for folder in folders:
         env_path = repo_root / "pocs" / folder / ".env"
         if not env_path.is_file():
             continue
         for name, value in dotenv_values(env_path).items():
-            if value is not None and not is_placeholder(value):
+            if name in PROVIDER_ENV_NAMES and value is not None and not is_placeholder(value):
                 values[name] = value.strip()
 
     # Pydantic Settings reads BHASHALEARN_* values from this same root file.
@@ -51,7 +74,7 @@ def load_provider_environment(repo_root: Path) -> None:
     central_env = repo_root / ".env"
     if central_env.is_file():
         for name, value in dotenv_values(central_env).items():
-            if value is not None and not is_placeholder(value):
+            if name in PROVIDER_ENV_NAMES and value is not None and not is_placeholder(value):
                 values[name] = value.strip()
 
     for name, value in values.items():

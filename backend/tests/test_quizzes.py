@@ -55,14 +55,47 @@ def expected_answer(question):
     }[question["question_id"]]
 
 
-def test_quizzes_require_auth_and_catalog_is_limited_to_supported_topics(client):
+def test_quizzes_require_auth_and_catalog_lists_curated_topics(client):
     api, _ = client
     assert api.get("/api/v1/quizzes/catalog").status_code == 401
     headers = auth(api, "quiz-catalog@example.com")
     catalog = api.get("/api/v1/quizzes/catalog", headers=headers)
     assert catalog.status_code == 200
     assert {entry["subject"] for entry in catalog.json()} == {"Mathematics", "Computer Science"}
-    assert api.post("/api/v1/quizzes", headers=headers, json={"topic": "unsupported photosynthesis"}).status_code == 422
+    unsupported = api.post("/api/v1/quizzes", headers=headers, json={"topic": "photosynthesis"})
+    assert unsupported.status_code == 503
+    assert "no curated fallback" in unsupported.json()["detail"]
+
+
+def test_generated_topic_quiz_is_labeled_and_graded(client, monkeypatch):
+    from backend.app.api import quizzes as quiz_api
+    from backend.app.services.quiz_engine import QuizQuestion
+
+    api, _ = client
+    headers = auth(api, "quiz-generated@example.com")
+    generated = QuizQuestion(
+        id="live-test-1", topic="photosynthesis", question_type="multiple_choice",
+        difficulty="beginner", prompt_en="What does a plant use in photosynthesis?",
+        prompt_te="కిరణజన్య సంయోగక్రియలో మొక్క ఏది ఉపయోగిస్తుంది?",
+        choices=(("Sunlight", "సూర్యకాంతి"), ("Plastic", "ప్లాస్టిక్"), ("Metal", "లోహం")),
+        accepted=("Sunlight", "సూర్యకాంతి"),
+        explanation_en="Light energy helps plants make sugars.",
+        explanation_te="కాంతి శక్తి మొక్కలు చక్కెరలను తయారు చేయడంలో సహాయపడుతుంది.",
+        source="gemini_live",
+    )
+    monkeypatch.setattr(quiz_api, "generate_quiz_questions", lambda **_: (generated,))
+    response = api.post("/api/v1/quizzes", headers=headers, json={
+        "topic": "photosynthesis", "language": "english", "question_count": 1,
+    })
+    assert response.status_code == 201, response.text
+    quiz = response.json()
+    assert quiz["source"] == "gemini_live" and quiz["subject"] == "General Learning"
+    assert quiz["questions"][0]["prompt"].startswith("What does a plant")
+    assert "accepted" not in quiz["questions"][0] and "answer" not in quiz["questions"][0]
+    submitted = api.post(f"/api/v1/quizzes/{quiz['quiz_id']}/submit", headers=headers, json={
+        "answers": [{"attempt_id": quiz["questions"][0]["attempt_id"], "answer": "Sunlight"}],
+    })
+    assert submitted.status_code == 200 and submitted.json()["score"] == 1
 
 
 def test_question_payload_hides_answer_keys_until_submission(client):

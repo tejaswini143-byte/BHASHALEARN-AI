@@ -286,6 +286,19 @@ class Lesson(Base):
     course: Mapped[Course] = relationship()
 
 
+class StudentCourseProgress(Base):
+    """Student-owned enrollment and lesson completion for the in-app catalog."""
+    __tablename__ = "student_course_progress"
+    __table_args__ = (UniqueConstraint("student_id", "course_key", name="uq_student_course_progress_owner_course"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    student_id: Mapped[str] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), index=True, nullable=False)
+    course_key: Mapped[str] = mapped_column(String(80), nullable=False)
+    completed_lesson_ids: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    enrolled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
 class LearningMemory(Base):
     __tablename__ = "learning_memories"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -452,6 +465,7 @@ class AssistantSettings(Base):
     modes_json: Mapped[str] = mapped_column(Text, default='["student"]', nullable=False)
     timezone_name: Mapped[str] = mapped_column(String(80), default="Asia/Kolkata", nullable=False)
     preferred_language: Mapped[str] = mapped_column(String(16), default="en", nullable=False)
+    max_call_duration_minutes: Mapped[int] = mapped_column(Integer, default=30, nullable=False)
     reminder_phone: Mapped[str | None] = mapped_column(String(32))
     phone_verified: Mapped[bool] = mapped_column(default=False, nullable=False)
     call_consent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -460,7 +474,7 @@ class AssistantSettings(Base):
     quiet_end: Mapped[str | None] = mapped_column(String(5))
     enabled_integrations_json: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
     email_policy: Mapped[str] = mapped_column(String(24), default="draft_only", nullable=False)
-    notifications_json: Mapped[str] = mapped_column(Text, default='{"email":true,"call":false}', nullable=False)
+    notifications_json: Mapped[str] = mapped_column(Text, default='{"email":true,"call":false,"desktop_call":false,"save_call_transcripts":false}', nullable=False)
     retention_days: Mapped[int] = mapped_column(Integer, default=90, nullable=False)
     paused: Mapped[bool] = mapped_column(default=False, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
@@ -641,6 +655,33 @@ class AssistantCallAttempt(Base):
     callback_sequence: Mapped[int] = mapped_column(Integer, default=-1, nullable=False)
     failure_code: Mapped[str | None] = mapped_column(String(64))
     provider_status: Mapped[str | None] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+
+class AssistantLocalCall(Base):
+    """Authenticated in-app reminder call; conversation text is cleared at call end by default."""
+    __tablename__ = "assistant_local_calls"
+    __table_args__ = (
+        UniqueConstraint("job_id", name="uq_assistant_local_call_job"),
+        CheckConstraint("status IN ('ringing','answered','snoozed','dismissed','ended','missed','failed')",
+                        name="ck_assistant_local_call_status"),
+        Index("ix_assistant_local_calls_owner_created", "student_id", "created_at"),
+        Index("ix_assistant_local_calls_owner_status", "student_id", "status"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    student_id: Mapped[str] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), nullable=False)
+    deadline_id: Mapped[str | None] = mapped_column(ForeignKey("assistant_deadlines.id", ondelete="SET NULL"))
+    job_id: Mapped[str | None] = mapped_column(ForeignKey("assistant_jobs.id", ondelete="SET NULL"))
+    status: Mapped[str] = mapped_column(String(16), default="ringing", nullable=False)
+    language: Mapped[str] = mapped_column(String(16), default="en", nullable=False)
+    max_duration_minutes: Mapped[int] = mapped_column(Integer, default=30, nullable=False)
+    turns_json: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
+    pending_reschedule_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    mic_authorization_hash: Mapped[str | None] = mapped_column(String(64))
+    mic_authorization_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    answered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 

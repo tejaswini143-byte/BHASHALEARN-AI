@@ -20,8 +20,9 @@ def upgrade() -> None:
     op.add_column("assistant_drafts", sa.Column("failure_code", sa.String(64), nullable=True))
     op.add_column("assistant_drafts", sa.Column("rfc_message_id", sa.String(998), nullable=True))
     op.add_column("assistant_drafts", sa.Column("references_header", sa.String(2000), nullable=True))
-    op.create_unique_constraint("uq_assistant_drafts_owner_idempotency", "assistant_drafts", ["student_id", "idempotency_key"])
-    op.create_unique_constraint("uq_assistant_drafts_provider_message", "assistant_drafts", ["student_id", "provider_message_id"])
+    with op.batch_alter_table("assistant_drafts") as batch:
+        batch.create_unique_constraint("uq_assistant_drafts_owner_idempotency", ["student_id", "idempotency_key"])
+        batch.create_unique_constraint("uq_assistant_drafts_provider_message", ["student_id", "provider_message_id"])
 
     op.create_table(
         "assistant_oauth_states",
@@ -90,12 +91,13 @@ def downgrade() -> None:
     op.drop_table("assistant_email_messages")
     op.drop_index("ix_assistant_oauth_owner_expiry", table_name="assistant_oauth_states")
     op.drop_table("assistant_oauth_states")
-    op.drop_constraint("uq_assistant_drafts_provider_message", "assistant_drafts", type_="unique")
-    op.drop_constraint("uq_assistant_drafts_owner_idempotency", "assistant_drafts", type_="unique")
-    op.drop_column("assistant_drafts", "references_header")
-    op.drop_column("assistant_drafts", "rfc_message_id")
-    op.drop_column("assistant_drafts", "failure_code")
-    op.drop_column("assistant_drafts", "idempotency_key")
+    with op.batch_alter_table("assistant_drafts") as batch:
+        batch.drop_constraint("uq_assistant_drafts_provider_message", type_="unique")
+        batch.drop_constraint("uq_assistant_drafts_owner_idempotency", type_="unique")
+        batch.drop_column("references_header")
+        batch.drop_column("rfc_message_id")
+        batch.drop_column("failure_code")
+        batch.drop_column("idempotency_key")
     op.drop_column("assistant_accounts", "granted_scopes")
     op.drop_column("assistant_accounts", "sync_page_token")
     op.drop_column("assistant_accounts", "sync_history_anchor")

@@ -31,6 +31,7 @@ export function DashboardShell({ student, onSignOut, children }: { student: Stud
         <a href="#mastery" onClick={closeMenu}>Mastery</a>
         <a href="#features" onClick={closeMenu}>Learning tools</a>
         <Link to="/knowledge-studio" onClick={closeMenu}>Knowledge Studio</Link>
+        <Link to="/courses" onClick={closeMenu}>Courses</Link>
         <Link to="/memories" onClick={closeMenu}>Learning memories</Link>
       </nav>
       <FeatureNavigation compact onNavigate={closeMenu} />

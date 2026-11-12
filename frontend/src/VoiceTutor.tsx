@@ -8,6 +8,8 @@ import { PracticeAssessment } from "./PracticeAssessment";
 import { AvatarSyncController, type SyncMode } from "./avatarSync";
 import { immersiveVoiceBridge } from "./immersiveVoiceBridge";
 import { matchVoiceNavigationCommand } from "./voiceNavigation.mjs";
+import { DesktopControlPanel } from "./DesktopControlPanel";
+import { wavFromFloatChunks } from "./voiceWav";
 import "./voice.css";
 
 type Language = "english" | "telugu" | "mixed";
@@ -26,42 +28,6 @@ type VoiceLessonState = {
 const headers = () => ({ Authorization: "Bearer " + getToken() });
 function errorText(cause: unknown) { return cause instanceof Error ? cause.message : "Something went wrong."; }
 function optimisticPlaceholder(content: string): Message { return { id: "local-demo-user-" + Date.now(), role: "user", content, created_at: new Date().toISOString() }; }
-
-function wavFromFloatChunks(chunks: Float32Array[], sampleRate: number): Blob {
-  const inputCount = chunks.reduce((count, chunk) => count + chunk.length, 0);
-  if (!inputCount || sampleRate < 1) throw new Error("No microphone audio was captured. Please try again.");
-  const input = new Float32Array(inputCount);
-  let inputOffset = 0;
-  for (const chunk of chunks) { input.set(chunk, inputOffset); inputOffset += chunk.length; }
-  const outputRate = 16000;
-  const sampleCount = Math.max(1, Math.floor(inputCount * outputRate / sampleRate));
-  if (44 + sampleCount * 2 > 10 * 1024 * 1024) throw new Error("Recording exceeds the 10 MB upload limit. Record a shorter clip.");
-  const bytes = new ArrayBuffer(44 + sampleCount * 2);
-  const view = new DataView(bytes);
-  const writeText = (offset: number, value: string) => [...value].forEach((char, index) => view.setUint8(offset + index, char.charCodeAt(0)));
-  writeText(0, "RIFF"); view.setUint32(4, bytes.byteLength - 8, true); writeText(8, "WAVE");
-  writeText(12, "fmt "); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true); view.setUint32(24, outputRate, true); view.setUint32(28, outputRate * 2, true);
-  view.setUint16(32, 2, true); view.setUint16(34, 16, true); writeText(36, "data"); view.setUint32(40, sampleCount * 2, true);
-  let offset = 44;
-  const sourceSamplesPerOutput = sampleRate / outputRate;
-  for (let index = 0; index < sampleCount; index += 1) {
-    const start = index * sourceSamplesPerOutput;
-    const end = Math.min(input.length, (index + 1) * sourceSamplesPerOutput);
-    let weighted = 0;
-    let weight = 0;
-    for (let sourceIndex = Math.floor(start); sourceIndex < Math.ceil(end); sourceIndex += 1) {
-      const overlap = Math.max(0, Math.min(end, sourceIndex + 1) - Math.max(start, sourceIndex));
-      weighted += input[Math.min(sourceIndex, input.length - 1)] * overlap;
-      weight += overlap;
-    }
-    const sample = weight ? weighted / weight : 0;
-    const clipped = Math.max(-1, Math.min(1, sample));
-    view.setInt16(offset, clipped < 0 ? clipped * 0x8000 : clipped * 0x7fff, true);
-    offset += 2;
-  }
-  return new Blob([bytes], { type: "audio/wav" });
-}
 
 function localDemoWav(): Blob {
   const sampleRate = 16000;
@@ -167,6 +133,8 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
   const micRequestActive = useRef(false);
   const voiceTurnActive = useRef(false);
   const recordingTimer = useRef<number | null>(null);
+  const speechStartedAtRef = useRef<number | null>(null);
+  const lastSpeechAtRef = useRef<number>(0);
   const mounted = useRef(true);
 
   const signOut = useCallback(() => { clearToken(); navigate("/login", { replace: true }); }, [navigate]);
@@ -487,7 +455,22 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
       const mute = context.createGain(); mute.gain.value = 0;
       muteRef.current = mute;
       chunksRef.current = [];
-      processor.onaudioprocess = event => chunksRef.current.push(new Float32Array(event.inputBuffer.getChannelData(0)));
+      speechStartedAtRef.current = null; lastSpeechAtRef.current = 0;
+      processor.onaudioprocess = event => {
+        const samples = new Float32Array(event.inputBuffer.getChannelData(0));
+        chunksRef.current.push(samples);
+        let energy = 0;
+        for (const sample of samples) energy += sample * sample;
+        const rms = Math.sqrt(energy / Math.max(1, samples.length));
+        const now = performance.now();
+        // Stop shortly after the utterance instead of sending up to 30 seconds of room noise.
+        if (rms >= 0.009) {
+          speechStartedAtRef.current ??= now;
+          lastSpeechAtRef.current = now;
+        } else if (speechStartedAtRef.current !== null && now - lastSpeechAtRef.current >= 1400) {
+          void finishRecording();
+        }
+      };
       source.connect(processor); processor.connect(mute); mute.connect(context.destination);
       recordingActive.current = true; setRecording(true);
       if (!demoMode) void saveVoiceState({ playback_state: "listening" });
@@ -637,7 +620,7 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
       </section>
       <section className="vt-chat"><div className="vt-chat-header"><div><span className="vt-eyebrow">CONVERSATION TRANSCRIPT</span><h3>AI Tutor <span>✦</span></h3></div><span className="vt-chat-badge">{replyLatencyMs !== null ? `LAST TUTOR ROUND-TRIP · ${(replyLatencyMs / 1000).toFixed(1)} S` : "LATENCY MEASURES END-TO-END, NOT PROVIDER-ONLY"} · {providerConfigured === null ? "CHECKING VOICE PROVIDER…" : providerConfigured ? "GNANI CREDENTIALS CONFIGURED · LIVE CALLS ON DEMAND" : "GNANI UNAVAILABLE · TEXT CLASSROOM AVAILABLE"}</span></div>
         <div className="vt-transcript">{historyLoading ? <p className="vt-empty">Loading saved conversation…</p> : messages.length ? messages.map(message => <article key={message.id} className={message.role === "user" ? "vt-message vt-user" : "vt-message vt-ai"}><div className="vt-msg-label"><span>{message.role === "user" ? "YOU" : "✦ AI TUTOR"}</span>{message.role === "assistant" && <button disabled={speechLoading} onClick={() => void generateSpeech(message.content, selected, message.language || language)} aria-label="Generate or replay tutor speech">{speechLoading ? "Preparing…" : "▶ Listen / replay"}</button>}</div><p>{message.content}</p></article>) : <div className="vt-empty"><div>✦</div><h3>Your conversation starts here</h3><p>Record your question, review the Prisma transcript, then send it to your AI tutor.</p></div>}{busy && <p className="vt-thinking">✦ Tutor is preparing your reply…</p>}<div ref={scrollBottom}/></div>
-        <div className="vt-compose">{error && <p className="vt-error" role="alert">{error}</p>}{notice && <p className="vt-notice" role="status">{notice}</p>}{pendingNavigation && <div className="vt-resume-prompt" role="group" aria-label="Voice navigation confirmation"><p>Voice navigation command recognized: {pendingNavigation.label}.</p><button type="button" onClick={() => { if (pendingNavigation.path === "__back__") navigate(-1); else navigate(pendingNavigation.path); setDraft(""); }}>Open {pendingNavigation.label}</button><button type="button" onClick={() => setDraft("")}>Dismiss</button></div>}{resumePrompt && <div className="vt-resume-prompt" role="group" aria-label="Lesson continuation"><p>Your question was answered. The lesson is paused at {Math.round((voiceState?.checkpoint_playback_ms || 0) / 1000)} seconds.</p><button type="button" onClick={() => void resumeCheckpoint()}>Resume lesson</button><button type="button" onClick={() => void dismissResume()}>Continue later</button></div>}{(draft || transcribing) && <p className="vt-interim">{transcribing ? "Processing microphone recording…" : "Prisma transcript — review or edit before sending"}</p>}<form onSubmit={sendMessage}><textarea aria-label="Prisma transcript or typed message" placeholder="Your Prisma transcript appears here. Review it or type a message…" value={draft} maxLength={4000} onChange={event => setDraft(event.target.value)} rows={3} disabled={busy || transcribing || recording || historyLoading}/><button disabled={!selected || !draft.trim() || busy || transcribing || recording || historyLoading}>{busy ? "Thinking…" : "Send to tutor ↗"}</button></form><small>Only the transcript you send enters Gemini and the saved session history. Microphone audio is not saved.</small></div>
+        <div className="vt-compose">{error && <p className="vt-error" role="alert">{error}</p>}{notice && <p className="vt-notice" role="status">{notice}</p>}{pendingNavigation && <div className="vt-resume-prompt" role="group" aria-label="Voice navigation confirmation"><p>Voice navigation command recognized: {pendingNavigation.label}.</p><button type="button" onClick={() => { if (pendingNavigation.path === "__back__") navigate(-1); else navigate(pendingNavigation.path); setDraft(""); }}>Open {pendingNavigation.label}</button><button type="button" onClick={() => setDraft("")}>Dismiss</button></div>}{resumePrompt && <div className="vt-resume-prompt" role="group" aria-label="Lesson continuation"><p>Your question was answered. The lesson is paused at {Math.round((voiceState?.checkpoint_playback_ms || 0) / 1000)} seconds.</p><button type="button" onClick={() => void resumeCheckpoint()}>Resume lesson</button><button type="button" onClick={() => void dismissResume()}>Continue later</button></div>}{(draft || transcribing) && <p className="vt-interim">{transcribing ? "Processing microphone recording…" : "Prisma transcript — review or correct, then send"}</p>}<DesktopControlPanel transcript={draft} language={language}/><form onSubmit={sendMessage}><textarea aria-label="Prisma transcript or typed message" placeholder="Your Prisma transcript appears here. Review it or type a message…" value={draft} maxLength={4000} onChange={event => setDraft(event.target.value)} rows={3} disabled={busy || transcribing || recording || historyLoading}/><button disabled={!selected || !draft.trim() || busy || transcribing || recording || historyLoading}>{busy ? "Thinking…" : "Send to tutor ↗"}</button></form><small>Only the transcript you send enters Gemini and the saved session history. Microphone audio is not saved.</small></div>
         {!immersive && <PracticeAssessment sessionId={selected}/>}
       </section></div>
     </MainElement>

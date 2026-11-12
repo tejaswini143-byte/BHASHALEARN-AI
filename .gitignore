@@ -19,3 +19,7 @@ frontend/test-results/
 frontend/playwright-report/
 frontend/playwright/.cache/
 test-data/
+.test-tmp/
+frontend/test-results-*/
+frontend/playwright-report-*/
+frontend/debug.log

@@ -92,7 +92,7 @@ def test_quiz_endpoint_validates_generated_answers_and_page_citations(monkeypatc
         def retrieve(self, _request):
             return RetrievalResult((passage(),))
 
-    raw_quiz = '{"questions":[{"question":"What is one half?","choices":["One of two equal parts","A whole"],"correct_index":0,"explanation":"One of two equal parts [S1].","citation_ids":["S1"]}]}'
+    raw_quiz = 'Here is the requested material:\n```json\n{"questions":[{"question":"What is one half?","choices":["One of two equal parts","A whole"],"correct_index":0,"explanation":"One of two equal parts [S1].","citation_ids":["S1"]}]}\n```'
     monkeypatch.setattr(knowledge, "VectorPassageRetriever", Retriever)
     monkeypatch.setattr(knowledge, "generate_tutor_reply", lambda *_: raw_quiz)
     result = knowledge.generate_learning_material(

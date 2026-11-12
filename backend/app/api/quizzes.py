@@ -13,6 +13,7 @@ from backend.app.api.auth import current_student
 from backend.app.db.models import LearningAssessmentAttempt, LearningProgress, LearningSession, Student, utc_now
 from backend.app.db.session import get_db
 from backend.app.services.adaptive_learning import normalize_topic, recommend
+from backend.app.services.ai_quiz import generate_quiz_questions
 from backend.app.services.quiz_engine import (
     CATALOG, SUBJECTS, QuizQuestion, answer_is_valid, available_questions, grade_answer, localized,
     localized_recommendation,
@@ -167,9 +168,7 @@ def quiz_catalog(student: Student = Depends(current_student), db: Session = Depe
 @router.post("", status_code=status.HTTP_201_CREATED)
 def create_quiz(payload: CreateQuizRequest, student: Student = Depends(current_student), db: Session = Depends(get_db)):
     topic_key = normalize_topic(payload.topic)
-    subject = SUBJECTS.get(topic_key)
-    if subject is None:
-        raise HTTPException(status_code=422, detail="Quizzes are not available for this topic yet.")
+    subject = SUBJECTS.get(topic_key, "General Learning")
 
     progress = db.scalar(select(LearningProgress).where(
         LearningProgress.student_id == student.id,
@@ -186,12 +185,23 @@ def create_quiz(payload: CreateQuizRequest, student: Student = Depends(current_s
         difficulty = payload.difficulty
         adaptive_difficulty = False
     pool = available_questions(topic_key, difficulty)
-    if len(pool) < payload.question_count:
-        raise HTTPException(status_code=422, detail="There are not enough questions at this difficulty. Choose fewer questions or adaptive difficulty.")
-
-    start = progress.evidence_attempts % len(pool) if progress else 0
-    ordered = pool[start:] + pool[:start]
-    chosen = ordered[:payload.question_count]
+    provider_failure: HTTPException | None = None
+    try:
+        chosen = generate_quiz_questions(
+            topic=payload.topic.strip(), difficulty=difficulty,
+            language=payload.language, question_count=payload.question_count,
+        )
+    except HTTPException as exc:
+        provider_failure = exc
+        chosen = None
+    if chosen is None:
+        if len(pool) < payload.question_count:
+            if provider_failure is not None:
+                raise provider_failure
+            raise HTTPException(status_code=503, detail="Live quiz generation is unavailable, and this topic has no curated fallback.")
+        start = progress.evidence_attempts % len(pool) if progress else 0
+        ordered = pool[start:] + pool[:start]
+        chosen = ordered[:payload.question_count]
     quiz_id = str(uuid4())
     session = LearningSession(student_id=student.id, language=payload.language, topic=payload.topic.strip())
     db.add(session)

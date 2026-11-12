@@ -94,6 +94,29 @@ def test_settings_read_canonical_root_env_file_with_process_override(tmp_path, m
     assert Settings().database_url == "sqlite:///process-env.db"
 
 
+def test_provider_loader_uses_parent_fallback_without_loading_database_or_jwt(tmp_path, monkeypatch):
+    rc_root = tmp_path / "_integration_rc"
+    (rc_root / "pocs" / "poc01_prisma_stt").mkdir(parents=True)
+    (tmp_path / ".env").write_text(
+        "BHASHALEARN_GEMINI_API_KEY=synthetic-parent-gemini\n"
+        "GNANI_API_KEY=synthetic-parent-gnani\n"
+        "BHASHALEARN_DATABASE_URL=sqlite:///do-not-load.db\n"
+        "BHASHALEARN_JWT_SECRET_KEY=do-not-load-jwt\n",
+        encoding="utf-8",
+    )
+    for name in BACKEND_ENV_NAMES + GNANI_ENV_NAMES:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("BHASHALEARN_GEMINI_MODEL", "process-model-override")
+
+    load_provider_environment(rc_root)
+
+    assert os.environ["BHASHALEARN_GEMINI_API_KEY"] == "synthetic-parent-gemini"
+    assert os.environ["GNANI_API_KEY"] == "synthetic-parent-gnani"
+    assert os.environ["BHASHALEARN_GEMINI_MODEL"] == "process-model-override"
+    assert "BHASHALEARN_DATABASE_URL" not in os.environ
+    assert "BHASHALEARN_JWT_SECRET_KEY" not in os.environ
+
+
 def test_embedding_provider_uses_configured_embedding_key(monkeypatch):
     settings = Settings(
         _env_file=None,

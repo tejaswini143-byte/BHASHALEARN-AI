@@ -1,6 +1,7 @@
 import {Link} from "react-router-dom";
 import {EMPTY_INTEGRATIONS,type DashboardIntegrations} from "./contracts";
 const items=[
+ {name:"Courses and learning paths",detail:"Browse lessons and save your progress",path:"/courses",icon:"▤"},
  {name:"Immersive AI classroom",detail:"Explore spatial lessons",path:"/immersive",icon:"?"},
  {name:"Voice learning",detail:"Practice aloud",path:"/voice",icon:"?"},
  {name:"Visual lessons",detail:"Learn with diagrams",path:"/visual",icon:"?"},

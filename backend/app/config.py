@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     twilio_status_callback_url: str = ""
     twilio_allowed_destination_prefixes: str = ""
     assistant_max_calls_per_day: int = Field(default=3, ge=1, le=20)
+    local_scheduler_enabled: bool = False
 
     model_config = SettingsConfigDict(
         env_prefix="BHASHALEARN_",

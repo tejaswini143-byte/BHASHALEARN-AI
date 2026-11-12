@@ -74,3 +74,30 @@ def test_auth_validation_and_missing_resources(client):
     assert client.get("/api/v1/courses/unknown/lessons").status_code == 404
     assert client.post("/api/v1/courses/unknown/lessons", json={"title": "One", "content": "X", "position": 1}, headers=headers).status_code == 404
     assert client.get("/api/v1/courses/unknown/lessons/unknown").status_code == 404
+
+
+def test_in_app_catalog_enrollment_progress_and_student_isolation(client):
+    first = auth(client)
+    listed = client.get("/api/v1/courses/catalog", headers=first)
+    assert listed.status_code == 200
+    item = next(course for course in listed.json() if course["id"] == "fraction-foundations")
+    assert item["lessons_count"] == 3 and item["enrolled"] is False
+
+    detail_url = "/api/v1/courses/catalog/fraction-foundations"
+    assert client.post(detail_url + "/lessons/equivalent-fractions/complete", headers=first).status_code == 409
+    enrolled = client.post(detail_url + "/enroll", headers=first)
+    assert enrolled.status_code == 200 and enrolled.json()["enrolled"] is True
+    complete = client.post(detail_url + "/lessons/equivalent-fractions/complete", headers=first)
+    assert complete.status_code == 200
+    assert complete.json()["completed_lesson_ids"] == ["equivalent-fractions"]
+    assert complete.json()["progress_percent"] == 33
+    assert client.get(detail_url, headers=first).json()["progress_percent"] == 33
+    assert client.post(detail_url + "/lessons/not-a-lesson/complete", headers=first).status_code == 404
+    assert client.get(detail_url).status_code == 401
+
+    email, password = "second@example.com", "safe-test-password-456"
+    assert client.post("/api/v1/auth/register", json={"email": email, "display_name": "Second", "password": password}).status_code == 201
+    second_login = client.post("/api/v1/auth/login", json={"email": email, "password": password})
+    second = {"Authorization": "Bearer " + second_login.json()["access_token"]}
+    private_view = client.get(detail_url, headers=second).json()
+    assert private_view["enrolled"] is False and private_view["completed_lesson_ids"] == []

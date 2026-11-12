@@ -1,14 +1,13 @@
-import { Component, Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore, type ErrorInfo, type ReactNode } from "react";
-import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { Float, Html, OrbitControls, Stars } from "@react-three/drei";
-import * as THREE from "three";
+import { Component, useCallback, useEffect, useState, useSyncExternalStore, type ErrorInfo, type ReactNode } from "react";
+import { Canvas, useThree } from "@react-three/fiber";
+import { OrbitControls, Stars } from "@react-three/drei";
 import { Link, useNavigate } from "react-router-dom";
 import { ApiError, clearToken, getCurrentStudent, getToken, type Student } from "./auth";
 import { ImmersiveTeacher } from "./TeacherPreview";
 import { VoiceTutor } from "./VoiceTutor";
 import { immersiveVoiceBridge } from "./immersiveVoiceBridge";
 import { playbackReducer, sampleLessons } from "./lessonEngine";
-import { cameraPresets, focusedLessonObjectIds, type CameraPreset } from "./immersiveCore";
+import { cameraPresets, type CameraPreset } from "./immersiveCore";
 import "./immersive-classroom.css";
 
 class SceneBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
@@ -47,33 +46,6 @@ function CameraDirector({ preset }: { preset: CameraPreset }) {
   const { camera } = useThree();
   useEffect(() => { const view = cameraPresets[preset]; camera.position.set(...view.position); camera.lookAt(...view.target); }, [camera, preset]);
   return null;
-}
-
-function Hologram({ item, index, active, reduced }: { item: (typeof sampleLessons)[number]["objects"][number]; index: number; active: boolean; reduced: boolean }) {
-  const root = useRef<THREE.Group>(null);
-  const x = 0.5 + (index % 2) * 1.9;
-  const y = 3.9 - Math.floor(index / 2) * 1.1 + (index % 2) * 0.14;
-  const tone = item.color === "purple" ? "violet" : item.color === "gold" ? "ice" : "cyan";
-  useFrame(({ clock }) => { if (!reduced && root.current) root.current.position.y = y + Math.sin(clock.elapsedTime * 0.7 + index) * 0.06; });
-  return <group ref={root} position={[x, y, -2.7]}>
-    <Float speed={reduced ? 0 : 0.8} floatIntensity={reduced ? 0 : 0.08} rotationIntensity={0}>
-      <mesh><torusGeometry args={[0.36, 0.012, 8, 48]}/><meshBasicMaterial color={active ? "#c3f6ff" : tone === "violet" ? "#aa87ff" : tone === "ice" ? "#e8f5ff" : "#55ddff"} transparent opacity={active ? 0.95 : 0.56}/></mesh>
-    </Float>
-    <Html transform distanceFactor={7} position={[0, 0, 0.06]} className="ic-hologram-html" center>
-      <article className={`ic-hologram ${active ? "is-active" : ""}`} aria-label={`${item.text || item.id}: ${item.explanation || "lesson object"}`}>
-        <span className={`ic-holo-mark ${tone}`} aria-hidden="true">{item.shape === "circle" ? "◉" : item.shape === "triangle" ? "△" : item.shape === "line" ? "↗" : "✧"}</span>
-        <strong lang={/^[\u0C00-\u0C7F]/.test(item.text || "") ? "te" : undefined}>{item.text || item.id}</strong>
-        <small>{item.explanation || "Explore this idea"}</small>
-      </article>
-    </Html>
-  </group>;
-}
-
-function HologramField({ lessonIndex, stepIndex, reduced }: { lessonIndex: number; stepIndex: number; reduced: boolean }) {
-  const lesson = sampleLessons[lessonIndex];
-  const focused = new Set(focusedLessonObjectIds(lesson, stepIndex));
-  const lessonObjects = lesson.objects.slice(0, 7);
-  return <>{lessonObjects.map((item, index) => <Hologram key={item.id} item={item} index={index} active={focused.has(item.id)} reduced={reduced}/>)}</>;
 }
 
 function AccessGate({ children }: { children: (student: Student, offlineDemo: boolean) => ReactNode }) {
@@ -139,11 +111,16 @@ function ImmersiveExperience({ student, offlineDemo }: { student: Student; offli
   const activeStep = playback.step >= 0 ? lesson.steps[playback.step] : null;
   return <main className="ic-experience" aria-label="Immersive classroom">
     <div className="ic-scene"><SceneBoundary><Canvas aria-label="Decorative immersive 3D classroom" shadows dpr={[1, 1.5]} camera={{ position: cameraPresets.overview.position, fov: 39 }} gl={{ antialias: true, alpha: false, powerPreference: "low-power" }} frameloop={reduced ? "demand" : "always"} fallback={<WebGLFallback/>}>
-      <CameraDirector preset={preset}/><VoiceFrameScheduler reduced={reduced}/><ImmersiveRoom reduced={reduced}/><ImmersiveTeacher state={activeStep ? "explain" : "idle"} reduced={reduced} voiceState={voiceState}/><Suspense fallback={null}><HologramField lessonIndex={lessonIndex} stepIndex={playback.step} reduced={reduced}/></Suspense>
+      <CameraDirector preset={preset}/><VoiceFrameScheduler reduced={reduced}/><ImmersiveRoom reduced={reduced}/><ImmersiveTeacher state={activeStep ? "explain" : "idle"} reduced={reduced} voiceState={voiceState}/>
       <OrbitControls makeDefault target={cameraPresets[preset].target} minDistance={5.5} maxDistance={14} minPolarAngle={0.55} maxPolarAngle={1.45} enablePan={false}/>
     </Canvas></SceneBoundary></div>
     <header className="ic-topbar"><Link to="/dashboard" className="ic-brand" aria-label="BHASHALEARN AI dashboard"><span>✦</span> BHASHA<span className="ic-brand-accent">LEARN</span><small> AI</small></Link><div className="ic-student"><i aria-hidden="true"/>{student.display_name || "Student"}{offlineDemo && <span className="ic-offline-status">LOCAL DEMO - BACKEND UNAVAILABLE</span>}<span>·</span><span>IMMERSIVE CLASS</span></div><Link to="/dashboard" className="ic-exit">Exit classroom <span aria-hidden="true">↗</span></Link></header>
     <div className="ic-scene-label"><i aria-hidden="true"/> LIVE 3D LEARNING SPACE</div>
+    <aside className="ic-board" aria-label="Interactive lesson board" aria-live="polite">
+      <span className="ic-board-kicker">LESSON BOARD · {lesson.subject}</span>
+      <h2>{activeStep?.title || lesson.title}</h2>
+      <p>{activeStep?.explanation || lesson.intro}</p>
+    </aside>
     <aside className="ic-hud" aria-label="Lesson controls">
       <div className="ic-hud-top"><div><span className="ic-eyebrow">{lesson.subject}</span><h1>{lesson.title}</h1></div><label className="ic-lesson-select">Lesson<select aria-label="Choose lesson" value={lessonIndex} onChange={event => { setLessonIndex(Number(event.target.value)); setPlayback({ step: -1, playing: false }); }}>{sampleLessons.map((item, index) => <option key={item.id} value={index}>{item.title}</option>)}</select></label></div>
       <p className="ic-explanation" aria-live="polite">{activeStep?.explanation || lesson.intro}</p>

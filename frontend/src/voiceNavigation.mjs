@@ -1,5 +1,6 @@
 export const voiceNavigationDestinations = [
   { path: "/dashboard", label: "Dashboard", commands: ["open dashboard", "go to dashboard", "show dashboard", "డాష్‌బోర్డ్ తెరువు", "డాష్ బోర్డ్ తెరువు"] },
+  { path: "/courses", label: "My courses", commands: ["open courses", "open my courses", "go to courses", "show courses", "నా కోర్సులు తెరువు"] },
   { path: "/classroom", label: "AI Classroom", commands: ["open classroom", "go to classroom", "start classroom", "start ai classroom", "క్లాస్‌రూమ్ తెరువు", "క్లాస్ రూమ్ తెరువు"] },
   { path: "/documents", label: "My Documents", commands: ["open my documents", "go to documents", "show my documents", "open my uploaded pdf", "నా పత్రాలు తెరువు"] },
   { path: "/quizzes", label: "Quizzes", commands: ["open quizzes", "go to quizzes", "నా క్విజ్‌లు తెరువు"] },

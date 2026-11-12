@@ -1,0 +1,305 @@
+import { useEffect, useRef, useState } from "react";
+import { getToken } from "./auth";
+import { createDesktopExecutionGate } from "./desktopExecution.mjs";
+import {
+  getDesktopQaContext, getDesktopTargetScreenPoint, isApprovedQaTextFieldFocused, navigateApprovedPage,
+  openApprovedDesktopSite, resolveDesktopTarget,
+} from "./desktopDomTargets";
+
+type Action = {
+  action: string;
+  text?: string | null;
+  target_id?: string | null;
+  site_id?: string | null;
+  steps?: Action[] | null;
+  clarification?: string | null;
+};
+
+function bindNamedClickTargets(action: Action, transcript: string, targets: Array<{ id: string; name: string; kind: string }>): Action {
+  if (action.action === "sequence") {
+    const steps = (action.steps || []).map(step => bindNamedClickTargets(step, transcript, targets));
+    const clarification = steps.find(step => step.action === "clarify");
+    return clarification || { ...action, steps };
+  }
+  if (action.action !== "click" && action.action !== "click_target") return action;
+
+  const normalized = transcript.normalize("NFC").toLocaleLowerCase();
+  const requested = targets.filter(target => ["button", "link"].includes(target.kind)
+    && normalized.includes(target.name.normalize("NFC").toLocaleLowerCase()));
+  const names = [...new Set(requested.map(target => target.name.normalize("NFC").toLocaleLowerCase()))];
+  if (names.length > 1) return { action: "clarify", clarification: "Which visible button or link do you mean?" };
+  if (!requested.length) return { action: "clarify", clarification: "Please name a visible button or link. I blocked the unbound click." };
+  const matches = requested.filter(target => target.name.normalize("NFC").toLocaleLowerCase() === names[0]);
+  if (matches.length > 1) return { action: "clarify", clarification: `I found ${matches.length} targets named ${matches[0].name}. Which one do you mean?` };
+  if (action.action === "click_target" && action.target_id !== matches[0].id) {
+    return { action: "clarify", clarification: "Gemini selected a different element than the one you named. I blocked the click." };
+  }
+  return { action: "click_target", target_id: matches[0].id };
+}
+
+const requestedBase = import.meta.env.VITE_DESKTOP_COMPANION_URL;
+const allowedCompanionBases = new Set(["http://127.0.0.1:18765", "http://127.0.0.1:18766", "http://127.0.0.1:18770"]);
+const base = requestedBase && allowedCompanionBases.has(requestedBase) ? requestedBase : "http://127.0.0.1:18765";
+const STOP_WORDS = /^(stop|emergency stop|desktop control stop|ఆపు|ఆపండి|అత్యవసరంగా ఆపు)$/iu;
+const wait = (ms: number) => new Promise(resolve => window.setTimeout(resolve, ms));
+
+export function DesktopControlPanel({ transcript, language = "mixed" }: { transcript: string; language?: "english" | "telugu" | "mixed" }) {
+  const [pairing, setPairing] = useState("");
+  const [connected, setConnected] = useState(false);
+  const [active, setActive] = useState(false);
+  const [status, setStatus] = useState("Disconnected");
+  const [action, setAction] = useState<Action | null>(null);
+  const [history, setHistory] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [voiceCommands, setVoiceCommands] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const lastTranscriptRef = useRef("");
+  const executionGateRef = useRef(createDesktopExecutionGate());
+  const activeRef = useRef(false);
+  const languageCode = language === "english" ? "en" : language === "telugu" ? "te" : "mixed";
+
+  useEffect(() => () => executionGateRef.current.disable(), []);
+
+  async function companion(path: string, body?: object, authToken = pairing) {
+    const response = await fetch(base + path, { method: path === "/health" ? "GET" : "POST", headers: { Authorization: `Bearer ${authToken}`, ...(body ? { "Content-Type": "application/json" } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
+    const value = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(value.error || `Companion returned ${response.status}`);
+    return value;
+  }
+
+  async function speak(text: string) {
+    const token = getToken(); if (!token) return;
+    try {
+      const response = await fetch("/api/v1/assistant/voice/speech", { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ text, language: languageCode }) });
+      if (!response.ok || !response.headers.get("content-type")?.toLowerCase().startsWith("audio/wav")) return;
+      const url = URL.createObjectURL(await response.blob());
+      if (audioRef.current) { audioRef.current.src = url; await audioRef.current.play().catch(() => setStatus("Timbre audio is ready; press Play to hear it.")); }
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch { /* Keep the recognized action visible if speech is unavailable. */ }
+  }
+
+  async function connect() {
+    setBusy(true);
+    try {
+      const pairingResponse = await fetch(base + "/pair", { mode: "cors", cache: "no-store" });
+      const pairingState = await pairingResponse.json().catch(() => ({}));
+      if (!pairingResponse.ok || typeof pairingState.token !== "string") throw new Error(pairingState.error || "Open the local companion before connecting.");
+      const localToken = pairingState.token as string;
+      setPairing(localToken);
+      const state = await companion("/health", undefined, localToken);
+      const enabled = Boolean(state.active);
+      activeRef.current = enabled;
+      if (enabled) executionGateRef.current.enable(); else executionGateRef.current.disable();
+      setConnected(true); setActive(enabled); setStatus(enabled ? "Connected · desktop control enabled" : "Connected · control disabled");
+    } catch (error) { setConnected(false); setActive(false); setStatus(error instanceof Error ? error.message : "Connection failed"); }
+    finally { setBusy(false); }
+  }
+
+  async function toggle() {
+    setBusy(true);
+    if (activeRef.current) {
+      activeRef.current = false;
+      executionGateRef.current.disable();
+      setActive(false);
+    }
+    try {
+      const state = await companion(active ? "/disable" : "/activate");
+      const enabled = Boolean(state.active);
+      activeRef.current = enabled;
+      if (enabled) executionGateRef.current.enable(); else executionGateRef.current.disable();
+      setActive(enabled); setStatus(enabled ? "Desktop control enabled for this QA window" : "Desktop control disabled");
+      if (state.active) void speak("Desktop control is enabled for the disposable QA page.");
+    } catch (error) { setStatus(error instanceof Error ? error.message : "Control request failed"); }
+    finally { setBusy(false); }
+  }
+
+  async function interpret() {
+    const normalized = transcript.normalize("NFC").trim();
+    if (STOP_WORDS.test(normalized)) { await stop(); return; }
+    const context = getDesktopQaContext();
+    if (!context) { setStatus("Browser actions are restricted to the approved local desktop-control QA page."); return; }
+    const token = getToken(); if (!token) { setStatus("Sign in again to interpret a command."); return; }
+    setBusy(true); setAction(null);
+    const requestEpoch = executionGateRef.current.snapshot();
+    try {
+      const response = await fetch("/api/v1/assistant/desktop/interpret", {
+        method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ transcript: normalized, targets: context.targets, approved_sites: context.approved_sites }),
+      });
+      const value = await response.json();
+      if (!response.ok) throw new Error(value.detail || "Gemini could not interpret this command");
+      if (!activeRef.current || !executionGateRef.current.isCurrent(requestEpoch)) {
+        setStatus("Emergency Stop cancelled the pending command.");
+        return;
+      }
+      const proposed = bindNamedClickTargets(value.action as Action, normalized, context.targets);
+      setAction(proposed);
+      if (proposed.action === "clarify") {
+        setStatus(proposed.clarification || "Please clarify which target you mean.");
+        void speak(proposed.clarification || "Please clarify which target you mean.");
+      } else {
+        setStatus("Review the proposed action before confirming.");
+        void speak(`I understood ${describe(proposed)}. Confirm on screen to execute.`);
+      }
+    } catch (error) { setStatus(error instanceof Error ? error.message : "Interpretation failed"); }
+    finally { setBusy(false); }
+  }
+
+  function describe(step: Action): string {
+    if (step.action === "sequence") return (step.steps || []).map(describe).join(", then ");
+    if (step.action === "click_target" || step.action === "focus_target" || step.action === "type_into" || step.action === "search") {
+      const target = getDesktopQaContext()?.targets.find(item => item.id === step.target_id);
+      return `${step.action.replaceAll("_", " ")} ${target?.name || "the selected target"}`;
+    }
+    if (step.action === "open_approved_site") return `open ${step.site_id === "qa_sandbox" ? "the QA sandbox" : "the desktop-control QA page"}`;
+    return step.action.replaceAll("_", " ");
+  }
+
+  function assertExecutionActive(executionEpoch: number) {
+    executionGateRef.current.assertCurrent(executionEpoch);
+  }
+
+  async function executeStep(step: Action, executionEpoch: number): Promise<string> {
+    assertExecutionActive(executionEpoch);
+    if (step.action === "sequence") {
+      const steps = step.steps || [];
+      if (!steps.length || steps.length > 5) throw new Error("Only one to five sequential actions are supported.");
+      const results: string[] = [];
+      for (const item of steps) {
+        assertExecutionActive(executionEpoch);
+        results.push(await executeStep(item, executionEpoch));
+        assertExecutionActive(executionEpoch);
+        await wait(280);
+      }
+      return results.join("; ");
+    }
+    if (step.action === "clarify") throw new Error("Answer the clarification before confirming an action.");
+    if (step.action === "stop") { await stop(); return "Emergency stop"; }
+    if (step.action === "open_approved_site") {
+      if (!openApprovedDesktopSite(step.site_id || "")) throw new Error("That website is outside the local QA allowlist.");
+      return `opened ${step.site_id === "qa_sandbox" ? "QA sandbox" : "QA home"}`;
+    }
+    if (step.action === "navigate_back" || step.action === "navigate_forward") {
+      if (!navigateApprovedPage(step.action === "navigate_back" ? "back" : "forward")) throw new Error("Browser history is available only inside the approved QA sandbox.");
+      return step.action === "navigate_back" ? "went back in the QA sandbox" : "went forward in the QA sandbox";
+    }
+    if (step.action === "scroll_up" || step.action === "scroll_down") {
+      const page = window.top;
+      const before = page?.scrollY ?? 0;
+      if (!page || !getDesktopQaContext()) throw new Error("Scrolling is restricted to the approved local QA page.");
+      page.scrollBy({ top: step.action === "scroll_down" ? 500 : -500, behavior: "instant" });
+      await wait(180);
+      assertExecutionActive(executionEpoch);
+      const after = page?.scrollY ?? before;
+      if (after === before) throw new Error(`The approved page did not scroll (position stayed at ${before}px).`);
+      return `${step.action === "scroll_down" ? "scrolled down" : "scrolled up"} (${before}→${after}px)`;
+    }
+    if (step.action === "click_target" || step.action === "focus_target" || step.action === "type_into" || step.action === "search") {
+      const element = step.target_id ? resolveDesktopTarget(step.target_id) : null;
+      const point = step.target_id ? getDesktopTargetScreenPoint(step.target_id) : null;
+      if (!element || !point) throw new Error("That target is no longer visible in the approved QA page.");
+      const name = getDesktopQaContext()?.targets.find(item => item.id === step.target_id)?.name || "target";
+      await companion("/action", { action: "move_to", ...point });
+      assertExecutionActive(executionEpoch);
+      await wait(280); // The companion intentionally rate-limits physical actions to at most four per second.
+      assertExecutionActive(executionEpoch);
+      if (step.action === "focus_target") { element.focus(); return `focused ${name}`; }
+      if (step.action === "click_target") {
+        const context = getDesktopQaContext();
+        const page = window.top;
+        if (element.tagName === "A") {
+          const destination = (element as HTMLAnchorElement).href;
+          if (!context || !page || !Object.values(context.approved_sites).includes(destination)) {
+            throw new Error("That link is outside the approved local QA destinations.");
+          }
+          element.click();
+          await wait(250);
+          if (page.location.href !== destination) throw new Error("The approved link did not navigate to its exact destination.");
+          return `navigated to ${destination}`;
+        }
+        element.click();
+        await wait(30);
+        return `clicked ${name} by its uniquely resolved QA target`;
+      }
+      if (!(element.tagName === "INPUT" || element.tagName === "TEXTAREA") || !step.text) throw new Error("The selected target is not a supported local text field.");
+      element.focus();
+      const control = element as HTMLInputElement | HTMLTextAreaElement;
+      const ownerWindow = element.ownerDocument.defaultView;
+      if (!ownerWindow || element.ownerDocument.activeElement !== element) throw new Error(`Could not focus ${name}.`);
+      const valueDescriptor = Object.getOwnPropertyDescriptor(
+        element.tagName === "INPUT" ? ownerWindow.HTMLInputElement.prototype : ownerWindow.HTMLTextAreaElement.prototype,
+        "value",
+      );
+      if (!valueDescriptor?.set) throw new Error(`Could not enter text into ${name}.`);
+      const start = control.selectionStart ?? control.value.length;
+      const end = control.selectionEnd ?? control.value.length;
+      valueDescriptor.set.call(control, `${control.value.slice(0, start)}${step.text}${control.value.slice(end)}`);
+      control.setSelectionRange(start + step.text.length, start + step.text.length);
+      control.dispatchEvent(new ownerWindow.Event("input", { bubbles: true, composed: true }));
+      control.dispatchEvent(new ownerWindow.Event("change", { bubbles: true }));
+      await wait(30);
+      const fieldValue = control.value;
+      if (!["INPUT", "TEXTAREA"].includes(element.tagName) || !fieldValue.includes(step.text)) {
+        throw new Error(`Text entry failed: ${name} did not contain the dictated text afterward.`);
+      }
+      if (step.action === "search") { await wait(280); await companion("/action", { action: "enter" }); return `searched for the dictated phrase in ${name}`; }
+      return `entered dictated text into ${name}`;
+    }
+    if (["center", "left", "right", "up", "down", "click", "double_click", "type", "enter"].includes(step.action)) {
+      if ((step.action === "type" || step.action === "enter") && !isApprovedQaTextFieldFocused()) throw new Error("Focus an approved QA text field before typing or pressing Enter.");
+      await companion("/action", { action: step.action, ...(step.text ? { text: step.text } : {}) });
+      return step.action === "type" ? "typed the approved dictated text" : step.action.replaceAll("_", " ");
+    }
+    throw new Error("That desktop action is not supported.");
+  }
+
+  async function execute() {
+    if (!active || !action || action.action === "clarify") return;
+    const currentContext = getDesktopQaContext();
+    if (!currentContext) { setStatus("Stopped: the approved QA page is no longer active."); setAction(null); return; }
+    setBusy(true);
+    const executionEpoch = executionGateRef.current.begin();
+    try {
+      const summary = await executeStep(action, executionEpoch);
+      setHistory(items => [summary, ...items].slice(0, 20)); setStatus(`Completed: ${summary}`); setAction(null); void speak(`Completed. ${summary}.`);
+    } catch (error) {
+      if (!activeRef.current || !executionGateRef.current.isCurrent(executionEpoch)) setStatus("Stopped: Emergency Stop cancelled the remaining workflow.");
+      else setStatus(error instanceof Error ? error.message : "Action failed");
+    }
+    finally { setBusy(false); }
+  }
+
+  async function stop() {
+    executionGateRef.current.disable();
+    activeRef.current = false;
+    setActive(false); setAction(null); setVoiceCommands(false);
+    try { await companion("/stop"); setStatus("Emergency stop sent; explicitly re-enable to continue."); }
+    catch { setConnected(false); setStatus("Stop could not reach the companion. Use its PyAutoGUI fail-safe or close its process."); }
+  }
+
+  useEffect(() => {
+    const value = transcript.normalize("NFC").trim();
+    if (!voiceCommands || !active || !value || value === lastTranscriptRef.current) return;
+    lastTranscriptRef.current = value;
+    if (STOP_WORDS.test(value)) { void stop(); return; }
+    void interpret();
+  }, [transcript, voiceCommands, active]);
+
+  const clarification = action?.action === "clarify";
+  return <section aria-label="Windows desktop control" style={{ margin: "12px 0", padding: 14, border: "1px solid #53648d", borderRadius: 12, background: "#101a30" }}>
+    <strong>Opt-in Windows desktop control</strong> <span role="status">· {status}</span>
+    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+      <button type="button" disabled={busy} onClick={() => void connect()}>Connect to local companion</button>
+      <button type="button" disabled={!connected || busy} onClick={() => void toggle()}>{active ? "Disable control" : "Enable control"}</button>
+      <button type="button" onClick={() => void stop()}>Emergency Stop</button>
+    </div>
+    <label><input type="checkbox" checked={voiceCommands} disabled={!active} onChange={event => { lastTranscriptRef.current = ""; setVoiceCommands(event.target.checked); }}/> Interpret each new Prisma transcript as a desktop command</label>
+    <p>Prisma transcript: {transcript || "Record a command first."}</p>
+    <button type="button" disabled={!connected || !active || !transcript.trim() || busy} onClick={() => void interpret()}>{STOP_WORDS.test(transcript.normalize("NFC").trim()) ? "Voice Emergency Stop" : "Interpret with Gemini"}</button>
+    {action && (clarification
+      ? <div role="status" aria-label="Clarification needed"><p>{action.clarification}</p><button type="button" onClick={() => setAction(null)}>Clear clarification</button></div>
+      : <div role="group" aria-label="Confirm desktop action"><p>Proposed: <b>{describe(action)}</b>{action.action === "sequence" && <ol>{(action.steps || []).map((step, index) => <li key={index}>{describe(step)}</li>)}</ol>}</p><button type="button" disabled={!active || busy} onClick={() => void execute()}>Confirm and execute</button><button type="button" onClick={() => setAction(null)}>Cancel</button></div>)}
+    <button type="button" onClick={() => setHistory([])}>Clear action history</button><ol aria-label="Recent desktop actions">{history.map((item,index)=><li key={`${index}-${item}`}>{item}</li>)}</ol>
+    <audio ref={audioRef} controls aria-label="Gnani Timbre action confirmation" />
+  </section>;
+}

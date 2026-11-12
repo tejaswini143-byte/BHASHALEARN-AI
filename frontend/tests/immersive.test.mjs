@@ -44,7 +44,7 @@ test("scene controls include keyboard, reduced motion and an accessible WebGL fa
   assert.ok(scene.includes('fallback={<WebGLFallback/>}'));
 });
 
-test("lesson steps focus their holographic objects and the scene uses no conventional presentation surface", async () => {
+test("lesson steps focus their authored objects and the immersive route uses a lesson board without holograms", async () => {
   const lesson = engine.sampleLessons[0];
   assert.deepEqual(core.focusedLessonObjectIds(lesson, 0), ["triangle"]);
   assert.deepEqual(core.focusedLessonObjectIds(lesson, 1), ["side-a", "side-b", "sum"]);
@@ -54,6 +54,9 @@ test("lesson steps focus their holographic objects and the scene uses no convent
   assert.ok(!/smartboard|whiteboard|projector|board-shaped/i.test(world));
   assert.ok(world.includes("circleGeometry"));
   assert.ok(!world.includes("boxGeometry"));
+  assert.ok(scene.includes('className="ic-board"'));
+  assert.ok(scene.includes("activeStep?.explanation || lesson.intro"));
+  assert.doesNotMatch(scene, /<Html\b|HologramField|function Hologram\b/);
 });
 
 

@@ -68,13 +68,18 @@ def test_student_session_fields_are_json_quoted_and_bounded():
 
 
 class FakeResponse:
-    def __init__(self, payload=None, error=None):
+    def __init__(self, payload=None, error=None, status_code=200):
         self.payload = payload
         self.error = error
+        self.status_code = status_code
 
     def raise_for_status(self):
         if self.error:
             raise self.error
+        if self.status_code >= 400:
+            request = httpx.Request("POST", "https://example.invalid/generate")
+            response = httpx.Response(self.status_code, request=request)
+            raise httpx.HTTPStatusError("upstream failure", request=request, response=response)
 
     def json(self):
         if isinstance(self.payload, Exception):
@@ -179,6 +184,48 @@ def test_provider_timeout_maps_to_502(monkeypatch):
         tutor_service.generate_tutor_reply("Instruction", [{"role": "user", "content": "Hi"}])
     assert error.value.status_code == 502
     assert "private timeout detail" not in error.value.detail
+
+
+def test_gemini_retries_transient_502_then_succeeds(monkeypatch):
+    configured_settings(monkeypatch)
+    calls = []
+    responses = iter([
+        FakeResponse(status_code=502),
+        FakeResponse({"candidates": [{"content": {"parts": [{"text": "Recovered reply"}]}}]}),
+    ])
+
+    class SequenceClient(FakeClient):
+        def post(self, url, headers, json):
+            calls.append({"url": url, "headers": headers, "json": json})
+            return next(responses)
+
+    sleeps = []
+    monkeypatch.setattr(tutor_service.httpx, "Client", lambda **_kwargs: SequenceClient())
+    monkeypatch.setattr(tutor_service.time, "sleep", sleeps.append)
+
+    assert tutor_service.generate_tutor_reply("Instruction", [{"role": "user", "content": "Hi"}]) == "Recovered reply"
+    assert len(calls) == 2
+    assert sleeps == [tutor_service.GEMINI_RETRY_BACKOFF_SECONDS[0]]
+    assert calls[0]["json"] == calls[1]["json"]
+
+
+def test_gemini_retry_budget_is_bounded(monkeypatch):
+    configured_settings(monkeypatch)
+    calls = []
+
+    class AlwaysUnavailableClient(FakeClient):
+        def post(self, url, headers, json):
+            calls.append(url)
+            return FakeResponse(status_code=503)
+
+    sleeps = []
+    monkeypatch.setattr(tutor_service.httpx, "Client", lambda **_kwargs: AlwaysUnavailableClient())
+    monkeypatch.setattr(tutor_service.time, "sleep", sleeps.append)
+    with pytest.raises(HTTPException) as error:
+        tutor_service.generate_tutor_reply("Instruction", [{"role": "user", "content": "Hi"}])
+    assert error.value.status_code == 502
+    assert len(calls) == tutor_service.GEMINI_MAX_ATTEMPTS
+    assert sleeps == list(tutor_service.GEMINI_RETRY_BACKOFF_SECONDS)
 
 
 @pytest.mark.parametrize("payload", [

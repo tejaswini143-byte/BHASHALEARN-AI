@@ -1,0 +1,44 @@
+# BHASHALEARN AI — Master Project Status
+
+**Audit date:** 2026-11-09  
+**Integration worktree:** `C:\Users\Tejaswini\BHASHALEARN-INT26\_integration_rc_20261109`  
+**Branch/base:** `integration/release-candidate-20261109` from INT-18B `4d364d4746ff97356cf26bfefda09903b243831d`
+
+## Current result
+
+The initial inventory is complete. The recovery backend and frontend answer direct localhost health requests with HTTP 200, and the isolated PostgreSQL listener is present. The recovery `.env` currently names database `bhashalearn_phaseb_9991cde0ee`, which does not match the only authorized Phase B target `bhashalearn_phaseb_e2e_96ce964941`; a read-only connection to the authorized target failed authentication. A follow-up scan of BHASHALEARN root/backend local config files found no DSN matching the authorized target. No registration, chat, migration, or provider request was made against the mismatched configuration. The owner must enter matching app-role credentials locally before PostgreSQL acceptance can continue.
+
+The prior Phase B run recorded a successful synthetic registration → login → dashboard → classroom → local tutor stub browser journey and Alembic `0010_mission_completions`. That is historical evidence for the Phase B configuration, not a claim that the currently loaded `.env` or a real AI provider is working.
+
+The previously approved one-call Gemini test has **not** occurred. A non-placeholder key value is present in the ignored recovery configuration, but its shape is unconfirmed and it was not validated. The database target mismatch blocks the required authenticated classroom request, so no live Gemini call was made. The recovery config has no Gemini embedding key value or Gnani key value. A non-placeholder Gnani key is present in ignored POC-01/POC-02 config files in the original project worktree, but no live Gnani calls are approved or were made in this audit.
+
+On the isolated candidate, after INT-21/22/23/24/26 integrations, backend pytest passed **206** with **3** PostgreSQL-gated skips, frontend unit tests passed **70**, and production build succeeded with a large-chunk warning. The selected mocked Playwright suite produced **46 passed, 0 failed, 8 database-gated skips**; the two direct HTTP tests that require a live test API were excluded. Focused mocked browser flows passed for Career Roadmap, Knowledge Studio, and Research. This evidence does not validate real database persistence or live provider responses.
+
+The resumed audit reran the INT-13–16 baseline regression slice in the RC: **51 backend tests passed** on isolated SQLite fixtures, **20 frontend unit tests passed**, and **13 focused Playwright browser tests passed** with mocked API responses. After adapting INT-20, the full backend suite passed **209 tests with 3 PostgreSQL-gated skips**, all **70 frontend unit tests** passed, TypeScript validation passed, a production bundle was emitted to a new RC-local directory, and the mocked voice interruption/resume Playwright flow passed. No PostgreSQL database or live provider was used. These results do not establish database-backed or provider-backed acceptance.
+
+The corrected merge-base comparison shows INT-17's feature-side delta is 19 assistant-focused files. A direct tree comparison against the later INT-18B baseline shows about 65 differences because INT-17 lacks later baseline additions; those are not INT-17 deletions. The 19-file delta was selectively ported, with its migrations chained after the RC head. INT-19/ADV-05 provide a procedural teacher prototype with local GLB upload, but no licensed rigged human asset was found; INT-28 remains blocked on that asset.
+
+INT-17's 19-file merge-base feature delta has been selectively ported into the RC; later INT-18B baseline files were preserved, and its migrations `0014_int17_assistant`/`0015_int17_provider_integrations` were chained after the RC head. A trailing syntax error in the INT-17 provider module was corrected in the RC copy. The assistant test slice passed 21/21; initial backend regression passed 226/226, then the readiness-adjusted standalone RC regression passed 228/228; frontend units passed 70/70; TypeScript/build passed; assistant mocked browser flow passed 1/1. The copied `cryptography 46.0.7` wheel matched the official PyPI SHA-256 and is now installed only in the RC private venv; standalone app import succeeded. No assistant migration or live provider request occurred.
+
+The current RC passed three real-browser/real-HTTP student journey runs on separate SQLite databases: synthetic registration, explicit login, protected dashboard, classroom creation, bilingual response explicitly labeled as a deterministic test stub, reload persistence, and invalid-login handling. API assertions verified registration 201, login/chat/`/auth/me` 200, and invalid login 401. Read-only database counts and integrity passed. In the strict rerun, browser console/network evidence was classified: the only blocked assets were remote Google Fonts CSS/font requests under this restricted network, and the only 401 console entry was the deliberate invalid-password check; no other console errors, page exceptions, API 5xx, or Gemini/Gnani requests occurred. The final rerun passed after making the font check portable to both restricted and connected test runners. This remains candidate wiring evidence only; test servers created schema from metadata, did not run Alembic, and made no PostgreSQL or live provider request. Test-only databases and reports remain preserved in `.test-tmp/` and `frontend/test-results-rc-live-http-console-final-20261109/`.
+
+After the INT-02 map identified health/readiness ambiguity, the RC added `/ready` and `/api/v1/ready`: both run a sanitized `SELECT 1`, while existing `/health` routes remain liveness-only. Success and sanitized database-failure tests passed on ephemeral in-memory SQLite; a separate isolated Uvicorn smoke returned HTTP 200 for both readiness routes on port 8022, then stopped the process. The latest broad isolated backend suite passed **228/228**, with PostgreSQL/migration files excluded and both database URLs blank; this is not a PostgreSQL readiness result.
+
+After the verified dependency installation, a fresh standalone RC HTTP/Playwright run passed the full synthetic student journey on a new SQLite file: register, login, dashboard, classroom, labeled bilingual local stub, reload persistence, and invalid login. API results matched 201/200/200/401 expectations; independent read-only counts and integrity check passed. No provider request was observed. This still does not verify PostgreSQL migrations or live AI.
+
+## Repository safety inventory
+
+- Registered worktrees include the original project, classroom, ADV-01–07, INT-05-REMOTE, INT-09–26, INT-18B, and the Phase B recovery worktree. No INT-27 worktree is registered.
+- INT-18B is clean in tracked files at the verified baseline; it contains pre-existing untracked Playwright result artifacts.
+- INT-26 has six modified tracked frontend files plus pre-existing untracked UI, test, and Phase B artifacts. They remain untouched.
+- Other pre-existing dirty/untracked artifacts are recorded in `docs/INTEGRATION-DECISIONS.md`; none were cleaned or overwritten.
+- The system PostgreSQL listener on port 5432 and Docker state were not touched. A later port audit found 8016, 5188, 55432, 8022, and 5193 not listening; the temporary RC services were stopped, and no previous recovery services were started or modified during that run.
+- A Python 3.12.10 runtime and backend dependencies were installed only in this integration worktree's private `.python` and `.venv` directories to replace the missing base interpreter referenced by the old Phase B venv.
+
+## Milestone status
+
+See `INT-01-TO-INT-30-MATRIX.md` and `FEATURE-ACCEPTANCE-MATRIX.md`. INT-02 now has a static route/API/model/migration/provider map in `ARCHITECTURE-MAP.md`; runtime acceptance is tracked separately. INT-17/20/21/22/23/24/26 are candidate integrations with targeted or mocked browser evidence; none is complete feature acceptance. No milestone is declared complete based on file presence or unit tests alone. Real Gemini and Gnani verification remains blocked/pending valid isolated configuration and provider-specific approval. INT-25 still needs its shared approval/security gaps closed; INT-28 requires a rights-cleared rigged human model.
+
+## Next safe action
+
+Restore a configuration that targets exactly the authorized disposable database (host `127.0.0.1`, port `55432`, database `bhashalearn_phaseb_e2e_96ce964941`) and matching app-role credentials, without changing any database. Then verify identity/revision read-only before making test records. `BHASHALEARN_GEMINI_API_KEY` is present, but validity is unconfirmed. Only after the database/auth preconditions are repaired can the still-limited one previously approved provider request be considered.
