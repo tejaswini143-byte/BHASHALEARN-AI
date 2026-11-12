@@ -11,9 +11,43 @@ type Action = {
   text?: string | null;
   target_id?: string | null;
   site_id?: string | null;
+  app_id?: string | null;
+  url?: string | null;
+  shortcut?: string | null;
+  target_name?: string | null;
   steps?: Action[] | null;
   clarification?: string | null;
 };
+
+type DesktopSnapshot = {
+  snapshot_id: string;
+  active_window_id: string | null;
+  focused_target_id: string | null;
+  active_app: string | null;
+  targets: Array<{ id: string; role: string; name: string; kind: "window" | "button" | "link" | "text" | "search" | "other" }>;
+};
+
+function targetsForCommand(snapshot: DesktopSnapshot, transcript: string) {
+  const text = transcript.toLocaleLowerCase();
+  const namesField = /\b(search|message|address|url|text|input)\s*(bar|field|box)|\b(field|box|bar)\b/.test(text);
+  if (/\b(open|search|type|write|enter|shortcut|copy|select all)\b/.test(text)
+      && !/\b(click|move|focus|switch|close|minimize|maximize|scroll)\b/.test(text)
+      && !namesField) return [];
+  if (/\b(close|switch|minimize|maximize)\b/.test(text) && /\b(window|notepad|chrome|edge|browser)\b/.test(text)) {
+    return snapshot.targets.filter(target => target.kind === "window");
+  }
+  if (/\b(scroll)\b/.test(text)) {
+    return snapshot.targets.filter(target => target.kind === "window" && target.id === snapshot.active_window_id);
+  }
+  if (/\b(first|second|1st|2nd)\s+(link|result)\b/.test(text)) {
+    return snapshot.targets.filter(target => target.kind === "link")
+      .map((target, index) => ({ ...target, name: `Link ${index + 1}` }));
+  }
+  const ignored = new Set(["click", "move", "cursor", "mouse", "focus", "find", "the", "a", "an", "to", "on", "in", "into", "this", "that", "button", "link", "box", "field", "bar", "first", "second"]);
+  const words = text.match(/[\p{L}\p{N}]+/gu)?.filter(word => word.length > 2 && !ignored.has(word)) || [];
+  return snapshot.targets.filter(target => target.kind !== "window"
+    && words.some(word => target.name.toLocaleLowerCase().includes(word)));
+}
 
 function bindNamedClickTargets(action: Action, transcript: string, targets: Array<{ id: string; name: string; kind: string }>): Action {
   if (action.action === "sequence") {
@@ -28,6 +62,16 @@ function bindNamedClickTargets(action: Action, transcript: string, targets: Arra
     && normalized.includes(target.name.normalize("NFC").toLocaleLowerCase()));
   const names = [...new Set(requested.map(target => target.name.normalize("NFC").toLocaleLowerCase()))];
   if (names.length > 1) return { action: "clarify", clarification: "Which visible button or link do you mean?" };
+  if (!requested.length && action.action === "click_target") {
+    const ordinal = normalized.match(/\b(first|second|1st|2nd)\s+(link|result|button)\b/);
+    if (ordinal) {
+      const kind = ordinal[2] === "link" || ordinal[2] === "result" ? "link" : "button";
+      const matchesByOrder = targets.filter(target => target.kind === kind);
+      const index = ordinal[1] === "first" || ordinal[1] === "1st" ? 0 : 1;
+      if (matchesByOrder[index]?.id === action.target_id) return action;
+    }
+    return { action: "clarify", clarification: "Please name a visible button or link. I blocked the unbound click." };
+  }
   if (!requested.length) return { action: "clarify", clarification: "Please name a visible button or link. I blocked the unbound click." };
   const matches = requested.filter(target => target.name.normalize("NFC").toLocaleLowerCase() === names[0]);
   if (matches.length > 1) return { action: "clarify", clarification: `I found ${matches.length} targets named ${matches[0].name}. Which one do you mean?` };
@@ -52,16 +96,18 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
   const [history, setHistory] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [voiceCommands, setVoiceCommands] = useState(false);
+  const [closeConfirmed, setCloseConfirmed] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const lastTranscriptRef = useRef("");
   const executionGateRef = useRef(createDesktopExecutionGate());
   const activeRef = useRef(false);
+  const desktopSnapshotRef = useRef<DesktopSnapshot | null>(null);
   const languageCode = language === "english" ? "en" : language === "telugu" ? "te" : "mixed";
 
   useEffect(() => () => executionGateRef.current.disable(), []);
 
   async function companion(path: string, body?: object, authToken = pairing) {
-    const response = await fetch(base + path, { method: path === "/health" ? "GET" : "POST", headers: { Authorization: `Bearer ${authToken}`, ...(body ? { "Content-Type": "application/json" } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
+    const response = await fetch(base + path, { method: path === "/health" || path === "/desktop/snapshot" ? "GET" : "POST", headers: { Authorization: `Bearer ${authToken}`, ...(body ? { "Content-Type": "application/json" } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
     const value = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(value.error || `Companion returned ${response.status}`);
     return value;
@@ -107,8 +153,8 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
       const enabled = Boolean(state.active);
       activeRef.current = enabled;
       if (enabled) executionGateRef.current.enable(); else executionGateRef.current.disable();
-      setActive(enabled); setStatus(enabled ? "Desktop control enabled for this QA window" : "Desktop control disabled");
-      if (state.active) void speak("Desktop control is enabled for the disposable QA page.");
+      setActive(enabled); setStatus(enabled ? "Windows desktop control enabled" : "Desktop control disabled");
+      if (state.active) void speak("Windows desktop control is enabled. Review every proposed action before execution.");
     } catch (error) { setStatus(error instanceof Error ? error.message : "Control request failed"); }
     finally { setBusy(false); }
   }
@@ -116,15 +162,22 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
   async function interpret() {
     const normalized = transcript.normalize("NFC").trim();
     if (STOP_WORDS.test(normalized)) { await stop(); return; }
-    const context = getDesktopQaContext();
-    if (!context) { setStatus("Browser actions are restricted to the approved local desktop-control QA page."); return; }
+    const qaContext = getDesktopQaContext();
     const token = getToken(); if (!token) { setStatus("Sign in again to interpret a command."); return; }
     setBusy(true); setAction(null);
     const requestEpoch = executionGateRef.current.snapshot();
     try {
+      let targets = qaContext?.targets || [];
+      let approved_sites = qaContext?.approved_sites || {};
+      if (!qaContext) {
+        const snapshot = await companion("/desktop/snapshot") as DesktopSnapshot;
+        desktopSnapshotRef.current = snapshot;
+        targets = targetsForCommand(snapshot, normalized);
+        approved_sites = {};
+      }
       const response = await fetch("/api/v1/assistant/desktop/interpret", {
         method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ transcript: normalized, targets: context.targets, approved_sites: context.approved_sites }),
+        body: JSON.stringify({ transcript: normalized, targets, approved_sites }),
       });
       const value = await response.json();
       if (!response.ok) throw new Error(value.detail || "Gemini could not interpret this command");
@@ -132,7 +185,8 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
         setStatus("Emergency Stop cancelled the pending command.");
         return;
       }
-      const proposed = bindNamedClickTargets(value.action as Action, normalized, context.targets);
+      const proposed = bindNamedClickTargets(value.action as Action, normalized, targets);
+      setCloseConfirmed(false);
       setAction(proposed);
       if (proposed.action === "clarify") {
         setStatus(proposed.clarification || "Please clarify which target you mean.");
@@ -147,12 +201,29 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
 
   function describe(step: Action): string {
     if (step.action === "sequence") return (step.steps || []).map(describe).join(", then ");
-    if (step.action === "click_target" || step.action === "focus_target" || step.action === "type_into" || step.action === "search") {
-      const target = getDesktopQaContext()?.targets.find(item => item.id === step.target_id);
+    if (["click_target", "focus_target", "type_into", "search", "move_to_target", "switch_window", "minimize_window", "maximize_window", "close_window"].includes(step.action)) {
+      const target = (desktopSnapshotRef.current?.targets || getDesktopQaContext()?.targets || []).find(item => item.id === step.target_id);
       return `${step.action.replaceAll("_", " ")} ${target?.name || "the selected target"}`;
     }
     if (step.action === "open_approved_site") return `open ${step.site_id === "qa_sandbox" ? "the QA sandbox" : "the desktop-control QA page"}`;
+    if (step.action === "open_app") return `open ${step.app_id || "the selected app"}`;
+    if (step.action === "open_website") return `open ${step.url || "the selected website"}`;
+    if (step.action === "search_web" || step.action === "search_youtube") return `search ${step.action === "search_youtube" ? "YouTube" : "Google"} for “${step.text || "…"}”`;
+    if (["click_visible", "focus_visible", "type_into_visible"].includes(step.action)) return `${step.action.replaceAll("_", " ")} ${step.target_name || "the named visible control"}`;
+    if (step.action === "keyboard_shortcut") return `press ${step.shortcut || "the selected shortcut"}`;
     return step.action.replaceAll("_", " ");
+  }
+
+  function hasCloseAction(step: Action): boolean {
+    return step.action === "close_window" || (step.action === "sequence" && (step.steps || []).some(hasCloseAction));
+  }
+
+  function addWindowContext(step: Action, snapshot: DesktopSnapshot): Action {
+    if (step.action === "sequence") return { ...step, steps: (step.steps || []).map(item => addWindowContext(item, snapshot)) };
+    if (["scroll_up", "scroll_down"].includes(step.action) && !step.target_id) {
+      return { ...step, target_id: snapshot.active_window_id };
+    }
+    return step;
   }
 
   function assertExecutionActive(executionEpoch: number) {
@@ -256,11 +327,33 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
   async function execute() {
     if (!active || !action || action.action === "clarify") return;
     const currentContext = getDesktopQaContext();
-    if (!currentContext) { setStatus("Stopped: the approved QA page is no longer active."); setAction(null); return; }
+    if (hasCloseAction(action) && !closeConfirmed) { setStatus("Confirm that closing this window may discard unsaved work."); return; }
     setBusy(true);
     const executionEpoch = executionGateRef.current.begin();
     try {
-      const summary = await executeStep(action, executionEpoch);
+      let summary: string;
+      if (currentContext) {
+        summary = await executeStep(action, executionEpoch);
+      } else {
+        const snapshot = desktopSnapshotRef.current;
+        if (!snapshot) throw new Error("Refresh Windows UI Automation targets before executing this action.");
+        const currentSnapshot = await companion("/desktop/snapshot") as DesktopSnapshot;
+        if (currentSnapshot.active_window_id !== snapshot.active_window_id
+          || currentSnapshot.focused_target_id !== snapshot.focused_target_id
+          || JSON.stringify(currentSnapshot.targets) !== JSON.stringify(snapshot.targets)) {
+          throw new Error("The active window or its UI Automation targets changed after planning. Reinterpret the command.");
+        }
+        assertExecutionActive(executionEpoch);
+        const response = await companion("/desktop/execute", {
+          snapshot_id: snapshot.snapshot_id,
+          active_window_id: snapshot.active_window_id,
+          focus_target_id: snapshot.focused_target_id,
+          confirmed_close: closeConfirmed,
+          action: addWindowContext(action, snapshot),
+        });
+        assertExecutionActive(executionEpoch);
+        summary = response.action === "sequence" ? `completed ${response.steps?.length || 0} approved desktop steps` : `completed ${response.action || action.action}`;
+      }
       setHistory(items => [summary, ...items].slice(0, 20)); setStatus(`Completed: ${summary}`); setAction(null); void speak(`Completed. ${summary}.`);
     } catch (error) {
       if (!activeRef.current || !executionGateRef.current.isCurrent(executionEpoch)) setStatus("Stopped: Emergency Stop cancelled the remaining workflow.");
@@ -298,7 +391,9 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
     <button type="button" disabled={!connected || !active || !transcript.trim() || busy} onClick={() => void interpret()}>{STOP_WORDS.test(transcript.normalize("NFC").trim()) ? "Voice Emergency Stop" : "Interpret with Gemini"}</button>
     {action && (clarification
       ? <div role="status" aria-label="Clarification needed"><p>{action.clarification}</p><button type="button" onClick={() => setAction(null)}>Clear clarification</button></div>
-      : <div role="group" aria-label="Confirm desktop action"><p>Proposed: <b>{describe(action)}</b>{action.action === "sequence" && <ol>{(action.steps || []).map((step, index) => <li key={index}>{describe(step)}</li>)}</ol>}</p><button type="button" disabled={!active || busy} onClick={() => void execute()}>Confirm and execute</button><button type="button" onClick={() => setAction(null)}>Cancel</button></div>)}
+      : <div role="group" aria-label="Confirm desktop action"><p>Proposed: <b>{describe(action)}</b>{action.action === "sequence" && <ol>{(action.steps || []).map((step, index) => <li key={index}>{describe(step)}</li>)}</ol>}</p>
+        {hasCloseAction(action) && <label><input type="checkbox" checked={closeConfirmed} disabled={!active || busy} onChange={event => setCloseConfirmed(event.target.checked)}/> I confirm closing this window may discard unsaved work.</label>}
+        <button type="button" disabled={!active || busy || (hasCloseAction(action) && !closeConfirmed)} onClick={() => void execute()}>Confirm and execute</button><button type="button" onClick={() => { setCloseConfirmed(false); setAction(null); }}>Cancel</button></div>)}
     <button type="button" onClick={() => setHistory([])}>Clear action history</button><ol aria-label="Recent desktop actions">{history.map((item,index)=><li key={`${index}-${item}`}>{item}</li>)}</ol>
     <audio ref={audioRef} controls aria-label="Gnani Timbre action confirmation" />
   </section>;

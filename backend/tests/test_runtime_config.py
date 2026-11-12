@@ -236,3 +236,20 @@ def test_root_placeholder_does_not_override_legacy_valid_key(tmp_path, monkeypat
 
     load_provider_environment(tmp_path)
     assert os.getenv("GNANI_API_KEY") == "synthetic-legacy-provider-key"
+
+
+def test_voice_language_mode_selects_matching_prisma_language_and_format(monkeypatch):
+    from backend.app.services.gnani_voice import create_prisma_client_for_language
+
+    monkeypatch.setenv("GNANI_API_KEY", "synthetic-process-provider-key")
+    monkeypatch.setenv("GNANI_STT_URL", "https://stt.example.invalid/v3")
+    expected = {
+        "english": ("en-IN", "transcribe"),
+        "telugu": ("te-IN", "transcribe"),
+        "mixed": ("indic-auto", "codemix"),
+    }
+    for mode, (language, output_format) in expected.items():
+        client = create_prisma_client_for_language(mode)
+        assert client.config.language == language
+        assert client.config.output_format == output_format
+        assert client.config.url == "https://stt.example.invalid/v3"

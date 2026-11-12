@@ -96,7 +96,7 @@ def test_stt_success_language_modes_keep_raw_transcript(client, monkeypatch):
     headers = auth(client, "voice-stt@example.com")
     session_id = make_session(client, headers)
     stub = StubPrisma(Transcript("మిశ్రమ భిన్నం అంటే ఏమిటి?", "te", {"transcript": "raw"}))
-    monkeypatch.setattr("backend.app.api.voice.create_prisma_client", lambda: stub)
+    monkeypatch.setattr("backend.app.api.voice.create_prisma_client_for_language", lambda _language: stub)
     expected = "మిశ్రమ భిన్నం అంటే ఏమిటి?"
     for mode in ("telugu", "english", "mixed"):
         response = client.post(
@@ -118,7 +118,7 @@ def test_stt_empty_unsupported_missing_oversized_and_malformed_audio(client, mon
     session_id = make_session(client, headers)
     path = f"/api/v1/voice/sessions/{session_id}/transcribe"
     calls = []
-    monkeypatch.setattr("backend.app.api.voice.create_prisma_client", lambda: calls.append(True) or StubPrisma())
+    monkeypatch.setattr("backend.app.api.voice.create_prisma_client_for_language", lambda _language: calls.append(True) or StubPrisma())
     assert client.post(path, headers=headers, data={"language": "mixed"}).status_code == 422
     assert client.post(path, headers=headers, files={"audio": ("empty.wav", b"", "audio/wav")}, data={"language": "mixed"}).status_code == 422
     assert client.post(path, headers=headers, files={"audio": ("speech.webm", b"not wav", "audio/webm")}, data={"language": "mixed"}).status_code == 415
@@ -134,20 +134,20 @@ def test_stt_auth_ownership_configuration_provider_and_timeout(client, monkeypat
     session_id = make_session(client, owner)
     path = f"/api/v1/voice/sessions/{session_id}/transcribe"
     calls = []
-    monkeypatch.setattr("backend.app.api.voice.create_prisma_client", lambda: calls.append(True) or StubPrisma())
+    monkeypatch.setattr("backend.app.api.voice.create_prisma_client_for_language", lambda _language: calls.append(True) or StubPrisma())
     request = {"files": {"audio": ("speech.wav", pcm_wav(), "audio/wav")}, "data": {"language": "mixed"}}
     assert client.post(path, **request).status_code == 401
     assert client.post(path, headers=other, **request).status_code == 404
     assert calls == []
 
     from backend.app.services.gnani_voice import VoiceProviderNotConfigured
-    monkeypatch.setattr("backend.app.api.voice.create_prisma_client", lambda: (_ for _ in ()).throw(VoiceProviderNotConfigured("not configured")))
+    monkeypatch.setattr("backend.app.api.voice.create_prisma_client_for_language", lambda _language: (_ for _ in ()).throw(VoiceProviderNotConfigured("not configured")))
     assert client.post(path, headers=owner, **request).status_code == 503
-    monkeypatch.setattr("backend.app.api.voice.create_prisma_client", lambda: StubPrisma(error=STTError("GNANI request timed out.")))
+    monkeypatch.setattr("backend.app.api.voice.create_prisma_client_for_language", lambda _language: StubPrisma(error=STTError("GNANI request timed out.")))
     assert client.post(path, headers=owner, **request).status_code == 504
-    monkeypatch.setattr("backend.app.api.voice.create_prisma_client", lambda: StubPrisma(error=STTStageError("invalid_response", "bad response")))
+    monkeypatch.setattr("backend.app.api.voice.create_prisma_client_for_language", lambda _language: StubPrisma(error=STTStageError("invalid_response", "bad response")))
     assert client.post(path, headers=owner, **request).status_code == 502
-    monkeypatch.setattr("backend.app.api.voice.create_prisma_client", lambda: StubPrisma(Transcript("hello", 17, {})))
+    monkeypatch.setattr("backend.app.api.voice.create_prisma_client_for_language", lambda _language: StubPrisma(Transcript("hello", 17, {})))
     assert client.post(path, headers=owner, **request).status_code == 502
 
 
@@ -205,7 +205,7 @@ def test_transcript_then_existing_chat_persists_exactly_one_turn(client, monkeyp
     headers = auth(client, "voice-chat@example.com")
     session_id = make_session(client, headers)
     provider = StubPrisma(Transcript("What is one half?", "en", {}))
-    monkeypatch.setattr("backend.app.api.voice.create_prisma_client", lambda: provider)
+    monkeypatch.setattr("backend.app.api.voice.create_prisma_client_for_language", lambda _language: provider)
     transcript = client.post(
         f"/api/v1/voice/sessions/{session_id}/transcribe", headers=headers,
         files={"audio": ("speech.wav", pcm_wav(), "audio/wav")}, data={"language": "english"},
@@ -306,7 +306,7 @@ def test_provider_requests_are_rate_limited_per_student(client, monkeypatch):
     session_id = make_session(client, headers)
     calls = []
     stub = StubPrisma()
-    monkeypatch.setattr("backend.app.api.voice.create_prisma_client", lambda: calls.append(True) or stub)
+    monkeypatch.setattr("backend.app.api.voice.create_prisma_client_for_language", lambda _language: calls.append(True) or stub)
     monkeypatch.setattr("backend.app.api.voice._VOICE_RATE_LIMITS", {"transcribe": (1, 60.0), "speech": (20, 60.0)})
     url = f"/api/v1/voice/sessions/{session_id}/transcribe"
     request = {"headers": headers, "files": {"audio": ("speech.wav", pcm_wav(), "audio/wav")}, "data": {"language": "mixed"}}

@@ -2,7 +2,7 @@ export type DesktopTarget = {
   id: string;
   role: string;
   name: string;
-  kind: "button" | "link" | "text" | "search" | "other";
+  kind: "window" | "button" | "link" | "text" | "search" | "other";
 };
 
 export type ApprovedSite = { id: string; name: string; url: string };

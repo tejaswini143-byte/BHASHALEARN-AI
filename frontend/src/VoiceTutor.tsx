@@ -442,7 +442,7 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
     immersiveVoiceBridge.setState("listening");
     micRequestActive.current = true; voiceTurnActive.current = true; setMicStarting(true);
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
       if (!mounted.current) { stream.getTracks().forEach(track => track.stop()); return; }
       streamRef.current = stream;
       const context = new AudioContext();
@@ -464,7 +464,8 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
         const rms = Math.sqrt(energy / Math.max(1, samples.length));
         const now = performance.now();
         // Stop shortly after the utterance instead of sending up to 30 seconds of room noise.
-        if (rms >= 0.009) {
+        // Low-gain Windows microphones can deliver speech below -40 dBFS even with AGC.
+        if (rms >= 0.0045) {
           speechStartedAtRef.current ??= now;
           lastSpeechAtRef.current = now;
         } else if (speechStartedAtRef.current !== null && now - lastSpeechAtRef.current >= 1400) {

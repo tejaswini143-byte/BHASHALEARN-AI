@@ -1,7 +1,7 @@
 """Loopback HTTP tests for the Windows companion; all mouse APIs are mocked."""
 import json
 from datetime import datetime, timezone
-from threading import Thread
+from threading import Event, Thread
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 from http.server import ThreadingHTTPServer
@@ -18,6 +18,7 @@ def companion_server(monkeypatch):
     monkeypatch.setattr(companion, "stopped", False)
     monkeypatch.setattr(companion, "last_action", "")
     monkeypatch.setattr(companion, "last_at", 0.0)
+    monkeypatch.setattr(companion, "desktop_stop", Event())
     monkeypatch.setattr(companion, "active_qa_bounds", lambda: (120, 80, 640, 480))
     server = ThreadingHTTPServer(("127.0.0.1", 0), companion.Handler)
     thread = Thread(target=server.serve_forever, daemon=True)
@@ -38,7 +39,7 @@ def request(base, path, payload=None, token="qa-test-token", origin=None):
     if payload is not None:
         headers["Content-Type"] = "application/json"
         body = json.dumps(payload).encode()
-    req = Request(base + path, data=body, headers=headers, method="GET" if path in {"/health", "/pair"} else "POST")
+    req = Request(base + path, data=body, headers=headers, method="GET" if path in {"/health", "/pair", "/desktop/snapshot"} else "POST")
     try:
         with urlopen(req, timeout=3) as response:
             return response.status, json.loads(response.read())
@@ -174,6 +175,50 @@ def test_actions_require_explicit_activation(companion_server):
     status, result = request(companion_server, "/action", {"action": "center"})
     assert status == 423
     assert "disabled" in result["error"]
+
+
+def test_uia_snapshot_is_available_only_to_authenticated_local_app(companion_server, monkeypatch):
+    monkeypatch.setattr(companion.windows_automation, "get_snapshot", lambda: {
+        "snapshot_id": "snapshot", "active_window_id": "w-10", "focused_target_id": None,
+        "active_app": "Notepad", "targets": [],
+    })
+    status, result = request(companion_server, "/desktop/snapshot", token="wrong",
+                             origin="http://127.0.0.1:5173")
+    assert status == 401
+    status, result = request(companion_server, "/desktop/snapshot", origin="https://untrusted.example")
+    assert status == 403
+    status, result = request(companion_server, "/desktop/snapshot", origin="http://127.0.0.1:5173")
+    assert status == 200 and result["active_app"] == "Notepad"
+
+
+def test_desktop_execution_requires_enabled_control_and_local_origin(companion_server, monkeypatch):
+    calls = []
+    monkeypatch.setattr(companion.windows_automation, "execute_action", lambda action, **kwargs: calls.append(action) or {"ok": True, "action": action["action"]})
+    payload = {"snapshot_id": "snap", "action": {"action": "open_app", "app_id": "notepad"}}
+    status, _ = request(companion_server, "/desktop/execute", payload, origin="http://127.0.0.1:5173")
+    assert status == 423 and not calls
+
+    companion.active = True
+    companion.stopped = False
+    companion.desktop_stop.clear()
+    status, result = request(companion_server, "/desktop/execute", payload, origin="https://untrusted.example")
+    assert status == 403 and not calls
+    status, result = request(companion_server, "/desktop/execute", payload, origin="http://127.0.0.1:5173")
+    assert status == 200 and result["action"] == "open_app"
+    assert calls == [payload["action"]]
+
+
+def test_emergency_stop_cancels_following_desktop_requests(companion_server, monkeypatch):
+    companion.active = True
+    companion.stopped = False
+    companion.desktop_stop.clear()
+    status, result = request(companion_server, "/stop")
+    assert status == 200 and result["active"] is False
+    assert companion.desktop_stop.is_set()
+    status, result = request(companion_server, "/desktop/execute",
+                             {"snapshot_id": "snap", "action": {"action": "open_app", "app_id": "notepad"}},
+                             origin="http://127.0.0.1:5173")
+    assert status == 423 and "disabled" in result["error"]
 
 
 def test_active_action_stays_inside_qa_window(companion_server, monkeypatch):

@@ -23,6 +23,7 @@ from backend.app.db.session import get_db
 from backend.app.services.gnani_voice import (
     VoiceProviderNotConfigured,
     create_prisma_client,
+    create_prisma_client_for_language,
     create_timbre_adapter,
 )
 from pocs.poc01_prisma_stt.prisma_stt import STTError, validate_audio
@@ -235,7 +236,7 @@ async def transcribe_audio(
             path.write_bytes(data)
             validate_audio(path)
             try:
-                provider = create_prisma_client()
+                provider = create_prisma_client_for_language(language.value)
             except VoiceProviderNotConfigured as exc:
                 raise HTTPException(status_code=503, detail=str(exc)) from exc
             try:

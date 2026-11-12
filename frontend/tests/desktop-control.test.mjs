@@ -15,9 +15,12 @@ test("desktop commands use the approved QA page and semantic targets only", asyn
   assert.match(helper, /catch \{\s*\/\/ Cross-origin documents are never inspected or controlled/);
   assert.match(helper, /data-desktop-target/);
   assert.match(helper, /PLACEHOLDERS and values are intentionally excluded/i);
-  assert.match(panel, /targets: context\.targets, approved_sites: context\.approved_sites/);
+  assert.match(panel, /body: JSON\.stringify\(\{ transcript: normalized, targets, approved_sites \}\)/);
+  assert.match(panel, /companion\("\/desktop\/snapshot"\)/);
+  assert.match(panel, /snapshot\.active_window_id/);
   assert.match(panel, /Confirm and execute/);
-  assert.match(panel, /if \(!currentContext\).*approved QA page is no longer active/s);
+  assert.match(panel, /currentSnapshot\.active_window_id !== snapshot\.active_window_id/);
+  assert.match(panel, /currentSnapshot\.focused_target_id !== snapshot\.focused_target_id/);
   assert.match(panel, /Emergency Stop/);
   assert.match(panel, /bindNamedClickTargets/);
   assert.match(panel, /blocked the unbound click/);

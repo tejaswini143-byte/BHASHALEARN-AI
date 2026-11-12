@@ -47,6 +47,71 @@ def test_type_text_is_parsed_locally_and_never_sent_to_gemini(monkeypatch):
     assert telugu.text == "నమస్కారం"
 
 
+def test_opening_approved_apps_and_https_sites_is_structured(monkeypatch):
+    monkeypatch.setattr(desktop_commands, "generate_tutor_reply",
+                        lambda *_: '{"action":"open_app","app_id":"notepad"}')
+    plan = desktop_commands.interpret_desktop_command("Open Notepad")
+    assert plan.action == "open_app" and plan.app_id == "notepad"
+
+    monkeypatch.setattr(desktop_commands, "generate_tutor_reply",
+                        lambda *_: '{"action":"open_website","url":"https://chatgpt.com"}')
+    plan = desktop_commands.interpret_desktop_command("Open ChatGPT")
+    assert plan.action == "open_website" and plan.url == "https://chatgpt.com"
+
+
+def test_compound_notepad_dictation_stays_local_and_is_planned_as_sequence(monkeypatch):
+    captured = []
+    def fake(_instruction, history):
+        captured.append(history[0]["content"])
+        return ('{"action":"sequence","steps":[{"action":"open_app","app_id":"notepad"},'
+                '{"action":"type","text":"[LOCAL_DICTATION]"}]}')
+    monkeypatch.setattr(desktop_commands, "generate_tutor_reply", fake)
+    plan = desktop_commands.interpret_desktop_command("Open Notepad and type BHASHALEARN AI")
+    assert [step.action for step in plan.steps] == ["open_app", "type"]
+    assert plan.steps[1].text == "BHASHALEARN AI"
+    assert "BHASHALEARN AI" not in captured[0]
+
+
+def test_youtube_search_query_is_redacted_and_kept_local(monkeypatch):
+    captured = []
+    def fake(_instruction, history):
+        captured.append(history[0]["content"])
+        return '{"action":"search_youtube","text":"[LOCAL_DICTATION]"}'
+    monkeypatch.setattr(desktop_commands, "generate_tutor_reply", fake)
+    plan = desktop_commands.interpret_desktop_command("Open YouTube and search Python tutorials")
+    assert plan.action == "search_youtube"
+    assert plan.text == "Python tutorials"
+    assert "Python tutorials" not in captured[0]
+
+
+def test_first_link_must_match_actual_uia_order(monkeypatch):
+    targets = [
+        {"id": "first", "role": "hyperlink", "name": "Introduction", "kind": "link"},
+        {"id": "second", "role": "hyperlink", "name": "Tutorials", "kind": "link"},
+    ]
+    monkeypatch.setattr(desktop_commands, "generate_tutor_reply",
+                        lambda *_: '{"action":"click_target","target_id":"first"}')
+    plan = desktop_commands.interpret_desktop_command("Click the first link", targets)
+    assert plan.action == "click_target" and plan.target_id == "first"
+
+    monkeypatch.setattr(desktop_commands, "generate_tutor_reply",
+                        lambda *_: '{"action":"click_target","target_id":"second"}')
+    with pytest.raises(HTTPException) as error:
+        desktop_commands.interpret_desktop_command("Click the first link", targets)
+    assert error.value.status_code == 422
+
+
+def test_unsafe_urls_apps_and_shortcuts_are_rejected():
+    with pytest.raises(ValueError):
+        desktop_commands.DesktopAction(action="open_website", url="javascript:alert(1)")
+    with pytest.raises(ValueError):
+        desktop_commands.DesktopAction(action="open_website", url="https://user@example.com")
+    with pytest.raises(ValueError):
+        desktop_commands.DesktopAction(action="open_app", app_id="powershell")
+    with pytest.raises(ValueError):
+        desktop_commands.DesktopAction(action="keyboard_shortcut", shortcut="WIN+R")
+
+
 TARGETS = [
     {"id": "login", "role": "button", "name": "Login button", "kind": "button"},
     {"id": "chapter-one", "role": "button", "name": "Open chapter", "kind": "button"},

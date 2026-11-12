@@ -24,9 +24,13 @@ except ImportError:  # The incoming-call window still works without local audio 
 
 import pyautogui
 import pygetwindow
+try:
+    from . import windows_automation
+except ImportError:  # Direct script entry point: scripts/ is sys.path[0].
+    import windows_automation
 
 HOST, PORT = "127.0.0.1", int(os.getenv("BHASHALEARN_COMPANION_PORT", "18765"))
-ALLOWED_ORIGINS = {"http://127.0.0.1:5200", "http://localhost:5200", "http://127.0.0.1:5201", "http://localhost:5201", "http://127.0.0.1:5202", "http://localhost:5202", "http://127.0.0.1:5203", "http://localhost:5203", "http://127.0.0.1:15199", "http://localhost:15199", "http://127.0.0.1:5199", "http://localhost:5199", "http://127.0.0.1:5198", "http://localhost:5198", "http://127.0.0.1:5210", "http://localhost:5210", "http://127.0.0.1:5211", "http://localhost:5211"}
+ALLOWED_ORIGINS = {"http://127.0.0.1:5173", "http://localhost:5173", "http://127.0.0.1:5200", "http://localhost:5200", "http://127.0.0.1:5201", "http://localhost:5201", "http://127.0.0.1:5202", "http://localhost:5202", "http://127.0.0.1:5203", "http://localhost:5203", "http://127.0.0.1:15199", "http://localhost:15199", "http://127.0.0.1:5199", "http://localhost:5199", "http://127.0.0.1:5198", "http://localhost:5198", "http://127.0.0.1:5210", "http://localhost:5210", "http://127.0.0.1:5211", "http://localhost:5211"}
 ALLOWED_API_PORTS = {8027, 18029, 18030, 18031, 18034, 5198, 5199, 5200, 5201, 5202, 5203, 5210, 5211, 5173}
 TOKEN = os.getenv("BHASHALEARN_COMPANION_TOKEN") or secrets.token_urlsafe(32)
 SHOW_PAIRING_TOKEN = os.getenv("BHASHALEARN_SHOW_COMPANION_TOKEN", "").casefold() == "true"
@@ -38,6 +42,7 @@ last_at = 0.0
 background_lock = threading.Lock()
 background_config: dict[str, str] = {}
 background_stop = threading.Event()
+desktop_stop = threading.Event()
 call_ui_root = None
 call_windows: dict[str, dict] = {}
 call_windows_lock = threading.Lock()
@@ -548,8 +553,17 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(403, {"error": "pairing is available only to the local BHASHALEARN app"})
             self._send(200, {"token": TOKEN, "loopback_only": True})
             return
-        if self.path != "/health": return self._send(404, {"error": "not found"})
+        if self.path not in {"/health", "/desktop/snapshot"}: return self._send(404, {"error": "not found"})
         if not self._auth(): return self._send(401, {"error": "unauthorized"})
+        if self.path == "/desktop/snapshot":
+            if self.headers.get("Origin") not in ALLOWED_ORIGINS:
+                return self._send(403, {"error": "desktop snapshots are available only to the local BHASHALEARN app"})
+            try:
+                self._send(200, windows_automation.get_snapshot())
+            except Exception as exc:
+                self._send(503, {"error": "Windows UI Automation snapshot failed: " + str(exc)[:180]})
+            return
+        if self.path != "/health": return self._send(404, {"error": "not found"})
         with background_lock:
             background_enabled = bool(background_config.get("api_base") and background_config.get("access_token"))
         self._send(200, {"connected": True, "active": active, "stopped": stopped,
@@ -589,21 +603,45 @@ class Handler(BaseHTTPRequestHandler):
             if not any(t.name == "bhashalearn-local-reminders" and t.is_alive() for t in threading.enumerate()):
                 threading.Thread(target=_background_poll, name="bhashalearn-local-reminders", daemon=True).start()
             return self._send(200, {"enabled": True, "delivery": "loopback_companion"})
-        if self.path not in {"/activate", "/disable", "/stop", "/action"}:
+        if self.path not in {"/activate", "/disable", "/stop", "/action", "/desktop/execute"}:
             return self._send(404, {"error": "not found"})
         if self.path == "/stop":
-            with lock: active = False; stopped = True
+            with lock: active = False; stopped = True; desktop_stop.set()
             last_action = "Emergency stop; desktop control disabled"
             return self._send(200, {"ok": True, "active": False, "last_action": last_action})
         if self.path == "/disable":
-            active = False
+            with lock: active = False; desktop_stop.set()
             return self._send(200, {"ok": True, "active": False})
         if self.path == "/activate":
-            try: active_qa_bounds()
-            except RuntimeError as exc: return self._send(423, {"error": str(exc)})
-            active = True; stopped = False
+            with lock: active = True; stopped = False; desktop_stop.clear()
             return self._send(200, {"ok": True, "active": True})
         if not active or stopped: return self._send(423, {"error": "desktop control is disabled"})
+        if self.path == "/desktop/execute":
+            if self.headers.get("Origin") not in ALLOWED_ORIGINS:
+                return self._send(403, {"error": "desktop execution is available only to the local BHASHALEARN app"})
+            length = min(int(self.headers.get("Content-Length", "0")), 8192)
+            try: payload = json.loads(self.rfile.read(length))
+            except Exception: return self._send(400, {"error": "invalid JSON"})
+            if not isinstance(payload, dict) or not isinstance(payload.get("action"), dict):
+                return self._send(422, {"error": "a validated action plan is required"})
+            def ensure_control_active():
+                if desktop_stop.is_set() or not active or stopped:
+                    raise RuntimeError("Emergency Stop cancelled the remaining desktop actions.")
+            try:
+                result = windows_automation.execute_action(
+                    payload["action"], snapshot_id=payload.get("snapshot_id"),
+                    active_window_id=payload.get("active_window_id"),
+                    focus_target_id=payload.get("focus_target_id"),
+                    confirmed_close=payload.get("confirmed_close") is True,
+                    type_text=type_text, cancel_check=ensure_control_active)
+            except pyautogui.FailSafeException:
+                with lock: active = False; stopped = True; desktop_stop.set()
+                return self._send(423, {"error": "PyAutoGUI fail-safe stopped desktop control"})
+            except Exception as exc:
+                return self._send(422, {"error": str(exc)[:240]})
+            last_at = time.monotonic()
+            last_action = str(payload["action"].get("action", "sequence"))
+            return self._send(200, result)
         if time.monotonic() - last_at < 0.25: return self._send(429, {"error": "command rate limited"})
         length = min(int(self.headers.get("Content-Length", "0")), 2048)
         try: data = json.loads(self.rfile.read(length))

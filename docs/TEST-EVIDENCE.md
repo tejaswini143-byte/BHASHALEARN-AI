@@ -27,9 +27,55 @@
 | Relative reminder | **VERIFIED LOCAL** — previewed, required confirmation, saved to the test account, then canceled; no email or phone call was made |
 | Immersive navigation | **VERIFIED LOCAL** — lesson board displayed the current step; exiting the classroom twice produced no new console errors after removing nested HTML portals |
 | Human teacher | **BLOCKED** — no rights-cleared rigged full-body model or user-provided photo was available. A photo preview does not create a rigged avatar, natural movement, or accurate lip sync. |
-| Email, calendar, calling, job autofill, HoloOS/desktop control | **BLOCKED / NOT IMPLEMENTED** — OAuth is unavailable, calling requires production provider setup and consent, and there is no job-submission or Windows-control implementation. No external side effects were attempted. |
+| Email, calendar, calling, job autofill, HoloOS | **BLOCKED / NOT IMPLEMENTED** — OAuth is unavailable, calling requires production provider setup and consent, and job-submission/HoloOS integrations remain absent. No external side effects were attempted. |
+| Windows desktop control | **PARTIAL IMPLEMENTATION** — local UI Automation and companion actions are present; see the current run below. Voice-to-provider execution and closing a complete browser window are not verified. |
+
+## Windows desktop integration — 2026-11-12
+
+### Automated checks
+
+| Check | Result |
+|---|---|
+| Desktop command, companion HTTP, and UIA target tests | 55 passed, 0 failed; loopback server bound to an ephemeral test port |
+| Frontend tests | 88 passed, 0 failed |
+| TypeScript and Vite production build | Passed; Vite reports a vendor chunk above its 500 kB advisory threshold |
+| `git diff --check` | Passed before the final documentation update |
+
+### Real Windows actions
+
+| Action | Result and scope |
+|---|---|
+| UI Automation snapshot | Verified title-redacted top-level windows and generic control targets on Windows 11 x64; editable values were not read |
+| Cursor movement and click | **VERIFIED LIVE** — moved the system cursor to, then clicked, the local QA page's harmless “Visual preview” control |
+| QA page scrolling | **VERIFIED LIVE** — the companion issued a real scroll on the local disposable page |
+| Open ChatGPT | **VERIFIED LIVE** — default browser reported opening `chatgpt.com`; no page content or account data was inspected |
+| Open Notepad and type | **VERIFIED LIVE** — launched Notepad with a generated blank scratch file and typed a harmless 38-character test sentence into its generic document control; the restored private tab was not inspected |
+| Switch windows | **VERIFIED LIVE** — switched between the controlled Edge QA window and Notepad; active process labels matched each switch |
+| Close a controlled test tab | **VERIFIED LIVE** — closed a newly opened disposable QA tab with the allowlisted Ctrl+W action |
+| Close a complete window | **NOT RUN** — automatic approval review rejected closing the entire Edge window because a process label alone could not prove every tab was disposable. No window was closed. |
+| Microphone to desktop action | **PARTIAL / BLOCKED** — two 7-second captures were sent through the authenticated isolated backend to Gnani Prisma; both returned HTTP 200, but the first transcript did not match the requested command and the retry was empty (0 characters). No transcript reached Gemini and no voice-planned desktop action ran. |
+| Emergency Stop | **VERIFIED LIVE** — companion health returned `active=false` and `stopped=true`; further execution was disabled |
+
+The companion was started as a hidden local process on `127.0.0.1:18765` for
+these checks. Desktop control was disabled with Emergency Stop afterward. The
+scratch document and local QA services were test-only; no credentials, private
+files, or browser content were read or sent. Microphone audio was sent to
+Gnani Prisma as described above and was not retained locally.
 
 The synthetic `fraction-demo-facts.pdf` and its index remain in the isolated preview account because the browser deletion interaction timed out. They were preserved rather than deleted by direct database editing. No API key or user credential was included in this report.
+
+### Voice transcription follow-up — 2026-11-12
+
+| Check | Result | Evidence |
+|---|---|---|
+| Prisma language selection | FIXED | Voice Tutor's `english`, `telugu`, and `mixed` modes now configure `en-IN/transcribe`, `te-IN/transcribe`, and `indic-auto/codemix` respectively. The previous session route accepted the selected mode but created Prisma from environment defaults, silently leaving English commands on `indic-auto/codemix`. |
+| Microphone capture level | PARTIAL | Realtek input device 1 captured 16 kHz mono PCM, but bounded live samples remained quiet (latest RMS −45.9 dBFS, peak 1,029/32,767; 28.4% of 20 ms frames above −45 dBFS). Prisma returned HTTP success with an empty transcript even with `en-IN/transcribe`; no audio was retained. Voice Tutor now requests browser auto gain control and uses a lower speech-onset threshold. |
+| Gemini and Windows action | NOT VERIFIED | Since Prisma produced no transcript, the Gemini desktop planner and voice-triggered companion execution were not called. Existing explicit Enable Control, Emergency Stop, target validation, and confirmation remain required. Feature 1 voice end-to-end remains pending. |
+| Full backend suite (including Feature 2) | PASS | 326 passed, 3 skipped; the same full suite was run after updating language-aware transcription test doubles. |
+| Frontend tests and build | PASS | 88 tests passed; TypeScript and Vite production build passed with the existing large Three.js chunk advisory. |
+| Desktop browser UI test | STOPPED SAFELY | The Computer Use runtime stopped because it could not confidently verify the current browser URL. No browser page was submitted or changed. |
+
+The microphone failure is not treated as a successful feature check. The live samples were not saved; only the metrics and provider transcript length were recorded. Feature 2 source was not changed by the transcription adjustment, and its regression tests are included in the passing backend suite.
 
 ## Current audit run — 2026-11-09
 
