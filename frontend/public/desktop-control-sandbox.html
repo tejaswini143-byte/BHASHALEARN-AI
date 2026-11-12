@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BHASHALEARN Desktop Control QA — Sandbox</title>
+  <style>
+    body { margin: 0; padding: 24px; min-height: 1200px; font: 16px system-ui, sans-serif; color: #17243a; background: #eef3fa; }
+    main { max-width: 700px; padding: 24px; border-radius: 12px; background: white; border: 1px solid #9aabc3; }
+    button { font: inherit; padding: 10px 14px; margin: 8px 6px 8px 0; }
+    .spacer { height: 620px; margin-top: 24px; padding: 16px; background: #e5ecf7; }
+  </style>
+</head>
+<body>
+  <main aria-label="Approved disposable QA sandbox">
+    <h1>Approved disposable QA sandbox</h1>
+    <p>This local-only target page contains harmless controls for browser navigation checks.</p>
+    <button data-desktop-target="sandbox-demo-button" data-desktop-kind="button" onclick="this.textContent='SANDBOX BUTTON VERIFIED'">Sandbox demo button</button>
+    <button data-desktop-target="sandbox-lesson-button" data-desktop-kind="button" onclick="history.pushState({desktopQa:true},'','#lesson');document.querySelector('#sandbox-status').textContent='Local QA lesson state opened.'">Open sandbox lesson</button>
+    <p id="sandbox-status" aria-live="polite">Sandbox is ready.</p>
+    <p id="navigation-result" role="status" aria-live="polite">No navigation test has run in this tab.</p>
+    <a data-desktop-target="sandbox-return-link" data-desktop-kind="link" href="/desktop-control-test.html">Return to desktop-control QA</a>
+  </main>
+  <div class="spacer" aria-label="Sandbox scroll test area">Scroll test area</div>
+  <script>
+    if (sessionStorage.getItem('desktopQaNavigationClick') === 'fired') {
+      document.querySelector('#navigation-result').textContent = 'Click event fired; approved destination loaded: ' + location.href;
+      sessionStorage.removeItem('desktopQaNavigationClick');
+    }
+  </script>
+</body>
+</html>

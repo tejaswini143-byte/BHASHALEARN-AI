@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BHASHALEARN Desktop Control QA</title>
+  <style>
+    :root { font: 16px system-ui, sans-serif; color: #17243a; background: #eef3fa; }
+    body { margin: 0; min-height: 1500px; }
+    header { padding: 16px 24px; background: #17243a; color: white; }
+    h1 { margin: 0 0 6px; font-size: 1.4rem; }
+    header p { margin: 0; }
+    .layout { display: grid; grid-template-columns: minmax(330px, 0.75fr) minmax(600px, 1.5fr); gap: 18px; padding: 18px; align-items: start; }
+    section { padding: 18px; background: white; border: 1px solid #9aabc3; border-radius: 12px; }
+    button, input { font: inherit; padding: 10px; margin: 6px 4px 6px 0; }
+    #target { background: #c6f6d5; }
+    .log { min-height: 120px; max-height: 220px; overflow: auto; background: #101827; color: #e2e8f0; padding: 12px; }
+    iframe { width: 100%; height: 78vh; min-height: 680px; background: white; border: 1px solid #9aabc3; border-radius: 12px; }
+    #approved-site-frame { height: 300px; min-height: 300px; margin-top: 10px; }
+    .wide { margin: 0 18px; height: 500px; background: #e5ecf7; padding: 18px; }
+    #call-controls-panel { height: auto; min-height: 860px; }
+    #deadline-call-controls { height: 820px; min-height: 820px; display: none; }
+    @media (max-width: 980px) { .layout { grid-template-columns: 1fr; } iframe { height: 900px; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Disposable desktop-control test page</h1>
+    <p>Mouse actions are restricted to this foreground browser window. Use only the test controls below.</p>
+  </header>
+  <main class="layout">
+    <section aria-label="Approved desktop test controls">
+      <h2>Mouse and keyboard test targets</h2>
+      <button id="prepare-learner" type="button" onclick="prepareDisposableLearner()">Prepare disposable voice-test learner</button>
+      <p id="learner-status" role="status">This creates a synthetic learner and one practice session in the isolated preview database.</p>
+      <button id="target" data-desktop-target="qa-test-button" data-desktop-kind="button" onclick="this.textContent='CLICK VERIFIED';log('test button clicked')">Test button</button>
+      <button id="qa-login" data-desktop-target="qa-login-button" data-desktop-kind="button" onclick="this.textContent='LOGIN TEST PASSED';log('harmless login-button target activated')">Login button</button>
+      <small id="qa-login-note">QA-only click target; it does not open a sign-in page or authenticate anyone.</small>
+      <button id="qa-visual" data-desktop-target="qa-visual-button" data-desktop-kind="button" aria-pressed="false" onclick="this.setAttribute('aria-pressed',String(this.getAttribute('aria-pressed')!=='true'));this.textContent=this.getAttribute('aria-pressed')==='true'?'Visual preview selected':'Visual preview';log('visual preview toggled')">Visual preview</button>
+      <form id="qa-search-form" onsubmit="event.preventDefault();runQaSearch()">
+        <label>Search field <input id="search" data-desktop-target="qa-search-field" data-desktop-kind="search" type="search" aria-label="Search field" placeholder="Search"></label>
+        <button id="qa-search" data-desktop-target="qa-search-button" data-desktop-kind="button" type="submit">Search</button>
+      </form>
+      <output id="search-result" aria-live="polite"></output>
+      <label>Permitted text field <input id="permitted" data-desktop-target="qa-permitted-field" data-desktop-kind="text" aria-label="Permitted text field" placeholder="Type here"></label>
+      <button id="qa-focus" data-desktop-target="qa-focus-button" data-desktop-kind="button" onclick="document.querySelector('#permitted').focus();log('permitted field focused')">Focus text field</button>
+      <button id="qa-open" data-desktop-target="qa-open-button" data-desktop-kind="button" onclick="window.open('/desktop-control-sandbox.html','_blank','noopener,noreferrer')">Open QA sandbox</button>
+      <section aria-label="Ambiguous QA targets" style="padding:8px;border:1px dashed #9aabc3">
+        <h3>Duplicate target names</h3>
+        <button data-desktop-target="qa-chapter-one" data-desktop-kind="button" onclick="this.textContent='CHAPTER ONE';log('first duplicate chapter activated')">Open chapter</button>
+        <button data-desktop-target="qa-chapter-two" data-desktop-kind="button" onclick="this.textContent='CHAPTER TWO';log('second duplicate chapter activated')">Open chapter</button>
+      </section>
+      <section aria-label="Real local navigation test" style="padding:8px;border:1px solid #59749b;margin:10px 0">
+        <h3>Real local navigation test</h3>
+        <a id="qa-navigation-link" data-desktop-target="qa-navigation-link" data-desktop-kind="link" href="/desktop-control-sandbox.html" onclick="sessionStorage.setItem('desktopQaNavigationClick','fired')">Navigate to the approved QA destination</a>
+        <p>This link performs real same-origin browser navigation to the disposable sandbox page.</p>
+      </section>
+      <a id="qa-sandbox-link" data-desktop-target="qa-sandbox-link" data-desktop-kind="link" href="/desktop-control-sandbox.html">Open approved QA sandbox link</a>
+      <button onclick="log('confirmation control activated')">Confirm control</button>
+      <p>Use the Prisma microphone and Windows desktop-control panel in the classroom beside this disposable area.</p>
+      <h2>Approved local site target</h2>
+      <iframe id="approved-site-frame" src="/desktop-control-sandbox.html" title="Approved local QA sandbox"></iframe>
+      <h2>Action log</h2>
+      <div id="log" class="log" aria-live="polite"></div>
+      <output id="qa-scroll-position" role="status" aria-live="polite">Actual page scrollY: 0 px</output>
+    </section>
+    <iframe id="voice-tutor" src="/voice" title="BHASHALEARN voice tutor for desktop-control QA" allow="microphone"></iframe>
+  </main>
+  <section class="wide" aria-label="Long scroll test area">Long scrollable test area</section>
+  <section class="wide" id="call-controls-panel" aria-label="Disposable deadline-call acceptance controls">
+    <h2>Disposable deadline-call acceptance</h2>
+    <p>After preparing the learner, enable local calls and connect the Windows companion below. No microphone starts until you press Speak.</p>
+    <iframe id="deadline-call-controls" title="BHASHALEARN disposable deadline-call controls" allow="microphone"></iframe>
+  </section>
+  <script>
+    async function prepareDisposableLearner() {
+      const button = document.querySelector('#prepare-learner');
+      const status = document.querySelector('#learner-status');
+      button.disabled = true;
+      status.textContent = 'Creating an isolated synthetic learner…';
+      try {
+        const identity = crypto.randomUUID().replaceAll('-', '');
+        const email = `desktop-control-${identity}@example.com`;
+        const password = `QA-${crypto.randomUUID()}-student`;
+        const registered = await fetch('/api/v1/auth/register', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, display_name: 'Disposable Desktop QA', password }),
+        });
+        if (!registered.ok) throw new Error('Registration failed with HTTP ' + registered.status);
+        const login = await fetch('/api/v1/auth/login', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password }),
+        });
+        const credentials = await login.json();
+        if (!login.ok || typeof credentials.access_token !== 'string') throw new Error('Login failed with HTTP ' + login.status);
+        const token = credentials.access_token;
+        const lesson = await fetch('/api/v1/sessions', {
+          method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ topic: 'Desktop control QA practice', language: 'english' }),
+        });
+        if (!lesson.ok) throw new Error('Practice session failed with HTTP ' + lesson.status);
+        sessionStorage.setItem('bhashalearn_access_token', token);
+        document.querySelector('#voice-tutor').src = '/voice?desktopQa=' + Date.now();
+        const callControls = document.querySelector('#deadline-call-controls');
+        callControls.src = '/assistant?desktopQaCall=' + Date.now();
+        callControls.style.display = 'block';
+        status.textContent = 'Disposable learner and practice session are ready. No email was sent.';
+        button.textContent = 'Disposable learner ready';
+      } catch (error) {
+        status.textContent = error instanceof Error ? error.message : 'Could not prepare the disposable learner.';
+        button.disabled = false;
+      }
+    }
+    function log(value) {
+      const entry = document.createElement('div');
+      entry.textContent = new Date().toLocaleTimeString() + ' ' + value;
+      document.querySelector('#log').prepend(entry);
+    }
+    function runQaSearch() {
+      const query = document.querySelector('#search').value;
+      document.querySelector('#search-result').textContent = query ? 'QA search completed: ' + query : 'Enter a QA search term first.';
+      log('QA search completed');
+    }
+    document.addEventListener('click', event => log('click at ' + event.clientX + ',' + event.clientY));
+    const scrollPosition = document.querySelector('#qa-scroll-position');
+    const updateScrollPosition = () => { scrollPosition.textContent = `Actual page scrollY: ${Math.round(window.scrollY)} px`; };
+    window.addEventListener('scroll', updateScrollPosition, { passive: true });
+    updateScrollPosition();
+  </script>
+</body>
+</html>
