@@ -387,13 +387,13 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
     if (!demoMode) void saveVoiceState({ playback_state: "idle" });
   }
   function chooseSession(id: string) {
-    if (busy || transcribing || recording) return;
+    if (busy || transcribing || recording || micRequestActive.current || pendingCapture) return;
     stopPlayback();
     setError(""); setNotice(""); setAudioUrl(""); setSelected(id); setParams({ session: id }); setMobileMenu(false);
   }
 
   async function createSession(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); if (!topic.trim() || creating) return;
+    event.preventDefault(); if (!topic.trim() || creating || busy || recording || transcribing || micRequestActive.current || pendingCapture) return;
     setCreating(true); setError("");
     try {
       const session = await request<Session>("/sessions", { method: "POST", headers: headers(), body: JSON.stringify({ topic: topic.trim(), language }) });
@@ -402,7 +402,7 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
   }
 
   async function changeLanguage(value: Language) {
-    if (busy || recording || transcribing || pendingCapture) { if (pendingCapture) setNotice("Send or discard the reviewed recording before changing its language."); return; }
+    if (busy || recording || transcribing || micRequestActive.current || pendingCapture) { if (pendingCapture) setNotice("Send or discard the reviewed recording before changing its language."); return; }
     const previous = language; setLanguage(value); setError(""); setNotice("");
     if (demoMode) { setPreferences(current => mergeLearningPreferences(current, { preferred_language: value })); setNotice("Local demo language updated; mouth motion remains approximate."); return; }
     try {
@@ -429,7 +429,7 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
   }
 
   async function submitPendingCapture() {
-    if (!pendingCapture || recording || transcribing) return;
+    if (!pendingCapture || recording || transcribing || micRequestActive.current) return;
     const blob = pendingCapture;
     const recognized = await transcribeWav(blob);
     if (recognized) discardPendingCapture();
@@ -488,15 +488,11 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
   async function toggleRecording() {
     if (recordingActive.current) { await finishRecording(); return; }
     if (demoMode) { setError("Microphone capture is unavailable in local demo mode. Type a question to continue."); immersiveVoiceBridge.setState("error"); return; }
-    if (!selected || busy || transcribing || voiceTurnActive.current || micRequestActive.current) return;
+    if (!selected || creating || busy || transcribing || voiceTurnActive.current || micRequestActive.current) return;
     if (!navigator.mediaDevices?.getUserMedia || typeof AudioContext === "undefined") { setError("Microphone recording is unavailable in this browser. Type your question instead."); immersiveVoiceBridge.setState("error"); return; }
-    // Only a valid new recording attempt may invalidate the prior transcript or local preview.
-    setDraft(""); setPrismaDiagnostics(null);
-    setError(""); setNotice(""); discardPendingCapture(); interruptSpeechForQuestion();
-    // Require a second explicit browser decision before any microphone device is opened.
-    // A stray click on the large recording orb must not immediately capture audio.
+    // A stray click must never open the device or discard the previous review.
     if (!window.confirm("BHASHALEARN AI will start recording your microphone locally. Start recording?")) return;
-    immersiveVoiceBridge.setState("listening");
+    setError(""); setNotice("");
     micRequestActive.current = true; voiceTurnActive.current = true; setMicStarting(true);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true, ...(microphoneDeviceId ? { deviceId: { exact: microphoneDeviceId } } : {}) } });
@@ -506,6 +502,7 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
       const context = new AudioContext();
       contextRef.current = context;
       await context.resume();
+      if (!mounted.current) return;
       const source = context.createMediaStreamSource(stream);
       sourceRef.current = source;
       const processor = context.createScriptProcessor(4096, 1, 1);
@@ -523,6 +520,8 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
         // Never send microphone samples from this callback.
       };
       source.connect(processor); processor.connect(mute); mute.connect(context.destination);
+      setDraft(""); setPrismaDiagnostics(null); discardPendingCapture(); interruptSpeechForQuestion();
+      immersiveVoiceBridge.setState("listening");
       recordingActive.current = true; setRecording(true);
       if (!demoMode) void saveVoiceState({ playback_state: "listening" });
       const started = Date.now();
@@ -653,15 +652,15 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
       <Link className="vt-brand" to="/dashboard"><span>✦</span> BHASHA<strong>LEARN</strong> AI</Link>
       <Link to="/dashboard" className="vt-back">← Student dashboard</Link>
       <div className="vt-side-label">YOUR VOICE SESSIONS</div>
-      <nav className="vt-sessions" aria-label="Voice learning sessions">{sessions.map(session => <button key={session.id} className={session.id === selected ? "vt-session-active" : ""} disabled={busy || transcribing || recording} onClick={() => chooseSession(session.id)}><span>◉</span><span><strong>{session.topic}</strong><small>{session.language} · {new Date(session.created_at).toLocaleDateString()}</small></span></button>)}{!sessions.length && <p>Start your first session to begin.</p>}</nav>
+      <nav className="vt-sessions" aria-label="Voice learning sessions">{sessions.map(session => <button key={session.id} className={session.id === selected ? "vt-session-active" : ""} disabled={busy || transcribing || recording || micStarting || Boolean(pendingCapture)} onClick={() => chooseSession(session.id)}><span>◉</span><span><strong>{session.topic}</strong><small>{session.language} · {new Date(session.created_at).toLocaleDateString()}</small></span></button>)}{!sessions.length && <p>Start your first session to begin.</p>}</nav>
       <div className="vt-side-profile"><span>{student.display_name.slice(0, 1).toUpperCase()}</span><div><strong>{student.display_name}</strong><small>Voice learner</small></div></div>
     </aside>
     <MainElement className="vt-main" aria-label={immersive ? "Voice tutor controls" : undefined}>
-      <header className="vt-topbar"><div><button className="vt-mobile-menu" onClick={() => setMobileMenu(!mobileMenu)} aria-label="Toggle sessions">☰</button><span className="vt-eyebrow">✦ VOICE LEARNING STUDIO</span>{demoMode && <span className="vt-demo-badge">LOCAL DEMO - NO GNANI AUDIO</span>}<h2>{current?.topic || "Your voice classroom"}</h2></div><div className="vt-top-actions">{immersive && <label>Learning session <select aria-label="Voice learning session" value={selected} disabled={busy || transcribing || recording || Boolean(pendingCapture)} onChange={event => chooseSession(event.target.value)}>{sessions.map(item => <option key={item.id} value={item.id}>{item.topic}</option>)}</select></label>}<label>Tutor language <select value={language} disabled={recording || transcribing || busy || Boolean(pendingCapture)} onChange={event => void changeLanguage(event.target.value as Language)}><option value="mixed">Telugu + English</option><option value="english">English</option><option value="telugu">తెలుగు</option></select></label></div>{!immersive && <SessionModeNav sessionId={selected} active="voice"/>}{onClose && <button type="button" className="vt-embedded-close" onClick={onClose} aria-label="Close voice tutor">Close</button>}</header>
+      <header className="vt-topbar"><div><button className="vt-mobile-menu" onClick={() => setMobileMenu(!mobileMenu)} aria-label="Toggle sessions">☰</button><span className="vt-eyebrow">✦ VOICE LEARNING STUDIO</span>{demoMode && <span className="vt-demo-badge">LOCAL DEMO - NO GNANI AUDIO</span>}<h2>{current?.topic || "Your voice classroom"}</h2></div><div className="vt-top-actions">{immersive && <label>Learning session <select aria-label="Voice learning session" value={selected} disabled={busy || transcribing || recording || micStarting || Boolean(pendingCapture)} onChange={event => chooseSession(event.target.value)}>{sessions.map(item => <option key={item.id} value={item.id}>{item.topic}</option>)}</select></label>}<label>Tutor language <select value={language} disabled={recording || transcribing || busy || micStarting || Boolean(pendingCapture)} onChange={event => void changeLanguage(event.target.value as Language)}><option value="mixed">Telugu + English</option><option value="english">English</option><option value="telugu">తెలుగు</option></select></label></div>{!immersive && <SessionModeNav sessionId={selected} active="voice"/>}{onClose && <button type="button" className="vt-embedded-close" onClick={onClose} aria-label="Close voice tutor">Close</button>}</header>
       <div className="vt-layout"><section className="vt-stage"><div className="vt-stage-heading"><span className="vt-eyebrow">✦ SPEAK • LEARN • GROW</span><h1>Speak naturally.<br/><span className="gradient-text">Learn confidently.</span></h1><p>Gnani Prisma transcribes your voice; Gemini tutors in your selected language.</p></div>
-        <div className={recording ? "vt-orb-area vt-recording" : "vt-orb-area"}><div className="vt-orb-ring"/><div className="vt-orb-ring vt-ring-two"/><button className="vt-orb" disabled={!selected || busy || transcribing || micStarting} onClick={() => void toggleRecording()} aria-label={recording ? "Stop recording" : "Start microphone recording"} aria-pressed={recording}><svg viewBox="0 0 24 24" width="45" height="45" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><rect x="9" y="2" width="6" height="13" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5m-4 0h8"/></svg></button></div>
+        <div className={recording ? "vt-orb-area vt-recording" : "vt-orb-area"}><div className="vt-orb-ring"/><div className="vt-orb-ring vt-ring-two"/><button type="button" className="vt-orb" disabled={!selected || creating || busy || transcribing || micStarting} onClick={() => void toggleRecording()} aria-label={recording ? "Stop recording" : "Start microphone recording"} aria-pressed={recording}><svg viewBox="0 0 24 24" width="45" height="45" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><rect x="9" y="2" width="6" height="13" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5m-4 0h8"/></svg></button></div>
         <div className="vt-notice" aria-label="Microphone diagnostics"><label>Microphone input <select value={microphoneDeviceId} disabled={recording || micStarting || transcribing} onChange={event => setMicrophoneDeviceId(event.target.value)}><option value="">System default</option>{microphoneDevices.map(device => <option key={device.deviceId} value={device.deviceId}>{device.label || `Microphone ${device.deviceId.slice(0, 8)}`}</option>)}</select></label> <button type="button" onClick={() => void refreshMicrophoneDevices()} disabled={recording || micStarting}>Refresh devices</button></div>
-        {pendingCapture && capturePreviewUrl && <div className="vt-notice" aria-label="Local recording review"><p>Local recording only — nothing sent to Prisma yet. Play it to check the microphone source, then choose what to do.</p><audio controls src={capturePreviewUrl} preload="metadata" aria-label="Play back captured microphone audio locally"/><div><button type="button" disabled={transcribing} onClick={() => void submitPendingCapture()}>Send reviewed recording to Prisma</button> <button type="button" disabled={transcribing} onClick={discardPendingCapture}>Discard recording</button></div></div>}
+        {pendingCapture && capturePreviewUrl && <div className="vt-notice" aria-label="Local recording review"><p>Local recording only — nothing sent to Prisma yet. Play it to check the microphone source, then choose what to do.</p><audio controls src={capturePreviewUrl} preload="metadata" aria-label="Play back captured microphone audio locally"/><div><button type="button" disabled={transcribing || micStarting} onClick={() => void submitPendingCapture()}>Send reviewed recording to Prisma</button> <button type="button" disabled={transcribing || micStarting} onClick={discardPendingCapture}>Discard recording</button></div></div>}
         {draft.trim() && !recording && !transcribing && <p className="vt-notice" role="status">Next: check the Prisma transcript below. To control Windows, connect and explicitly enable the desktop companion, click “I reviewed this transcript,” then “Interpret with Gemini,” review its proposed action, and click “Confirm and execute.” “Send to tutor” is for learning chat, not desktop control.</p>}
         <div className={recording ? "vt-wave vt-wave-active" : "vt-wave"} aria-hidden="true">{Array.from({length: 35}, (_, index) => <i key={index} style={{ height: `${12 + Math.abs(Math.sin(index * 1.43)) * 38}px`, animationDelay: `${index * 37}ms` }}/>)}</div>
         <div className="vt-status" role="status">{micStarting ? "Requesting microphone permission…" : recording ? `Recording… ${recordingSeconds}s / 30s — tap the orb to stop` : transcribing ? "Transcribing with Gnani Prisma…" : speaking ? "Tutor audio is playing…" : speechLoading ? "Generating tutor audio with Gnani Timbre…" : busy ? "Gemini tutor is thinking…" : selected ? "Tap the orb to record a question" : "Choose a learning session first"}</div>
@@ -672,7 +671,7 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
         {localDemoAvailable && !demoMode && <button type="button" className="vt-demo-play" onClick={() => { const last = [...messages].reverse().find(item => item.role === "assistant"); if (last && selected) generateLocalDemo(last.content, selected, language); }}>Play local demo tone</button>}
         {audioUrl && <div className="vt-playback"><audio key={`${audioUrl}:${playbackElementKey}`} ref={audioRef} src={audioUrl} controls onPlay={() => startPlaybackSync(playbackElementKey)} onPause={() => pausePlaybackSync(playbackElementKey)} onEnded={() => completePlaybackSync(playbackElementKey)} onError={() => { if (!mounted.current) return; if (syncGenerationRef.current !== null) syncControllerRef.current?.fail(syncGenerationRef.current); else immersiveVoiceBridge.setState("error"); setSpeaking(false); if (!demoMode) void saveVoiceState({ playback_state: "error" }); }}>Your browser cannot play this WAV audio.</audio><button type="button" disabled={!speaking && !speechLoading} onClick={interruptSpeechForQuestion}>Interrupt tutor speech</button><button type="button" onClick={() => stopPlayback()}>Stop audio</button><small>{syncMode === "timestamped-visemes" ? "Timestamped viseme cues" : syncMode === "timestamped-phonemes-approximate" ? "Timestamped phonemes · approximate mouth shapes" : "Approximate audio-driven mouth animation · no phoneme alignment"} · {mouthViseme} mouth shape</small></div>}
         <div className="vt-stage-note">{demoMode ? "Local demo mode: generated tone only, no microphone recording, backend request, or Gnani speech." : "Microphone audio is converted to bounded mono PCM WAV and sent to the authenticated backend. Browser playback uses the WAV returned by Gnani Timbre."}</div>
-        <div className="vt-new-topic"><form onSubmit={createSession}><label htmlFor="vt-topic">New learning topic</label><div><input id="vt-topic" value={topic} maxLength={200} onChange={event => setTopic(event.target.value)} placeholder="e.g. Everyday English" required/><button disabled={!topic.trim() || creating || busy || recording}>{creating ? "Creating…" : "+ Create"}</button></div></form></div>
+        <div className="vt-new-topic"><form onSubmit={createSession}><label htmlFor="vt-topic">New learning topic</label><div><input id="vt-topic" value={topic} maxLength={200} onChange={event => setTopic(event.target.value)} placeholder="e.g. Everyday English" required/><button disabled={!topic.trim() || creating || busy || recording || transcribing || micStarting || Boolean(pendingCapture)}>{creating ? "Creating…" : "+ Create"}</button></div></form></div>
       </section>
       <section className="vt-chat"><div className="vt-chat-header"><div><span className="vt-eyebrow">CONVERSATION TRANSCRIPT</span><h3>AI Tutor <span>✦</span></h3></div><span className="vt-chat-badge">{replyLatencyMs !== null ? `LAST TUTOR ROUND-TRIP · ${(replyLatencyMs / 1000).toFixed(1)} S` : "LATENCY MEASURES END-TO-END, NOT PROVIDER-ONLY"} · {providerConfigured === null ? "CHECKING VOICE PROVIDER…" : providerConfigured ? "GNANI CREDENTIALS CONFIGURED · LIVE CALLS ON DEMAND" : "GNANI UNAVAILABLE · TEXT CLASSROOM AVAILABLE"}</span></div>
         <div className="vt-transcript">{historyLoading ? <p className="vt-empty">Loading saved conversation…</p> : messages.length ? messages.map(message => <article key={message.id} className={message.role === "user" ? "vt-message vt-user" : "vt-message vt-ai"}><div className="vt-msg-label"><span>{message.role === "user" ? "YOU" : "✦ AI TUTOR"}</span>{message.role === "assistant" && <button disabled={speechLoading} onClick={() => void generateSpeech(message.content, selected, message.language || language)} aria-label="Generate or replay tutor speech">{speechLoading ? "Preparing…" : "▶ Listen / replay"}</button>}</div><p>{message.content}</p></article>) : <div className="vt-empty"><div>✦</div><h3>Your conversation starts here</h3><p>Record your question, review the Prisma transcript, then send it to your AI tutor.</p></div>}{busy && <p className="vt-thinking">✦ Tutor is preparing your reply…</p>}<div ref={scrollBottom}/></div>

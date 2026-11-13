@@ -43,7 +43,7 @@ background_lock = threading.Lock()
 background_config: dict[str, str] = {}
 background_stop = threading.Event()
 desktop_stop = threading.Event()
-confirmation_lock = threading.Lock()
+desktop_generation = 0
 pending_execution_confirmations: dict[str, tuple[float, str]] = {}
 call_ui_root = None
 call_windows: dict[str, dict] = {}
@@ -77,9 +77,11 @@ def _require_native_execution_approval(action: dict) -> bool:
                                              0x00000004 | 0x00000030 | 0x00000100 | 0x00040000) == 6
 
 
-def _clear_execution_confirmations() -> None:
-    with confirmation_lock:
-        pending_execution_confirmations.clear()
+def _invalidate_desktop_approvals() -> None:
+    # Called with lock held so approval and control transitions are atomic.
+    global desktop_generation
+    desktop_generation += 1
+    pending_execution_confirmations.clear()
 
 QA_WINDOW_TITLE = "BHASHALEARN Desktop Control QA"
 WINDOW_PADDING = 24
@@ -638,19 +640,25 @@ class Handler(BaseHTTPRequestHandler):
         if self.path not in {"/activate", "/disable", "/stop", "/action", "/desktop/confirm", "/desktop/execute"}:
             return self._send(404, {"error": "not found"})
         if self.path == "/stop":
-            with lock: active = False; stopped = True; desktop_stop.set()
-            _clear_execution_confirmations()
+            with lock:
+                active = False; stopped = True; desktop_stop.set()
+                _invalidate_desktop_approvals()
             last_action = "Emergency stop; desktop control disabled"
             return self._send(200, {"ok": True, "active": False, "last_action": last_action})
         if self.path == "/disable":
-            with lock: active = False; desktop_stop.set()
-            _clear_execution_confirmations()
+            with lock:
+                active = False; desktop_stop.set()
+                _invalidate_desktop_approvals()
             return self._send(200, {"ok": True, "active": False})
         if self.path == "/activate":
-            with lock: active = True; stopped = False; desktop_stop.clear()
-            _clear_execution_confirmations()
+            with lock:
+                active = True; stopped = False; desktop_stop.clear()
+                _invalidate_desktop_approvals()
             return self._send(200, {"ok": True, "active": True})
-        if not active or stopped: return self._send(423, {"error": "desktop control is disabled"})
+        with lock:
+            generation = desktop_generation
+            enabled = active and not stopped
+        if not enabled: return self._send(423, {"error": "desktop control is disabled"})
         if self.path in {"/desktop/confirm", "/desktop/execute"}:
             if self.headers.get("Origin") not in ALLOWED_ORIGINS:
                 return self._send(403, {"error": "desktop approval is available only to the local BHASHALEARN app"})
@@ -664,24 +672,28 @@ class Handler(BaseHTTPRequestHandler):
                 # alone must never mint an executable confirmation ticket.
                 if not _require_native_execution_approval(payload["action"]):
                     return self._send(403, {"error": "local Windows operator did not approve this action"})
-                if not active or stopped or desktop_stop.is_set():
-                    return self._send(423, {"error": "desktop control was stopped during approval"})
                 confirmation = secrets.token_urlsafe(32)
                 fingerprint = _confirmation_fingerprint(payload)
-                with confirmation_lock:
-                    now = time.monotonic()
-                    for key, (expires, _) in list(pending_execution_confirmations.items()):
-                        if expires <= now: pending_execution_confirmations.pop(key, None)
-                    pending_execution_confirmations[confirmation] = (now + 60.0, fingerprint)
+                with lock:
+                    approval_current = generation == desktop_generation and active and not stopped and not desktop_stop.is_set()
+                    if approval_current:
+                        now = time.monotonic()
+                        for key, (expires, _) in list(pending_execution_confirmations.items()):
+                            if expires <= now: pending_execution_confirmations.pop(key, None)
+                        pending_execution_confirmations[confirmation] = (now + 60.0, fingerprint)
+                if not approval_current:
+                    return self._send(423, {"error": "desktop control changed during approval"})
                 return self._send(200, {"confirmation_token": confirmation, "expires_in_seconds": 60})
             confirmation = payload.get("confirmation_token")
-            with confirmation_lock:
+            with lock:
                 pending = pending_execution_confirmations.pop(confirmation, None) if isinstance(confirmation, str) else None
             if not pending or pending[0] <= time.monotonic() or pending[1] != _confirmation_fingerprint(payload):
                 return self._send(409, {"error": "a fresh one-time user confirmation is required for this exact action"})
             def ensure_control_active():
-                if desktop_stop.is_set() or not active or stopped:
-                    raise RuntimeError("Emergency Stop cancelled the remaining desktop actions.")
+                with lock:
+                    if generation == desktop_generation and active and not stopped and not desktop_stop.is_set():
+                        return
+                raise RuntimeError("Emergency Stop cancelled the remaining desktop actions.")
             try:
                 result = windows_automation.execute_action(
                     payload["action"], snapshot_id=payload.get("snapshot_id"),
@@ -690,7 +702,9 @@ class Handler(BaseHTTPRequestHandler):
                     confirmed_close=payload.get("confirmed_close") is True,
                     type_text=type_text, cancel_check=ensure_control_active)
             except pyautogui.FailSafeException:
-                with lock: active = False; stopped = True; desktop_stop.set()
+                with lock:
+                    active = False; stopped = True; desktop_stop.set()
+                    _invalidate_desktop_approvals()
                 return self._send(423, {"error": "PyAutoGUI fail-safe stopped desktop control"})
             except Exception as exc:
                 return self._send(422, {"error": str(exc)[:240]})

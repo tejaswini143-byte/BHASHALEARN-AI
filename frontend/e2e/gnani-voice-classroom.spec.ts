@@ -19,10 +19,25 @@ function pcmWav(): Buffer {
   return bytes;
 }
 
+async function startRecording(page: Page, approve = true) {
+  page.once("dialog", async dialog => {
+    expect(dialog.type()).toBe("confirm");
+    expect(dialog.message()).toContain("start recording your microphone locally");
+    if (approve) await dialog.accept();
+    else await dialog.dismiss();
+  });
+  await page.getByRole("button", { name: "Start microphone recording" }).click();
+}
+
+async function stopRecording(page: Page) {
+  await page.waitForFunction(() => (window as Window & { voiceTest: { samplesDelivered?: boolean } }).voiceTest.samplesDelivered);
+  await page.getByRole("button", { name: "Stop recording" }).click();
+}
+
 async function mockVoiceBrowser(page: Page, options: { micDenied?: boolean; sttStatus?: number; ttsStatus?: number } = {}) {
   await page.addInitScript(({ micDenied }) => {
     sessionStorage.setItem("bhashalearn_access_token", "mock-browser-token");
-    const testWindow = window as Window & { voiceTest?: { micCalls: number; tracksStopped: number; recordedFormat?: string; recordedSize?: number } };
+    const testWindow = window as Window & { voiceTest?: { micCalls: number; tracksStopped: number; samplesDelivered?: boolean; recordedFormat?: string; recordedSize?: number } };
     testWindow.voiceTest = { micCalls: 0, tracksStopped: 0 };
     Object.defineProperty(window, "AudioContext", { configurable: true, value: class {
       sampleRate = 48000;
@@ -36,7 +51,10 @@ async function mockVoiceBrowser(page: Page, options: { micDenied?: boolean; sttS
         const processor: { onaudioprocess: null | ((event: { inputBuffer: { getChannelData: (_channel: number) => Float32Array } }) => void); connect: () => void; disconnect: () => void } = {
           onaudioprocess: null, connect: () => undefined, disconnect: () => undefined,
         };
-        window.setTimeout(() => processor.onaudioprocess?.({ inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.15) } }), 10);
+        window.setTimeout(() => {
+          processor.onaudioprocess?.({ inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.15) } });
+          testWindow.voiceTest!.samplesDelivered = true;
+        }, 10);
         return processor;
       };
     } });
@@ -88,10 +106,6 @@ async function mockVoiceBrowser(page: Page, options: { micDenied?: boolean; sttS
     session_id: session.id, topic: session.topic, preferred_language: "mixed", learning_level: "beginner", learning_pace: "steady", learning_goal: null,
     messages: [], visual_lesson: null,
   } }));
-  await page.route(`**/api/v1/sessions/${session.id}/messages?limit=500`, route => route.fulfill({ json: [
-    { id: "user-mock", role: "user", content: transcript, created_at: "2026-11-09T10:01:00Z" },
-    { id: "assistant-mock", role: "assistant", content: reply.reply, created_at: "2026-11-09T10:02:00Z" },
-  ] }));
   await page.route(`**/api/v1/voice/sessions/${session.id}/transcribe`, async route => {
     const request = route.request();
     const body = await request.postDataBuffer();
@@ -113,14 +127,31 @@ async function mockVoiceBrowser(page: Page, options: { micDenied?: boolean; sttS
 }
 
 test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
+  test("dismissing consent preserves the local preview without reopening the microphone or uploading", async ({ page }) => {
+    await mockVoiceBrowser(page);
+    const micCalls = () => page.evaluate(() => (window as Window & { voiceTest: { micCalls: number } }).voiceTest.micCalls);
+    await startRecording(page, false);
+    expect(await micCalls()).toBe(0);
+    await startRecording(page);
+    await stopRecording(page);
+    const preview = page.getByLabel("Play back captured microphone audio locally");
+    await expect(preview).toBeVisible();
+    const previewUrl = await preview.getAttribute("src");
+    await startRecording(page, false);
+    expect(await micCalls()).toBe(1);
+    await expect(preview).toHaveAttribute("src", previewUrl!);
+    expect(await page.evaluate(() => (window as Window & { voiceTest: { recordedSize?: number } }).voiceTest.recordedSize)).toBeUndefined();
+  });
+
   test("captures mixed Telugu-English speech, sends PCM WAV, and supports voice reply playback controls", async ({ page }) => {
     await mockVoiceBrowser(page);
     await expect(page.getByRole("button", { name: "Start microphone recording" })).toBeVisible();
     expect(await page.evaluate(() => (window as Window & { voiceTest: { micCalls: number } }).voiceTest.micCalls)).toBe(0);
 
-    await page.getByRole("button", { name: "Start microphone recording" }).evaluate(button => (button as HTMLButtonElement).click());
+    await startRecording(page);
     await expect(page.getByRole("button", { name: "Stop recording" })).toBeVisible();
-    await page.getByRole("button", { name: "Stop recording" }).evaluate(button => (button as HTMLButtonElement).click());
+    await stopRecording(page);
+    await page.getByRole("button", { name: "Send reviewed recording to Prisma" }).click();
     await expect(page.getByLabel("Prisma transcript or typed message")).toHaveValue(transcript);
     const recorded = await page.evaluate(() => (window as Window & { voiceTest: { micCalls: number; tracksStopped: number; recordedFormat?: string; recordedSize?: number; isPcmWav?: boolean } }).voiceTest);
     expect(recorded.micCalls).toBe(1);
@@ -146,17 +177,19 @@ test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
 
   test("mic denial and Prisma errors keep typed fallback available with visible errors", async ({ page }) => {
     await mockVoiceBrowser(page, { micDenied: true });
-    await page.getByRole("button", { name: "Start microphone recording" }).evaluate(button => (button as HTMLButtonElement).click());
+    await startRecording(page);
     await expect(page.getByRole("alert")).toContainText("Microphone access was denied");
     await expect(page.getByLabel("Prisma transcript or typed message")).toBeEnabled();
 
     const prismaPage = await page.context().newPage();
     await mockVoiceBrowser(prismaPage, { sttStatus: 503 });
-    await prismaPage.getByRole("button", { name: "Start microphone recording" }).evaluate(button => (button as HTMLButtonElement).click());
+    await startRecording(prismaPage);
     await expect(prismaPage.getByRole("button", { name: "Stop recording" })).toBeVisible();
-    await prismaPage.getByRole("button", { name: "Stop recording" }).evaluate(button => (button as HTMLButtonElement).click());
+    await stopRecording(prismaPage);
+    await prismaPage.getByRole("button", { name: "Send reviewed recording to Prisma" }).click();
     await expect(prismaPage.getByRole("alert")).toContainText("Mock Prisma unavailable.");
     await expect(prismaPage.getByLabel("Prisma transcript or typed message")).toBeEnabled();
+    await expect(prismaPage.getByRole("button", { name: "Send reviewed recording to Prisma" })).toBeEnabled();
     await prismaPage.close();
   });
 
@@ -166,8 +199,8 @@ test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
     await page.getByRole("button", { name: /Send to tutor/ }).click();
     await expect(page.getByText(reply.reply)).toBeVisible();
     await page.getByRole("button", { name: "Generate or replay tutor speech" }).click();
-    await expect(page.locator(".vt-notice")).toContainText("Speech playback failed");
+    await expect(page.getByText(/Speech playback failed/)).toBeVisible();
     await page.getByRole("button", { name: "Play local demo tone" }).click();
-    await expect(page.locator(".vt-notice")).toContainText("not generated speech");
+    await expect(page.getByText(/not generated speech/)).toBeVisible();
   });
 });

@@ -30,7 +30,12 @@
 - Telugu and mixed-language commands: NOT YET PASSED.
 
 ## Regression gate
-The `.github/workflows/feature1-regression.yml` workflow runs the backend suite, frontend unit tests, frontend production build, and tracked-artifact checks on the feature branch and relevant pull requests. It does **not** access a physical microphone, call live providers, or control Windows. GitHub CI success is not Feature 1 acceptance.
+The `.github/workflows/feature1-regression.yml` workflow runs the backend suite, frontend unit tests, a headless browser voice flow with synthetic audio and mocked providers, the frontend production build, and tracked-artifact checks on the feature branch and relevant pull requests. It does **not** access a physical microphone, call live providers, or control Windows. GitHub CI success is not Feature 1 acceptance.
+
+## Prior incident evidence
+
+- The earlier `Completed: completed open_app` banner could reflect a late response from an earlier request. No matching browser request trace or companion execution record was available to establish whether Windows actually opened an app. The browser rejects stale completions, and the companion now invalidates pending approval and execution when control is stopped, disabled, or re-enabled.
+- The earlier five-second preview establishes that audio reached local review. Its trigger is unknown, and no upload was reported. The current Voice Tutor opens the microphone only through the recording button and a separate consent dialog. Dismissing consent preserves the previous preview, and upload requires its own button.
 
 ## Known unresolved issues
 - A short spoken command was captured for 30 seconds; audio-energy-based silence detection may not have triggered because ambient activity remained above its threshold. The actual captured audio was not retained.

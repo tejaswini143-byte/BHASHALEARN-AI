@@ -9,6 +9,7 @@ on:
       - "backend/**"
       - "frontend/**"
       - "pocs/poc01_prisma_stt/**"
+      - "scripts/**"
       - ".github/workflows/feature1-regression.yml"
   workflow_dispatch:
 
@@ -75,6 +76,13 @@ jobs:
         run: npm ci
       - name: Run frontend regression suite
         run: npm test
+      - name: Install headless Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Test voice consent and preview with mocked devices and providers
+        env:
+          BHASHALEARN_E2E_START_SERVERS: "1"
+          BHASHALEARN_E2E_MOCK_API: "1"
+        run: npm run test:e2e -- gnani-voice-classroom.spec.ts
       - name: Typecheck and build
         run: npm run build
 

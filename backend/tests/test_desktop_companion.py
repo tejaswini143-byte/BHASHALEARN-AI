@@ -454,3 +454,34 @@ def test_emergency_stop_during_native_approval_blocks_ticket(companion_server, m
     status, _ = request(companion_server, "/desktop/confirm", payload, origin="http://127.0.0.1:15199")
     assert status == 423
     assert companion.pending_execution_confirmations == {}
+
+
+def test_stop_and_reactivation_invalidate_inflight_native_approval(companion_server, monkeypatch):
+    def stop_and_reactivate(action):
+        assert request(companion_server, "/stop")[0] == 200
+        assert request(companion_server, "/activate")[0] == 200
+        return True
+
+    monkeypatch.setattr(companion, "_require_native_execution_approval", stop_and_reactivate)
+    assert request(companion_server, "/activate")[0] == 200
+    origin = "http://127.0.0.1:5173"
+    payload = {"snapshot_id": "snap", "action": {"action": "open_app", "app_id": "notepad"}}
+    status, _ = request(companion_server, "/desktop/confirm", payload, origin=origin)
+    assert status == 423
+    assert companion.pending_execution_confirmations == {}
+
+
+def test_expired_desktop_confirmation_cannot_execute(companion_server, monkeypatch):
+    calls = []
+    monkeypatch.setattr(companion.windows_automation, "execute_action", lambda action, **kwargs: calls.append(action))
+    assert request(companion_server, "/activate")[0] == 200
+    origin = "http://127.0.0.1:5173"
+    payload = {"snapshot_id": "snap", "action": {"action": "open_app", "app_id": "notepad"}}
+    status, approval = request(companion_server, "/desktop/confirm", payload, origin=origin)
+    assert status == 200
+    token = approval["confirmation_token"]
+    with companion.lock:
+        expires, fingerprint = companion.pending_execution_confirmations[token]
+        companion.pending_execution_confirmations[token] = (expires - 61, fingerprint)
+    assert request(companion_server, "/desktop/execute", {**payload, "confirmation_token": token}, origin=origin)[0] == 409
+    assert calls == []

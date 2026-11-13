@@ -61,7 +61,7 @@ test("pending microphone recording pins the session and language until review", 
 
 test("unavailable recording does not discard an existing reviewed capture", () => {
   const start = source.slice(source.indexOf("async function toggleRecording()"), source.indexOf("function generateLocalDemo("));
-  const guards = start.indexOf("if (!selected || busy || transcribing || voiceTurnActive.current || micRequestActive.current) return;");
+  const guards = start.indexOf("if (!selected || creating || busy || transcribing || voiceTurnActive.current || micRequestActive.current) return;");
   const discard = start.indexOf("discardPendingCapture();");
   assert.ok(guards >= 0 && discard > guards, "Invalid recording attempts must preserve reviewed audio");
   assert.ok(start.indexOf("setDraft(\"\");") > guards, "Invalid recording attempts must preserve the previous transcript");
@@ -79,6 +79,7 @@ test("microphone capture requires a second explicit decision before getUserMedia
   const start = source.slice(source.indexOf("async function toggleRecording()"), source.indexOf("function generateLocalDemo("));
   const consent = start.indexOf('window.confirm("BHASHALEARN AI will start recording your microphone locally. Start recording?")');
   const capture = start.indexOf("navigator.mediaDevices.getUserMedia({");
+  assert.ok(start.indexOf("discardPendingCapture();") > capture, "Preserve the previous preview until microphone startup succeeds");
   assert.ok(consent >= 0 && capture > consent, "Microphone capture must be preceded by a separate user confirmation");
   assert.match(start, /if \(!window\.confirm\([\s\S]*?\)\) return;/);
 });
