@@ -149,6 +149,7 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
   const nextPlanIdRef = useRef(0);
   const currentPlanRef = useRef<{ id: string; transcript: string; action: Action } | null>(null);
   const executionInProgressRef = useRef(false);
+  const autofillDispatchedRef = useRef(false);
   const desktopSnapshotRef = useRef<DesktopSnapshot | null>(null);
   const localAction = planLocalCommand(transcript.normalize("NFC").trim(), Boolean(getDesktopQaContext()));
   const languageCode = language === "english" ? "en" : language === "telugu" ? "te" : "mixed";
@@ -522,6 +523,7 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
     currentPlanRef.current = null;
     setAction(null);
     setBusy(true);
+    let autofillDispatched = false;
     try {
       let summary: string;
       const localPlan = planLocalCommand(normalized, Boolean(currentContext));
@@ -573,10 +575,15 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
         assertExecutionActive(executionEpoch);
         const executingLink = approvedAction.action === "open_named_link";
         const executingQaAction = ["move_qa_pointer", "click_qa_control", "type_qa_text", "fill_qa_demo_form"].includes(approvedAction.action);
+        autofillDispatched = fillsDemoForm;
+        autofillDispatchedRef.current = fillsDemoForm;
         const response = await companion("/desktop/execute", { ...executionPayload, confirmation_token: confirmation.confirmation_token },
           pairing, executingLink || executingQaAction ? AbortSignal.timeout(15_000) : undefined).catch(error => {
           if (executingLink && (error instanceof TypeError || error?.name === "TimeoutError")) {
             throw new Error("The companion did not respond. Check whether the link opened before retrying.");
+          }
+          if (fillsDemoForm && (error instanceof TypeError || error?.name === "TimeoutError")) {
+            throw new Error("The companion did not respond. Inspect both demo fields before preparing a fresh action.");
           }
           if (executingQaAction && (error instanceof TypeError || error?.name === "TimeoutError")) {
             throw new Error("The companion did not respond. Check the QA window before preparing a fresh action.");
@@ -584,6 +591,9 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
           throw error;
         });
         assertExecutionActive(executionEpoch);
+        if (fillsDemoForm && (response.ok !== true || response.action !== approvedAction.action || response.verified_fields !== 2)) {
+          throw new Error("The companion did not verify both demo fields. Inspect them before retrying.");
+        }
         if (response.ok !== true || response.action !== approvedAction.action
           || (localPlan?.action === "open_app" && (response.app_id !== "notepad"
             || typeof response.verified_window !== "string" || !response.verified_window.trim()))
@@ -592,7 +602,6 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
             || response.cursor.length !== 2 || !response.cursor.every(Number.isInteger)))
           || (approvedAction.action === "type_qa_text" && (response.target !== approvedAction.target_name
             || response.typed_characters !== [...(approvedAction.text || "")].length))
-          || (fillsDemoForm && response.verified_fields !== 2)
           || (response.action === "sequence" && (!Array.isArray(response.steps)
             || response.steps.length !== approvedAction.steps?.length
             || response.steps.some((step: { ok?: boolean } | null) => step?.ok !== true)))) {
@@ -614,7 +623,11 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
       assertExecutionActive(executionEpoch);
       setHistory(items => [summary, ...items].slice(0, 20)); setStatus(`Completed: ${summary}`); setAction(null); void speak(`Completed. ${summary}.`);
     } catch (error) {
-      if (!activeRef.current || !executionGateRef.current.isCurrent(executionEpoch)) setStatus("Stopped: Emergency Stop cancelled the remaining workflow.");
+      if (!activeRef.current || !executionGateRef.current.isCurrent(executionEpoch)) {
+        setStatus(autofillDispatched
+          ? "Autofill was interrupted. Inspect both demo fields before preparing a fresh action."
+          : "Stopped: Emergency Stop cancelled the remaining workflow.");
+      }
       else {
         const detail = error instanceof Error ? error.message : "Action failed";
         setStatus(approvedAction.action === "open_named_link" && error instanceof TypeError
@@ -622,17 +635,22 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
           : detail);
       }
     }
-    finally { executionGateRef.current.finish(executionEpoch); executionInProgressRef.current = false; setBusy(false); }
+    finally { executionGateRef.current.finish(executionEpoch); executionInProgressRef.current = false; autofillDispatchedRef.current = false; setBusy(false); }
   }
 
   async function stop() {
+    const autofillWasDispatched = autofillDispatchedRef.current;
     controlRequestRef.current += 1;
     cancelSpeech();
     executionGateRef.current.disable();
     activeRef.current = false;
     currentPlanRef.current = null;
     setActive(false); setAction(null); setReviewedTranscript("");
-    try { await companion("/stop"); setStatus("Emergency stop sent; explicitly re-enable to continue."); }
+    try {
+      await companion("/stop");
+      setStatus(autofillWasDispatched ? "Emergency stop sent. Inspect both demo fields before retrying."
+        : "Emergency stop sent; explicitly re-enable to continue.");
+    }
     catch { setConnected(false); setStatus("Stop could not reach the companion. Use its PyAutoGUI fail-safe or close its process."); }
   }
 

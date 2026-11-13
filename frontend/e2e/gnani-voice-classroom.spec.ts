@@ -505,6 +505,7 @@ test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
     };
     const requests: string[] = [];
     let allowNativeApproval = false;
+    let verifiedFields = 1;
     await page.route(`${origin}/**`, async route => {
       const path = new URL(route.request().url()).pathname;
       const headers = {
@@ -525,7 +526,7 @@ test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
       }
       if (path === "/desktop/execute") {
         expect(route.request().postDataJSON()).toMatchObject({ action, confirmation_token: "mock-text-ticket" });
-        return route.fulfill({ headers, json: { ok: true, action: action.action, verified_fields: 2 } });
+        return route.fulfill({ headers, json: { ok: true, action: action.action, verified_fields: verifiedFields } });
       }
       return route.abort();
     });
@@ -568,6 +569,13 @@ test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
     expect(requests).toEqual([]);
     snapshot.targets[2].id = "email";
     allowNativeApproval = true;
+    await panel.getByRole("button", { name: "Prepare demo autofill" }).click();
+    await confirm.click();
+    await expect(panel.getByRole("status")).toContainText("The companion did not verify both demo fields");
+    await expect(form.locator("output")).toBeEmpty();
+    expect(requests.splice(0)).toEqual(["/desktop/confirm", "/desktop/execute"]);
+
+    verifiedFields = 2;
     await panel.getByRole("button", { name: "Prepare demo autofill" }).click();
     await confirm.click();
     await expect(panel.getByRole("status")).toContainText("filled the demo Name and Email fields");

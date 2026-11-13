@@ -427,6 +427,11 @@ def execute_action(payload: dict, *, type_text, cancel_check, confirmed_close: b
                 or not _is_pointer_qa_window(window["app_id"], window["wrapper"])):
             raise RuntimeError("Keep the disposable desktop QA window in the foreground.")
 
+        def require_foreground():
+            if (_foreground_handle() != window["handle"]
+                    or not _is_pointer_qa_window(window["app_id"], window["wrapper"])):
+                raise RuntimeError("The disposable QA window changed.")
+
         def resolve_fields():
             edits = window["wrapper"].descendants(control_type="Edit")
             resolved = []
@@ -451,20 +456,28 @@ def execute_action(payload: dict, *, type_text, cancel_check, confirmed_close: b
 
         # Preflight both controls before the first write. A provider error or
         # Emergency Stop after the first write may leave a partially filled form.
-        resolve_fields()
+        try:
+            resolve_fields()
+        except RuntimeError:
+            raise
+        except Exception:
+            raise RuntimeError("Windows could not access both demo fields. Reopen the QA page and prepare the action again.") from None
         attempted = False
         try:
             for index, field in enumerate(fields):
-                if (_foreground_handle() != window["handle"]
-                        or not _is_pointer_qa_window(window["app_id"], window["wrapper"])):
-                    raise RuntimeError("The disposable QA window changed.")
                 value = resolve_fields()[index]
+                require_foreground()
                 cancel_check()
+                if value.CurrentValue == field["value"]:
+                    continue
                 attempted = True
                 value.SetValue(field["value"])
                 if value.CurrentValue != field["value"]:
                     raise RuntimeError("Windows did not verify the demo field value.")
-            if any(value.CurrentValue != field["value"] for value, field in zip(resolve_fields(), fields)):
+            verified = resolve_fields()
+            require_foreground()
+            cancel_check()
+            if any(value.CurrentValue != field["value"] for value, field in zip(verified, fields)):
                 raise RuntimeError("Windows did not verify both demo field values.")
         except Exception:
             if attempted:

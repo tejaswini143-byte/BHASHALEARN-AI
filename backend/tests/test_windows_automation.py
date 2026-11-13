@@ -229,14 +229,15 @@ def test_qa_dictation_writes_only_the_approved_field(monkeypatch, outcome):
     assert writes == ([value] if outcome in {"success", "mismatch", "write_error"} else [])
 
 
-@pytest.mark.parametrize("outcome", ["success", "invalid_value", "wrong_id", "readonly", "partial", "stop"])
+@pytest.mark.parametrize("outcome", ["success", "already_filled", "invalid_value", "wrong_id", "readonly", "partial", "stop", "switched_during_lookup"])
 def test_demo_autofill_binds_and_verifies_both_fields(monkeypatch, outcome):
     writes = []
     edits = []
     fields = []
     entries = {}
     for index, (label, text) in enumerate(windows_automation.DEMO_FORM_VALUES.items()):
-        value = SimpleNamespace(CurrentValue="", CurrentIsReadOnly=index == 1 and outcome == "readonly")
+        value = SimpleNamespace(CurrentValue=text if outcome == "already_filled" else "",
+                                CurrentIsReadOnly=index == 1 and outcome == "readonly")
 
         def write(new_value, index=index, value=value):
             if index == 1 and outcome == "partial":
@@ -258,7 +259,8 @@ def test_demo_autofill_binds_and_verifies_both_fields(monkeypatch, outcome):
     window = SimpleNamespace(window_text=lambda: "BHASHALEARN Desktop Control QA", descendants=lambda **_: edits)
     entries["window"] = {"kind": "window", "handle": 42, "app_id": "edge", "wrapper": window}
     monkeypatch.setattr(windows_automation, "_cached_target", lambda _, target: entries[target])
-    monkeypatch.setattr(windows_automation, "_foreground_handle", lambda: 42)
+    foreground = iter([42, 7]) if outcome == "switched_during_lookup" else None
+    monkeypatch.setattr(windows_automation, "_foreground_handle", lambda: next(foreground) if foreground else 42)
 
     def cancel_check():
         if outcome == "stop" and writes:
@@ -269,7 +271,7 @@ def test_demo_autofill_binds_and_verifies_both_fields(monkeypatch, outcome):
                                                  snapshot_id="snap", active_window_id="window",
                                                  type_text=lambda _: pytest.fail("Global typing must not be used"),
                                                  cancel_check=cancel_check)
-    if outcome == "success":
+    if outcome in {"success", "already_filled"}:
         assert execute()["verified_fields"] == 2
         assert [edit.iface_value.CurrentValue for edit in edits] == [field["value"] for field in fields]
     else:

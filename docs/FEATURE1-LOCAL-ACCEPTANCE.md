@@ -123,6 +123,7 @@ form should remain unsubmitted until you click **Submit demo form**. The demo
 submit button confirms locally. Switch tabs or disable one field before
 execution to check that the action is rejected. If Windows reports an
 unverified write or you stop between writes, inspect both fields before a retry.
+With fresh approval, a retry skips any field that already has its approved value.
 
 ## Acceptance matrix
 - English Notepad open: NOT YET PASSED.
