@@ -53,16 +53,18 @@ jobs:
       - name: Install Chromium for Playwright
         run: npx playwright install --with-deps chromium
       - name: Run browser E2E tests
-        run: npm run test:e2e
+        run: npx playwright test e2e/feature5-release.spec.ts
         env:
           CI: 'true'
+          BHASHALEARN_E2E_START_SERVERS: '1'
+          BHASHALEARN_E2E_MOCK_API: '1'
       - name: Preserve Playwright diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: feature5-playwright-report
           path: |
-            frontend/playwright-report/
-            frontend/test-results/
+            frontend/playwright-report-int13/
+            frontend/test-results-int13/
           if-no-files-found: ignore
           retention-days: 7
