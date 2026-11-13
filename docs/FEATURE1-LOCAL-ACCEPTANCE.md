@@ -109,6 +109,21 @@ execution. Moving keyboard focus within the same QA window is expected when
 clicking approval controls. The write remains bound to the original named field.
 If Windows cannot verify the field value, inspect it before approving a retry.
 
+## Phase 5 demo autofill
+
+Open the disposable `/desktop-control-test.html` page on an approved QA
+port and use its embedded Voice Tutor. Record “Fill the demo form,” listen
+to the preview, and approve Prisma submission. After reviewing the transcript,
+select **Prepare demo autofill**. Confirm that both the browser preview and
+Windows prompt show **Name → Demo Learner** and **Email →
+demo.learner@example.test**.
+
+With separate approval, execute the plan and verify both field values. The
+form should remain unsubmitted until you click **Submit demo form**. The demo
+submit button confirms locally. Switch tabs or disable one field before
+execution to check that the action is rejected. If Windows reports an
+unverified write or you stop between writes, inspect both fields before a retry.
+
 ## Acceptance matrix
 - English Notepad open: NOT YET PASSED.
 - ChatGPT browser open: NOT YET PASSED via voice.

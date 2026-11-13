@@ -492,6 +492,89 @@ test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
     expect(requests).toEqual([]);
   });
 
+  test("demo autofill previews both synthetic values and requires approval", async ({ page }) => {
+    const origin = "http://127.0.0.1:18765";
+    const action = { action: "fill_qa_demo_form", fields: [
+      { target_id: "name", label: "Demo form Name", value: "Demo Learner" },
+      { target_id: "email", label: "Demo form Email", value: "demo.learner@example.test" },
+    ] };
+    const snapshot = {
+      snapshot_id: "qa", active_window_id: "window", focused_target_id: null, pointer_qa_window: true,
+      targets: [{ id: "window", name: "Edge", kind: "window" },
+        ...action.fields.map(field => ({ id: field.target_id, name: field.label, kind: "text" }))],
+    };
+    const requests: string[] = [];
+    let allowNativeApproval = false;
+    await page.route(`${origin}/**`, async route => {
+      const path = new URL(route.request().url()).pathname;
+      const headers = {
+        "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type",
+      };
+      if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204, headers });
+      if (path === "/pair") return route.fulfill({ headers, json: { token: "mock-pairing" } });
+      if (path === "/health") return route.fulfill({ headers, json: { active: false } });
+      if (path === "/activate") return route.fulfill({ headers, json: { active: true } });
+      if (path === "/desktop/snapshot") return route.fulfill({ headers, json: snapshot });
+      requests.push(path);
+      if (path === "/desktop/confirm") {
+        expect(route.request().postDataJSON().action).toEqual(action);
+        return allowNativeApproval
+          ? route.fulfill({ headers, json: { confirmation_token: "mock-text-ticket" } })
+          : route.fulfill({ headers, status: 403, json: { error: "Local Windows operator declined." } });
+      }
+      if (path === "/desktop/execute") {
+        expect(route.request().postDataJSON()).toMatchObject({ action, confirmation_token: "mock-text-ticket" });
+        return route.fulfill({ headers, json: { ok: true, action: action.action, verified_fields: 2 } });
+      }
+      return route.abort();
+    });
+    await page.route("**/api/v1/assistant/voice/speech", route => {
+      expect(route.request().postDataJSON().text).not.toContain("demo.learner@example.test");
+      return route.fulfill({ status: 204 });
+    });
+    await page.route("**/api/v1/assistant/desktop/interpret", route => {
+      requests.push("gemini");
+      return route.abort();
+    });
+    await mockVoiceBrowser(page, { transcript: "Fill the demo form." });
+    await page.goto("/desktop-control-test.html");
+    const form = page.getByRole("form", { name: "Demo contact form" });
+    await expect(form.getByLabel("Demo form Name")).toHaveValue("");
+    await expect(form.getByLabel("Demo form Email")).toHaveValue("");
+    const frame = page.frameLocator("#voice-tutor");
+    await Promise.all([
+      page.waitForEvent("dialog").then(dialog => dialog.accept()),
+      frame.getByRole("button", { name: "Start microphone recording" }).dispatchEvent("click"),
+    ]);
+    await frame.getByRole("button", { name: "Stop recording" }).dispatchEvent("click");
+    await frame.getByRole("button", { name: "Send reviewed recording to Prisma" }).click();
+    await expect(frame.getByLabel("Prisma transcript or typed message")).toHaveValue("Fill the demo form.");
+    const panel = frame.getByRole("region", { name: "Windows desktop control" });
+    await panel.getByRole("button", { name: "Connect to local companion" }).click();
+    await panel.getByRole("button", { name: "Enable control" }).click();
+    await panel.getByRole("button", { name: "I reviewed this transcript" }).click();
+    await panel.getByRole("button", { name: "Prepare demo autofill" }).click();
+    await expect(panel.getByText("Name → Demo Learner, Email → demo.learner@example.test", { exact: true })).toBeVisible();
+    expect(requests).toEqual([]);
+    const confirm = panel.getByRole("button", { name: "Confirm and execute" });
+    await confirm.click();
+    await expect(panel.getByRole("status")).toContainText("Local Windows operator declined.");
+    expect(requests.splice(0)).toEqual(["/desktop/confirm"]);
+    await panel.getByRole("button", { name: "Prepare demo autofill" }).click();
+    snapshot.targets[2].id = "replacement";
+    await confirm.click();
+    await expect(panel.getByRole("status")).toContainText("The approved demo form changed");
+    expect(requests).toEqual([]);
+    snapshot.targets[2].id = "email";
+    allowNativeApproval = true;
+    await panel.getByRole("button", { name: "Prepare demo autofill" }).click();
+    await confirm.click();
+    await expect(panel.getByRole("status")).toContainText("filled the demo Name and Email fields");
+    expect(requests).toEqual(["/desktop/confirm", "/desktop/execute"]);
+    await expect(form.locator("output")).toBeEmpty();
+  });
+
   test("mic denial and Prisma errors keep typed fallback available with visible errors", async ({ page }) => {
     await mockVoiceBrowser(page, { micDenied: true });
     await startRecording(page);

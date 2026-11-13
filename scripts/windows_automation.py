@@ -31,6 +31,27 @@ from pywinauto import Desktop
 
 SUPPORTED_APPS = {"notepad": "Notepad", "chrome": "Google Chrome", "edge": "Microsoft Edge"}
 APPROVED_LINKS = frozenset({"https://www.youtube.com/", "https://chatgpt.com/", "https://www.google.com/"})
+DEMO_FORM_VALUES = {"Demo form Name": "Demo Learner", "Demo form Email": "demo.learner@example.test"}
+DEMO_FORM_IDS = {"Demo form Name": "qa-demo-name", "Demo form Email": "qa-demo-email"}
+
+
+def validate_demo_form(fields) -> None:
+    if not isinstance(fields, list) or len(fields) != len(DEMO_FORM_VALUES):
+        raise RuntimeError("The demo form requires the approved Name and Email fields.")
+    seen_labels = set()
+    seen_ids = set()
+    for field in fields:
+        if not isinstance(field, dict):
+            raise RuntimeError("Invalid demo form field.")
+        label, target_id = field.get("label"), field.get("target_id")
+        if (not isinstance(label, str) or label not in DEMO_FORM_VALUES or label in seen_labels
+                or field.get("value") != DEMO_FORM_VALUES[label]
+                or not isinstance(target_id, str) or not target_id or target_id in seen_ids):
+            raise RuntimeError("Only the approved demo fields and synthetic values may be filled.")
+        seen_labels.add(label)
+        seen_ids.add(target_id)
+
+
 PROCESS_APPS = {"notepad.exe": "notepad", "chrome.exe": "chrome", "msedge.exe": "edge"}
 SENSITIVE_LABEL = re.compile(r"password|passcode|one[- ]time code|\botp\b|credit card|cvv|bank account|social security|passport|\bssn\b", re.I)
 MAX_CONTROLS = 30
@@ -397,6 +418,59 @@ def execute_action(payload: dict, *, type_text, cancel_check, confirmed_close: b
         if ctypes.windll.user32.IsWindow(target["handle"]):
             raise RuntimeError("The window is still open; it may have an unsaved-work confirmation. Resolve it yourself.")
         return {"ok": True, "action": action, "target": target["label"], "closed": True}
+
+    if action == "fill_qa_demo_form":
+        fields = payload.get("fields")
+        validate_demo_form(fields)
+        window = _cached_target(snapshot_id, active_window_id)
+        if (window["kind"] != "window" or _foreground_handle() != window["handle"]
+                or not _is_pointer_qa_window(window["app_id"], window["wrapper"])):
+            raise RuntimeError("Keep the disposable desktop QA window in the foreground.")
+
+        def resolve_fields():
+            edits = window["wrapper"].descendants(control_type="Edit")
+            resolved = []
+            for field in fields:
+                label = field["label"]
+                cached = _cached_target(snapshot_id, field["target_id"])
+                matches = [edit for edit in edits if edit.is_visible()
+                           and str(edit.element_info.name or "").strip() == label]
+                if (cached["kind"] != "text" or cached["handle"] != window["handle"] or cached["label"] != label
+                        or len(matches) != 1 or matches[0].element_info != cached["wrapper"].element_info):
+                    raise RuntimeError("The approved demo form changed. Prepare the action again.")
+                edit = matches[0]
+                element = edit.element_info.element
+                if (element.CurrentAutomationId != DEMO_FORM_IDS[label]
+                        or element.CurrentIsPassword or not edit.is_enabled()):
+                    raise RuntimeError("The approved demo field is no longer editable.")
+                value = edit.iface_value
+                if value.CurrentIsReadOnly:
+                    raise RuntimeError("The approved demo field is read-only.")
+                resolved.append(value)
+            return resolved
+
+        # Preflight both controls before the first write. A provider error or
+        # Emergency Stop after the first write may leave a partially filled form.
+        resolve_fields()
+        attempted = False
+        try:
+            for index, field in enumerate(fields):
+                if (_foreground_handle() != window["handle"]
+                        or not _is_pointer_qa_window(window["app_id"], window["wrapper"])):
+                    raise RuntimeError("The disposable QA window changed.")
+                value = resolve_fields()[index]
+                cancel_check()
+                attempted = True
+                value.SetValue(field["value"])
+                if value.CurrentValue != field["value"]:
+                    raise RuntimeError("Windows did not verify the demo field value.")
+            if any(value.CurrentValue != field["value"] for value, field in zip(resolve_fields(), fields)):
+                raise RuntimeError("Windows did not verify both demo field values.")
+        except Exception:
+            if attempted:
+                raise RuntimeError("The demo form may be partly filled. Inspect both fields before retrying.") from None
+            raise
+        return {"ok": True, "action": action, "verified_fields": len(fields)}
 
     if action == "type_qa_text":
         value = payload.get("text")

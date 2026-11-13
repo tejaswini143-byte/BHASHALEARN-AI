@@ -74,6 +74,9 @@ def _require_native_execution_approval(action: dict) -> bool:
         detail = f"Move the cursor {str(action.get('direction', ''))[:12]} in the disposable QA window."
     if action_name == "type_qa_text":
         detail = f"Replace the value in the QA Permitted text field with:\n{action['text']}"
+    if action_name == "fill_qa_demo_form":
+        detail = "Fill the QA demo form:\n" + "\n".join(
+            f"{field['label']}: {field['value']}" for field in action["fields"])
     if action_name == "open_named_link":
         detail = f"Open this approved link in your default browser:\n{action['url']}"
     message = ("BHASHALEARN AI requests a Windows desktop action:\n\n"
@@ -683,6 +686,11 @@ class Handler(BaseHTTPRequestHandler):
                 if (not isinstance(value, str) or not 1 <= len(value) <= 120 or not value.isprintable()
                         or action.get("target_name") != "Permitted text field"):
                     return self._send(422, {"error": "Use 1–120 printable characters in the QA Permitted text field."})
+            if action.get("action") == "fill_qa_demo_form":
+                try:
+                    windows_automation.validate_demo_form(action.get("fields"))
+                except RuntimeError as exc:
+                    return self._send(422, {"error": str(exc)})
             if self.path == "/desktop/confirm":
                 # Independent OS-level consent: an authenticated browser request
                 # alone must never mint an executable confirmation ticket.

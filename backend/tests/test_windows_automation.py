@@ -227,3 +227,53 @@ def test_qa_dictation_writes_only_the_approved_field(monkeypatch, outcome):
         with pytest.raises(RuntimeError):
             execute()
     assert writes == ([value] if outcome in {"success", "mismatch", "write_error"} else [])
+
+
+@pytest.mark.parametrize("outcome", ["success", "invalid_value", "wrong_id", "readonly", "partial", "stop"])
+def test_demo_autofill_binds_and_verifies_both_fields(monkeypatch, outcome):
+    writes = []
+    edits = []
+    fields = []
+    entries = {}
+    for index, (label, text) in enumerate(windows_automation.DEMO_FORM_VALUES.items()):
+        value = SimpleNamespace(CurrentValue="", CurrentIsReadOnly=index == 1 and outcome == "readonly")
+
+        def write(new_value, index=index, value=value):
+            if index == 1 and outcome == "partial":
+                raise OSError("write failed")
+            writes.append(new_value)
+            value.CurrentValue = new_value
+
+        value.SetValue = write
+        element = SimpleNamespace(CurrentAutomationId="wrong" if index == 1 and outcome == "wrong_id"
+                                  else windows_automation.DEMO_FORM_IDS[label], CurrentIsPassword=False)
+        edit = SimpleNamespace(element_info=SimpleNamespace(name=label, element=element),
+                               is_visible=lambda: True, is_enabled=lambda: True, iface_value=value)
+        edits.append(edit)
+        entries[str(index)] = {"kind": "text", "handle": 42, "label": label, "wrapper": edit}
+        fields.append({"label": label, "target_id": str(index), "value": text})
+    if outcome == "invalid_value":
+        fields[1]["value"] = "another@example.test"
+
+    window = SimpleNamespace(window_text=lambda: "BHASHALEARN Desktop Control QA", descendants=lambda **_: edits)
+    entries["window"] = {"kind": "window", "handle": 42, "app_id": "edge", "wrapper": window}
+    monkeypatch.setattr(windows_automation, "_cached_target", lambda _, target: entries[target])
+    monkeypatch.setattr(windows_automation, "_foreground_handle", lambda: 42)
+
+    def cancel_check():
+        if outcome == "stop" and writes:
+            raise RuntimeError("Emergency Stop")
+
+    def execute():
+        return windows_automation.execute_action({"action": "fill_qa_demo_form", "fields": fields},
+                                                 snapshot_id="snap", active_window_id="window",
+                                                 type_text=lambda _: pytest.fail("Global typing must not be used"),
+                                                 cancel_check=cancel_check)
+    if outcome == "success":
+        assert execute()["verified_fields"] == 2
+        assert [edit.iface_value.CurrentValue for edit in edits] == [field["value"] for field in fields]
+    else:
+        with pytest.raises(RuntimeError):
+            execute()
+    assert writes == ([field["value"] for field in fields] if outcome == "success" else
+                      [fields[0]["value"]] if outcome in {"partial", "stop"} else [])

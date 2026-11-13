@@ -6,6 +6,14 @@ import {
   openApprovedDesktopSite, resolveDesktopTarget,
 } from "./desktopDomTargets";
 
+const DEMO_FORM_VALUES = {
+  "Demo form Name": "Demo Learner",
+  "Demo form Email": "demo.learner@example.test",
+} as const;
+const FILL_DEMO_FORM = /^fill (?:the )?demo form[.!?]?$/i;
+
+type FormField = { target_id: string; label: keyof typeof DEMO_FORM_VALUES; value: string };
+
 type Action = {
   action: string;
   text?: string | null;
@@ -16,6 +24,7 @@ type Action = {
   shortcut?: string | null;
   target_name?: string | null;
   direction?: string;
+  fields?: FormField[];
   steps?: Action[] | null;
   clarification?: string | null;
 };
@@ -262,6 +271,7 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
     const token = getToken(); if (!token) { setStatus("Sign in again to interpret a command."); return; }
     const localPlan = planLocalCommand(normalized, Boolean(qaContext));
     const pointer = pointerCommand(normalized);
+    const autofill = FILL_DEMO_FORM.test(normalized);
     const dictation = qaContext ? /^type(?:\s+|$)([\s\S]*)$/i.exec(transcript.trim()) : null;
     const dictated = dictation?.[1] ?? "";
     executionGateRef.current.invalidatePlan();
@@ -271,13 +281,24 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
     try {
       let targets = qaContext?.targets || [];
       let approved_sites = qaContext?.approved_sites || {};
-      if (pointer || dictation !== null || (!qaContext && !localPlan)) {
+      if (pointer || dictation !== null || (autofill && qaContext) || (!autofill && !qaContext && !localPlan)) {
         const snapshot = await companion("/desktop/snapshot") as DesktopSnapshot;
         desktopSnapshotRef.current = snapshot;
         targets = targetsForCommand(snapshot, normalized);
         approved_sites = {};
       }
       let proposed = localPlan;
+      if (autofill) {
+        const snapshot = qaContext ? desktopSnapshotRef.current : null;
+        const fields: FormField[] = [];
+        for (const label of Object.keys(DEMO_FORM_VALUES) as FormField["label"][]) {
+          const matches = snapshot?.targets.filter(target => target.kind === "text" && target.name === label);
+          if (matches?.length === 1) fields.push({ target_id: matches[0].id, label, value: DEMO_FORM_VALUES[label] });
+        }
+        proposed = snapshot?.pointer_qa_window === true && fields.length === 2 && fields[0].target_id !== fields[1].target_id
+          ? { action: "fill_qa_demo_form", fields }
+          : { action: "clarify", clarification: "Open the disposable desktop QA page with one visible Name field and one visible Email field." };
+      }
       if (dictation !== null) {
         const snapshot = desktopSnapshotRef.current!;
         const fields = snapshot.targets.filter(target => target.kind === "text" && target.name === "Permitted text field");
@@ -327,13 +348,15 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
         executionGateRef.current.registerPlan(planId);
         currentPlanRef.current = { id: planId, transcript: normalized, action: proposed };
         setStatus("Review the proposed action before confirming.");
-        if (proposed.action !== "type_qa_text") void speak(`I understood ${describe(proposed)}. Confirm on screen to execute.`);
+        if (proposed.action !== "type_qa_text" && proposed.action !== "fill_qa_demo_form") void speak(`I understood ${describe(proposed)}. Confirm on screen to execute.`);
       }
     } catch (error) { setStatus(error instanceof Error ? error.message : "Interpretation failed"); }
     finally { setBusy(false); }
   }
 
   function describe(step: Action): string {
+    if (step.action === "fill_qa_demo_form") return (step.fields || [])
+      .map(field => `${field.label.replace("Demo form ", "")} → ${field.value}`).join(", ");
     if (step.action === "type_qa_text") return `replace the value in ${step.target_name} with ${JSON.stringify(step.text)}`;
     if (step.action === "move_qa_pointer") return `move the cursor ${step.direction} inside the QA window`;
     if (step.action === "click_qa_control") return `click ${step.target_name} inside the QA window`;
@@ -502,7 +525,8 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
     try {
       let summary: string;
       const localPlan = planLocalCommand(normalized, Boolean(currentContext));
-      if (currentContext && !localPlan && !pointerCommand(normalized) && approvedAction.action !== "type_qa_text") {
+      const fillsDemoForm = approvedAction.action === "fill_qa_demo_form";
+      if (currentContext && !localPlan && !pointerCommand(normalized) && approvedAction.action !== "type_qa_text" && !fillsDemoForm) {
         summary = await executeStep(approvedAction, executionEpoch);
       } else {
         let executionPayload: { confirmed_close: boolean; action: Action } & Partial<{
@@ -513,7 +537,7 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
           if (!snapshot) throw new Error("Refresh Windows UI Automation targets before executing this action.");
           const currentSnapshot = await companion("/desktop/snapshot") as DesktopSnapshot;
           const needsBoundTargets = requiresBoundTargets(approvedAction);
-          if ((pointerCommand(normalized) || approvedAction.action === "type_qa_text") && currentSnapshot.pointer_qa_window !== true) {
+          if ((pointerCommand(normalized) || approvedAction.action === "type_qa_text" || fillsDemoForm) && currentSnapshot.pointer_qa_window !== true) {
             throw new Error("The disposable desktop QA window is no longer active. Prepare the action again.");
           }
           if (approvedAction.action === "type_qa_text") {
@@ -523,7 +547,14 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
               throw new Error("The approved text field changed. Prepare the action again.");
             }
           }
-          if (needsBoundTargets && approvedAction.action !== "type_qa_text" && (currentSnapshot.active_window_id !== snapshot.active_window_id
+          if (fillsDemoForm && (currentSnapshot.active_window_id !== snapshot.active_window_id
+            || approvedAction.fields?.some(field => {
+              const matches = currentSnapshot.targets.filter(target => target.kind === "text" && target.name === field.label);
+              return matches.length !== 1 || matches[0].id !== field.target_id;
+            }))) {
+            throw new Error("The approved demo form changed. Prepare the action again.");
+          }
+          if (needsBoundTargets && approvedAction.action !== "type_qa_text" && !fillsDemoForm && (currentSnapshot.active_window_id !== snapshot.active_window_id
             || currentSnapshot.focused_target_id !== snapshot.focused_target_id
             || JSON.stringify(currentSnapshot.targets) !== JSON.stringify(snapshot.targets))) {
             throw new Error("The active window or its UI Automation targets changed after planning. Reinterpret the command.");
@@ -541,7 +572,7 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
         if (!confirmation.confirmation_token) throw new Error("The companion did not issue a one-time action confirmation.");
         assertExecutionActive(executionEpoch);
         const executingLink = approvedAction.action === "open_named_link";
-        const executingQaAction = ["move_qa_pointer", "click_qa_control", "type_qa_text"].includes(approvedAction.action);
+        const executingQaAction = ["move_qa_pointer", "click_qa_control", "type_qa_text", "fill_qa_demo_form"].includes(approvedAction.action);
         const response = await companion("/desktop/execute", { ...executionPayload, confirmation_token: confirmation.confirmation_token },
           pairing, executingLink || executingQaAction ? AbortSignal.timeout(15_000) : undefined).catch(error => {
           if (executingLink && (error instanceof TypeError || error?.name === "TimeoutError")) {
@@ -561,12 +592,14 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
             || response.cursor.length !== 2 || !response.cursor.every(Number.isInteger)))
           || (approvedAction.action === "type_qa_text" && (response.target !== approvedAction.target_name
             || response.typed_characters !== [...(approvedAction.text || "")].length))
+          || (fillsDemoForm && response.verified_fields !== 2)
           || (response.action === "sequence" && (!Array.isArray(response.steps)
             || response.steps.length !== approvedAction.steps?.length
             || response.steps.some((step: { ok?: boolean } | null) => step?.ok !== true)))) {
           throw new Error("The companion did not confirm the approved action result.");
         }
-        summary = approvedAction.action === "type_qa_text"
+        summary = fillsDemoForm ? "filled the demo Name and Email fields"
+          : approvedAction.action === "type_qa_text"
           ? `entered ${response.typed_characters} characters in ${response.target}`
           : approvedAction.action === "click_qa_control"
           ? `sent a click to ${approvedAction.target_name}`
@@ -613,7 +646,7 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
     </div>
     <p>Prisma transcript: {transcript || "Record a command first."}</p>
     {transcript.trim() && !STOP_WORDS.test(transcript.normalize("NFC").trim()) && <button type="button" disabled={!connected || !active || busy || reviewedTranscript === transcript.normalize("NFC").trim()} onClick={() => { executionGateRef.current.invalidatePlan(); currentPlanRef.current = null; setReviewedTranscript(transcript.normalize("NFC").trim()); setAction(null); setStatus("Transcript reviewed. You can prepare the action plan."); }}>I reviewed this transcript</button>}
-    <button type="button" disabled={!connected || !active || !transcript.trim() || busy || (!STOP_WORDS.test(transcript.normalize("NFC").trim()) && reviewedTranscript !== transcript.normalize("NFC").trim())} onClick={() => void interpret()}>{STOP_WORDS.test(transcript.normalize("NFC").trim()) ? "Voice Emergency Stop" : localAction?.action === "open_app" ? "Prepare Notepad action" : localAction ? "Prepare link action" : pointerCommand(transcript.normalize("NFC").trim()) ? "Prepare pointer action" : /^type(?:\s|$)/i.test(transcript.trim()) && getDesktopQaContext() ? "Prepare text entry" : "Interpret with Gemini"}</button>
+    <button type="button" disabled={!connected || !active || !transcript.trim() || busy || (!STOP_WORDS.test(transcript.normalize("NFC").trim()) && reviewedTranscript !== transcript.normalize("NFC").trim())} onClick={() => void interpret()}>{STOP_WORDS.test(transcript.normalize("NFC").trim()) ? "Voice Emergency Stop" : localAction?.action === "open_app" ? "Prepare Notepad action" : localAction ? "Prepare link action" : pointerCommand(transcript.normalize("NFC").trim()) ? "Prepare pointer action" : FILL_DEMO_FORM.test(transcript.trim()) ? "Prepare demo autofill" : /^type(?:\s|$)/i.test(transcript.trim()) && getDesktopQaContext() ? "Prepare text entry" : "Interpret with Gemini"}</button>
     {action && (clarification
       ? <div role="status" aria-label="Clarification needed"><p>{action.clarification}</p><button type="button" onClick={() => setAction(null)}>Clear clarification</button></div>
       : <div role="group" aria-label="Confirm desktop action"><p>Proposed: <b>{describe(action)}</b>{action.action === "sequence" && <ol>{(action.steps || []).map((step, index) => <li key={index}>{describe(step)}</li>)}</ol>}</p>

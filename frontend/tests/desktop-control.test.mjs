@@ -128,7 +128,7 @@ test("target-independent app launches use a fresh snapshot without weakening tar
   assert.match(panel, /function requiresBoundTargets\(step: Action\)/);
   assert.match(panel, /const needsBoundTargets = requiresBoundTargets\(approvedAction\)/);
   assert.match(panel, /needsBoundTargets \? snapshot\.snapshot_id : currentSnapshot\.snapshot_id/);
-  assert.match(panel, /if \(needsBoundTargets && approvedAction\.action !== "type_qa_text" && \(currentSnapshot\.active_window_id/);
+  assert.match(panel, /if \(needsBoundTargets && approvedAction\.action !== "type_qa_text" && !fillsDemoForm && \(currentSnapshot\.active_window_id/);
 });
 
 test("disposable QA provides uniquely named, duplicate, search, typing, and sandbox targets", async () => {
