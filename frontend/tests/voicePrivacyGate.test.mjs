@@ -46,3 +46,8 @@ test("microphone audio processing cannot auto-stop on a fixed RMS threshold", ()
   assert.doesNotMatch(capture, /await transcribeWav\(/);
   assert.match(source, /if \(elapsed >= 30\)/);
 });
+
+test("a new microphone recording invalidates the previous command transcript", () => {
+  const start = source.slice(source.indexOf("async function toggleRecording()"), source.indexOf("function generateLocalDemo("));
+  assert.match(start, /setDraft\(""\)/);
+});
