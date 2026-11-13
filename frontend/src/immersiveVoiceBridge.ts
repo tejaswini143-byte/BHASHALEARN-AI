@@ -50,10 +50,10 @@ export class ImmersiveVoiceBridge {
   }
 
   clear(): void {
-    // Preserve the generation watermark so a late frame from an interrupted
-    // playback cannot reactivate the avatar after a clear/unmount.
-    this.latestGeneration += 1;
-    this.frame = { ...silentFrame, generation: this.latestGeneration };
+    // A newly mounted voice controller starts generation numbering again.
+    // Its prior controller is cancelled by VoiceTutor before clearing.
+    this.latestGeneration = 0;
+    this.frame = { ...silentFrame };
     this.frameListeners.forEach(listener => listener());
     if (this.state !== "idle") {
       this.state = "idle";
