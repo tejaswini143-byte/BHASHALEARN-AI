@@ -52,3 +52,6 @@
 .ic-exercise label { display: flex; align-items: center; gap: .5rem; cursor: pointer; }
 .ic-exercise button { justify-self: start; padding: .45rem .85rem; cursor: pointer; }
 .ic-exercise button:disabled { opacity: .5; cursor: not-allowed; }
+
+.ic-board-focus { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .6rem; }
+.ic-board-focus span { border: 1px solid rgba(96,224,255,.55); background: rgba(15,72,112,.65); border-radius: .45rem; padding: .3rem .5rem; overflow-wrap: anywhere; }
