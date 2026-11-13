@@ -70,6 +70,8 @@ def _require_native_execution_approval(action: dict) -> bool:
     action_name = str(action.get("action", "unknown"))[:80]
     app_name = str(action.get("app_id") or action.get("target_name") or "")[:80]
     detail = f"{action_name}: {app_name}" if app_name else action_name
+    if action_name == "open_named_link":
+        detail = f"Open this approved link in your default browser:\n{action['url']}"
     message = ("BHASHALEARN AI requests a Windows desktop action:\n\n"
                + detail + "\n\nApprove this action? Choose No to cancel.")
     # MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2 | MB_TOPMOST
@@ -667,6 +669,11 @@ class Handler(BaseHTTPRequestHandler):
             except Exception: return self._send(400, {"error": "invalid JSON"})
             if not isinstance(payload, dict) or not isinstance(payload.get("action"), dict):
                 return self._send(422, {"error": "a validated action plan is required"})
+            action = payload["action"]
+            if action.get("action") == "open_named_link":
+                url = action.get("url")
+                if not isinstance(url, str) or url not in windows_automation.APPROVED_LINKS:
+                    return self._send(422, {"error": "Choose an approved link: YouTube, ChatGPT, or Google."})
             if self.path == "/desktop/confirm":
                 # Independent OS-level consent: an authenticated browser request
                 # alone must never mint an executable confirmation ticket.

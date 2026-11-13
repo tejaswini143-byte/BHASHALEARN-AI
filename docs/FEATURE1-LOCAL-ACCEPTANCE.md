@@ -55,6 +55,21 @@ Open `http://127.0.0.1:5173/register` in a fresh browser profile, create a dispo
 7. If the transcript is correct, click **Connect to local companion → Enable control → I reviewed this transcript → Prepare Notepad action**. Verify the plan proposes only opening Notepad. With separate authorization for that action, click **Confirm and execute** and approve the matching native Windows prompt.
 8. If Notepad reports that no new window was verified, check whether its scratch document opened in an existing tab. In the disposable profile, close existing Notepad windows or select the Notepad setting to open files in a new window before requesting fresh approval for a retry. Independently verify a newly opened disposable Notepad is foreground. Click **Emergency Stop** immediately afterward. Check that the panel offers **Enable control** and the plan button is disabled. Report the commit, preview match, Prisma diagnostics and transcript, proposed action, whether both confirmations appeared, independent observation of Notepad, and the Stop result. Share no raw audio, credentials, or unredacted network exports.
 
+## Phase 2 approved links
+
+Use a disposable browser profile. Record “Open YouTube” and listen to the local
+preview. With separate approval, send it to Prisma. Review the returned text,
+then choose **I reviewed this transcript → Prepare link action**. Verify the
+browser proposal and native Windows prompt both show
+`https://www.youtube.com/`. With separate approval, confirm and check that the
+intended page appears in the default browser. The app reports dispatch to the
+browser. Page loading is verified by the operator.
+
+The same path supports “Open ChatGPT” and “Open Google.” To test clarification,
+try the reviewed text “Open the website Example.” The panel should list the
+approved links and offer no execution button. These exact link commands are
+planned locally. No Gemini key is needed.
+
 ## Acceptance matrix
 - English Notepad open: NOT YET PASSED.
 - ChatGPT browser open: NOT YET PASSED via voice.

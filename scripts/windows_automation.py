@@ -30,6 +30,7 @@ from pywinauto import Desktop
 
 
 SUPPORTED_APPS = {"notepad": "Notepad", "chrome": "Google Chrome", "edge": "Microsoft Edge"}
+APPROVED_LINKS = frozenset({"https://www.youtube.com/", "https://chatgpt.com/", "https://www.google.com/"})
 PROCESS_APPS = {"notepad.exe": "notepad", "chrome.exe": "chrome", "msedge.exe": "edge"}
 SENSITIVE_LABEL = re.compile(r"password|passcode|one[- ]time code|\botp\b|credit card|cvv|bank account|social security|passport|\bssn\b", re.I)
 MAX_CONTROLS = 30
@@ -271,6 +272,14 @@ def execute_action(payload: dict, *, type_text, cancel_check, confirmed_close: b
         result = _launch_app(payload.get("app_id"), cancel_check=cancel_check)
         context["launched_app"] = payload.get("app_id")
         return result
+    if action == "open_named_link":
+        url = payload.get("url")
+        if not isinstance(url, str) or url not in APPROVED_LINKS:
+            raise RuntimeError("Choose an approved link: YouTube, ChatGPT, or Google.")
+        cancel_check()
+        if not webbrowser.open(url, new=2, autoraise=True):
+            raise RuntimeError("Windows could not send the approved link to the default browser.")
+        return {"ok": True, "action": action, "url": url}
     if action == "open_website":
         url = payload.get("url")
         parsed = urlsplit(url or "")

@@ -485,3 +485,26 @@ def test_expired_desktop_confirmation_cannot_execute(companion_server, monkeypat
         companion.pending_execution_confirmations[token] = (expires - 61, fingerprint)
     assert request(companion_server, "/desktop/execute", {**payload, "confirmation_token": token}, origin=origin)[0] == 409
     assert calls == []
+
+
+def test_approved_link_ticket_cannot_be_transferred_to_another_url(companion_server, monkeypatch):
+    prompted = []
+    opened = []
+    monkeypatch.setattr(companion, "_require_native_execution_approval",
+                        lambda action: prompted.append(action["url"]) or True)
+    monkeypatch.setattr(companion.windows_automation.webbrowser, "open",
+                        lambda url, **_: opened.append(url) or True)
+    origin = "http://127.0.0.1:5173"
+    assert request(companion_server, "/activate")[0] == 200
+    youtube = {"action": {"action": "open_named_link", "url": "https://www.youtube.com/"}}
+    fake = {"action": {"action": "open_named_link", "url": "https://www.youtube.com.example.org/"}}
+    assert request(companion_server, "/desktop/confirm", fake, origin=origin)[0] == 422
+    assert prompted == []
+    status, approval = request(companion_server, "/desktop/confirm", youtube, origin=origin)
+    assert status == 200
+    token = approval["confirmation_token"]
+    changed = {"action": {"action": "open_named_link", "url": "https://chatgpt.com/"}}
+    assert request(companion_server, "/desktop/execute", {**changed, "confirmation_token": token}, origin=origin)[0] == 409
+    assert request(companion_server, "/desktop/execute", {**youtube, "confirmation_token": token}, origin=origin)[0] == 409
+    assert opened == []
+    assert prompted == ["https://www.youtube.com/"]

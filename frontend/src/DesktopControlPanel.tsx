@@ -84,7 +84,28 @@ function bindNamedClickTargets(action: Action, transcript: string, targets: Arra
 const requestedBase = import.meta.env.VITE_DESKTOP_COMPANION_URL;
 const allowedCompanionBases = new Set(["http://127.0.0.1:18765", "http://127.0.0.1:18766", "http://127.0.0.1:18770"]);
 const base = requestedBase && allowedCompanionBases.has(requestedBase) ? requestedBase : "http://127.0.0.1:18765";
-const OPEN_NOTEPAD = /^open notepad[.!?]?$/i;
+const APPROVED_LINKS = new Map([
+  ["youtube", "https://www.youtube.com/"],
+  ["chatgpt", "https://chatgpt.com/"],
+  ["google", "https://www.google.com/"],
+]);
+
+function planLocalCommand(transcript: string, inQaPage: boolean): Action | null {
+  const command = transcript.toLowerCase().replace(/[.!?]$/, "").replace(/\s+/g, " ");
+  if (command === "open notepad") return { action: "open_app", app_id: "notepad" };
+
+  const approvedLink = command.match(/^open (?:(?:the )?(?:approved link|website|link) )?(.+)$/);
+  if (!approvedLink) return null;
+  const name = approvedLink[1];
+  const url = APPROVED_LINKS.get(name);
+  if (url) return { action: "open_named_link", url };
+  if (/^open (?:the )?(?:approved link|website|link) /.test(command)
+    || /^(?:https?:\/\/|www\.)/.test(name)
+    || (!inQaPage && /^[a-z0-9.-]+$/.test(name) && !["chrome", "edge"].includes(name))) {
+    return { action: "clarify", clarification: "Choose an approved link: YouTube, ChatGPT, or Google." };
+  }
+  return null;
+}
 const STOP_WORDS = /^(stop|emergency stop|desktop control stop|ఆపు|ఆపండి|అత్యవసరంగా ఆపు)$/iu;
 const wait = (ms: number) => new Promise(resolve => window.setTimeout(resolve, ms));
 
@@ -107,7 +128,7 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
   const currentPlanRef = useRef<{ id: string; transcript: string; action: Action } | null>(null);
   const executionInProgressRef = useRef(false);
   const desktopSnapshotRef = useRef<DesktopSnapshot | null>(null);
-  const isNotepadCommand = OPEN_NOTEPAD.test(transcript.normalize("NFC").trim());
+  const localAction = planLocalCommand(transcript.normalize("NFC").trim(), Boolean(getDesktopQaContext()));
   const languageCode = language === "english" ? "en" : language === "telugu" ? "te" : "mixed";
 
   function cancelSpeech() {
@@ -221,12 +242,12 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
     const normalized = transcript.normalize("NFC").trim();
     if (STOP_WORDS.test(normalized)) { await stop(); return; }
     if (!normalized || reviewedTranscript !== normalized) {
-      setStatus("Review and confirm the Prisma transcript before asking Gemini to plan an action.");
+      setStatus("Review and confirm the Prisma transcript before preparing an action.");
       return;
     }
     const qaContext = getDesktopQaContext();
     const token = getToken(); if (!token) { setStatus("Sign in again to interpret a command."); return; }
-    const planLocally = OPEN_NOTEPAD.test(normalized);
+    const localPlan = planLocalCommand(normalized, Boolean(qaContext));
     executionGateRef.current.invalidatePlan();
     currentPlanRef.current = null;
     setBusy(true); setAction(null);
@@ -234,14 +255,14 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
     try {
       let targets = qaContext?.targets || [];
       let approved_sites = qaContext?.approved_sites || {};
-      if (!qaContext && !planLocally) {
+      if (!qaContext && !localPlan) {
         const snapshot = await companion("/desktop/snapshot") as DesktopSnapshot;
         desktopSnapshotRef.current = snapshot;
         targets = targetsForCommand(snapshot, normalized);
         approved_sites = {};
       }
-      let proposed: Action = { action: "open_app", app_id: "notepad" };
-      if (!planLocally) {
+      let proposed = localPlan;
+      if (!proposed) {
         assertExecutionActive(requestEpoch);
         const response = await fetch("/api/v1/assistant/desktop/interpret", {
           method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
@@ -279,7 +300,7 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
     }
     if (step.action === "open_approved_site") return `open ${step.site_id === "qa_sandbox" ? "the QA sandbox" : "the desktop-control QA page"}`;
     if (step.action === "open_app") return `open ${step.app_id || "the selected app"}`;
-    if (step.action === "open_website") return `open ${step.url || "the selected website"}`;
+    if (step.action === "open_website" || step.action === "open_named_link") return `open ${step.url || "the selected website"}`;
     if (step.action === "search_web" || step.action === "search_youtube") return `search ${step.action === "search_youtube" ? "YouTube" : "Google"} for “${step.text || "…"}”`;
     if (["click_visible", "focus_visible", "type_into_visible"].includes(step.action)) return `${step.action.replaceAll("_", " ")} ${step.target_name || "the named visible control"}`;
     if (step.action === "keyboard_shortcut") return `press ${step.shortcut || "the selected shortcut"}`;
@@ -436,14 +457,14 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
     setBusy(true);
     try {
       let summary: string;
-      if (currentContext && !OPEN_NOTEPAD.test(normalized)) {
+      const localPlan = planLocalCommand(normalized, Boolean(currentContext));
+      if (currentContext && !localPlan) {
         summary = await executeStep(approvedAction, executionEpoch);
       } else {
-        const planLocally = OPEN_NOTEPAD.test(normalized);
         let executionPayload: { confirmed_close: boolean; action: Action } & Partial<{
           snapshot_id: string; active_window_id: string | null; focus_target_id: string | null;
         }> = { confirmed_close: closeConfirmed, action: approvedAction };
-        if (!planLocally) {
+        if (!localPlan) {
           const snapshot = desktopSnapshotRef.current;
           if (!snapshot) throw new Error("Refresh Windows UI Automation targets before executing this action.");
           const currentSnapshot = await companion("/desktop/snapshot") as DesktopSnapshot;
@@ -468,14 +489,17 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
         const response = await companion("/desktop/execute", { ...executionPayload, confirmation_token: confirmation.confirmation_token });
         assertExecutionActive(executionEpoch);
         if (response.ok !== true || response.action !== approvedAction.action
-          || (OPEN_NOTEPAD.test(normalized) && (response.app_id !== "notepad"
+          || (localPlan?.action === "open_app" && (response.app_id !== "notepad"
             || typeof response.verified_window !== "string" || !response.verified_window.trim()))
+          || (approvedAction.action === "open_named_link" && response.url !== approvedAction.url)
           || (response.action === "sequence" && (!Array.isArray(response.steps)
             || response.steps.length !== approvedAction.steps?.length
             || response.steps.some((step: { ok?: boolean } | null) => step?.ok !== true)))) {
           throw new Error("The companion did not confirm the approved action result.");
         }
-        summary = response.action === "sequence" ? `completed ${response.steps.length} approved desktop steps` : `completed ${response.action}`;
+        summary = approvedAction.action === "open_named_link"
+          ? `sent ${approvedAction.url} to the default browser`
+          : response.action === "sequence" ? `completed ${response.steps.length} approved desktop steps` : `completed ${response.action}`;
       }
       // An in-flight request may finish after Emergency Stop or a changed transcript.
       // Never display a stale success as a newly approved execution.
@@ -509,7 +533,7 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
     </div>
     <p>Prisma transcript: {transcript || "Record a command first."}</p>
     {transcript.trim() && !STOP_WORDS.test(transcript.normalize("NFC").trim()) && <button type="button" disabled={!connected || !active || busy || reviewedTranscript === transcript.normalize("NFC").trim()} onClick={() => { executionGateRef.current.invalidatePlan(); currentPlanRef.current = null; setReviewedTranscript(transcript.normalize("NFC").trim()); setAction(null); setStatus("Transcript reviewed. You can prepare the action plan."); }}>I reviewed this transcript</button>}
-    <button type="button" disabled={!connected || !active || !transcript.trim() || busy || (!STOP_WORDS.test(transcript.normalize("NFC").trim()) && reviewedTranscript !== transcript.normalize("NFC").trim())} onClick={() => void interpret()}>{STOP_WORDS.test(transcript.normalize("NFC").trim()) ? "Voice Emergency Stop" : isNotepadCommand ? "Prepare Notepad action" : "Interpret with Gemini"}</button>
+    <button type="button" disabled={!connected || !active || !transcript.trim() || busy || (!STOP_WORDS.test(transcript.normalize("NFC").trim()) && reviewedTranscript !== transcript.normalize("NFC").trim())} onClick={() => void interpret()}>{STOP_WORDS.test(transcript.normalize("NFC").trim()) ? "Voice Emergency Stop" : localAction?.action === "open_app" ? "Prepare Notepad action" : localAction ? "Prepare link action" : "Interpret with Gemini"}</button>
     {action && (clarification
       ? <div role="status" aria-label="Clarification needed"><p>{action.clarification}</p><button type="button" onClick={() => setAction(null)}>Clear clarification</button></div>
       : <div role="group" aria-label="Confirm desktop action"><p>Proposed: <b>{describe(action)}</b>{action.action === "sequence" && <ol>{(action.steps || []).map((step, index) => <li key={index}>{describe(step)}</li>)}</ol>}</p>

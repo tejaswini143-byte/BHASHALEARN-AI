@@ -94,3 +94,31 @@ def test_notepad_verifies_only_a_new_window_and_respects_stop(monkeypatch, tmp_p
             execute()
         assert focused == []
     assert len(launched) == 1
+
+
+@pytest.mark.parametrize("url", sorted(windows_automation.APPROVED_LINKS))
+def test_approved_link_dispatches_exact_url(monkeypatch, url):
+    opened = []
+    monkeypatch.setattr(windows_automation.webbrowser, "open", lambda value, **_: opened.append(value) or True)
+    result = windows_automation.execute_action({"action": "open_named_link", "url": url},
+                                               type_text=lambda _: None, cancel_check=lambda: None)
+    assert opened == [url]
+    assert result == {"ok": True, "action": "open_named_link", "url": url}
+
+
+@pytest.mark.parametrize("url", ["https://www.youtube.com.example.org/", "https://www.youtube.com/results", ["https://www.youtube.com/"]])
+def test_unapproved_link_never_dispatches(monkeypatch, url):
+    def unexpected_open(*args, **kwargs):
+        pytest.fail("An unapproved destination reached the browser")
+
+    monkeypatch.setattr(windows_automation.webbrowser, "open", unexpected_open)
+    with pytest.raises(RuntimeError, match="Choose an approved link"):
+        windows_automation.execute_action({"action": "open_named_link", "url": url},
+                                          type_text=lambda _: None, cancel_check=lambda: None)
+
+
+def test_approved_link_reports_browser_dispatch_failure(monkeypatch):
+    monkeypatch.setattr(windows_automation.webbrowser, "open", lambda *args, **kwargs: False)
+    with pytest.raises(RuntimeError, match="could not send the approved link"):
+        windows_automation.execute_action({"action": "open_named_link", "url": "https://chatgpt.com/"},
+                                          type_text=lambda _: None, cancel_check=lambda: None)

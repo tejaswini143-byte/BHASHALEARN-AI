@@ -280,6 +280,70 @@ test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
     await expect(confirm).toHaveCount(0);
   });
 
+  test("approved link previews its exact URL and unknown links never reach the companion", async ({ page }) => {
+    const origin = "http://127.0.0.1:18765";
+    const requests: string[] = [];
+    const action = { action: "open_named_link", url: "https://www.youtube.com/" };
+    const cors = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Authorization, Content-Type",
+    };
+    await page.route(`${origin}/**`, async route => {
+      const request = route.request();
+      if (request.method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
+      const path = new URL(request.url()).pathname;
+      if (path === "/pair") return route.fulfill({ headers: cors, json: { token: "mock-pairing" } });
+      if (path === "/health") return route.fulfill({ headers: cors, json: { active: false } });
+      if (path === "/activate") return route.fulfill({ headers: cors, json: { active: true } });
+      requests.push(path);
+      if (path === "/desktop/confirm") {
+        expect(request.postDataJSON().action).toEqual(action);
+        return route.fulfill({ headers: cors, json: { confirmation_token: "mock-link-ticket" } });
+      }
+      if (path === "/desktop/execute") {
+        expect(request.postDataJSON()).toMatchObject({ action, confirmation_token: "mock-link-ticket" });
+        return route.fulfill({ headers: cors, json: { ok: true, ...action } });
+      }
+      return route.abort();
+    });
+    await page.route("**/api/v1/assistant/voice/speech", route => route.fulfill({ status: 204 }));
+    await page.route("**/api/v1/assistant/desktop/interpret", route => {
+      requests.push("gemini");
+      return route.abort();
+    });
+    await mockVoiceBrowser(page, { transcript: "Open YouTube." });
+    await startRecording(page);
+    await stopRecording(page);
+    await page.getByRole("button", { name: "Send reviewed recording to Prisma" }).click();
+    const transcriptBox = page.getByLabel("Prisma transcript or typed message");
+    await expect(transcriptBox).toHaveValue("Open YouTube.");
+    const panel = page.getByRole("region", { name: "Windows desktop control" });
+    const prepare = panel.getByRole("button", { name: "Prepare link action" });
+    const confirm = panel.getByRole("button", { name: "Confirm and execute" });
+    await panel.getByRole("button", { name: "Connect to local companion" }).click();
+    await panel.getByRole("button", { name: "Enable control" }).click();
+    await expect(prepare).toBeDisabled();
+    await panel.getByRole("button", { name: "I reviewed this transcript" }).click();
+    await prepare.click();
+    await expect(panel.getByText("open https://www.youtube.com/", { exact: true })).toBeVisible();
+    expect(requests).toEqual([]);
+    await transcriptBox.fill("Open the website Example.");
+    await expect(confirm).toHaveCount(0);
+    await panel.getByRole("button", { name: "I reviewed this transcript" }).click();
+    await prepare.click();
+    await expect(panel.getByRole("status", { name: "Clarification needed" })).toContainText("Choose an approved link");
+    await expect(confirm).toHaveCount(0);
+    expect(requests).toEqual([]);
+
+    await transcriptBox.fill("Open YouTube.");
+    await panel.getByRole("button", { name: "I reviewed this transcript" }).click();
+    await prepare.click();
+    await confirm.click();
+    await expect(panel.getByRole("status")).toContainText("sent https://www.youtube.com/ to the default browser");
+    expect(requests).toEqual(["/desktop/confirm", "/desktop/execute"]);
+  });
+
   test("mic denial and Prisma errors keep typed fallback available with visible errors", async ({ page }) => {
     await mockVoiceBrowser(page, { micDenied: true });
     await startRecording(page);
