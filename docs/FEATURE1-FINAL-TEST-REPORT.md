@@ -159,3 +159,17 @@ The Prisma source comparison, unresolved root cause, and limits of the available
 | Feature 2 | No source changes; its coverage is part of the full backend run |
 
 No audio was sent to any additional provider. No speech fixture was available. The next and only live step requested is one fresh user-authorized recording of “Open Notepad.” If the transcript is inaccurate, testing will stop before Gemini or Windows execution.
+
+## Fresh authorized capture — 2026-11-13
+
+The user authorized one new capture of “Open Notepad.” The visible Voice Tutor control started recording in English on the isolated local origin. The user did not send a completion confirmation before the recorder stopped at its 30-second maximum, so this evidence does not establish that the requested phrase was spoken. The capture nevertheless completed and was sent once to Gnani Prisma; no audio file was retained locally.
+
+- Capture: 30.0 s; AudioContext/source rate 48,000 Hz; encoded upload WAV 16,000 Hz, mono, PCM16.
+- Input metrics: RMS −27.1 dBFS; peak −0.0 dBFS; 66.0% speech-level frames; clipping 0.00%.
+- Prisma: HTTP-success response, prisma-v3.0, en-IN/transcribe, 4,250 ms provider time.
+- Exact transcript: “emanna maam? Adagudu. matthuklu varthunne.” This does not match the requested English command.
+- No transcript was sent to Gemini. No Windows action occurred. Desktop Control remained disabled.
+
+The result confirms the request configuration and WAV header reached the backend and Prisma, but it does not isolate whether the Telugu transcript came from the actual captured speech, browser audio processing/device routing, or Prisma language/model behavior. The capture lasted to the maximum because speech-level activity did not meet the silence stop condition. No additional capture is authorized by the one-use approval; further recording requires fresh explicit consent.
+
+**Current disposition: BLOCKED — no verified spoken Windows action.** The pending-consent statement above is superseded by this single capture result.

@@ -139,3 +139,11 @@ Offline POC-01 adapter tests passed 8/8; the backend suite passed 328 with 3 ski
 Phase C checks used synthetic text and one explicitly confirmed disposable Notepad action. The real Gemini planner returned open_app(notepad); the authenticated companion executed that diagnostic plan; independent Windows checks found Notepad foreground and one editable text target. Emergency Stop then left companion control disabled. This is not voice acceptance.
 
 No new microphone recording has been made in this recovery attempt. The browser permission state was granted, but that state was not treated as permission to record. The requested real spoken test remains pending fresh explicit user approval.
+
+## Authorized live capture follow-up — 2026-11-13
+
+One fresh capture was explicitly authorized and initiated from the visible Voice Tutor microphone control. It ran for the full 30-second maximum (source 48 kHz; uploaded WAV 16 kHz mono PCM16; RMS −27.1 dBFS; peak −0.0 dBFS; speech-level frames 66.0%; clipping 0.00%). The UI did not receive a user completion confirmation before the maximum duration. Gnani Prisma returned HTTP success in 4,250 ms using prisma-v3.0 and en-IN/transcribe, with exact text: “emanna maam? Adagudu. matthuklu varthunne.” The user had requested “Open Notepad.”; the transcript was unusable for that command.
+
+The transcript was not passed to Gemini. Desktop Control remained disabled and no Windows action occurred. No local audio was retained; provider-side retention is unknown. This result does not identify whether the recorded speech itself was Telugu, the selected device/browser audio path supplied different content, or the fixed language route affected recognition. The audio was sent to Prisma once under the explicit one-capture authorization. No further recording will occur without renewed explicit consent.
+
+Feature 1 remains BLOCKED: there is no verified genuine spoken Windows command. The initial statement that no new capture was made in this attempt has been superseded by this follow-up.
