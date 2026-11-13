@@ -82,6 +82,7 @@ jobs:
         env:
           BHASHALEARN_E2E_START_SERVERS: "1"
           BHASHALEARN_E2E_MOCK_API: "1"
+          BHASHALEARN_E2E_FRONTEND_PORT: "5202"
         run: npm run test:e2e -- gnani-voice-classroom.spec.ts
       - name: Typecheck and build
         run: npm run build
