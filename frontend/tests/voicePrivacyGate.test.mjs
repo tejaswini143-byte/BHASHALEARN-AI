@@ -73,3 +73,12 @@ test("microphone activation is not triggered by page effects", () => {
   const outsideCapture = source.replace(capture, "");
   assert.doesNotMatch(outsideCapture, /navigator\\.mediaDevices\\.getUserMedia\\(/);
 });
+
+
+test("microphone capture requires a second explicit decision before getUserMedia", () => {
+  const start = source.slice(source.indexOf("async function toggleRecording()"), source.indexOf("function generateLocalDemo("));
+  const consent = start.indexOf('window.confirm("BHASHALEARN AI will start recording your microphone locally. Start recording?")');
+  const capture = start.indexOf("navigator.mediaDevices.getUserMedia({");
+  assert.ok(consent >= 0 && capture > consent, "Microphone capture must be preceded by a separate user confirmation");
+  assert.match(start, /if \(!window\.confirm\([\s\S]*?\)\) return;/);
+});
