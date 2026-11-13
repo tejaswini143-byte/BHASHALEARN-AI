@@ -86,8 +86,9 @@ Test-NetConnection 127.0.0.1 -Port 18765 -InformationLevel Quiet
 Follow the [local acceptance checklist](FEATURE1-LOCAL-ACCEPTANCE.md).
 Ask separately before each physical capture, live provider request, or Windows
 action. Start with one English “Open Notepad” capture, listen to the local
-preview, and continue only if Prisma returns the intended command and Gemini
-proposes just opening Notepad. Verify both confirmations, an independently
+preview, and continue only if Prisma returns the intended command and
+**Prepare Notepad action** proposes just opening Notepad. The exact English
+command is planned locally and needs no Gemini request. Verify both confirmations, an independently
 observed new disposable Notepad window, and Emergency Stop. Continue with
 the other checklist cases only after this succeeds.
 

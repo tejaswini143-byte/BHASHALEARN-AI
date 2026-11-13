@@ -84,6 +84,7 @@ function bindNamedClickTargets(action: Action, transcript: string, targets: Arra
 const requestedBase = import.meta.env.VITE_DESKTOP_COMPANION_URL;
 const allowedCompanionBases = new Set(["http://127.0.0.1:18765", "http://127.0.0.1:18766", "http://127.0.0.1:18770"]);
 const base = requestedBase && allowedCompanionBases.has(requestedBase) ? requestedBase : "http://127.0.0.1:18765";
+const OPEN_NOTEPAD = /^open notepad[.!?]?$/i;
 const STOP_WORDS = /^(stop|emergency stop|desktop control stop|ఆపు|ఆపండి|అత్యవసరంగా ఆపు)$/iu;
 const wait = (ms: number) => new Promise(resolve => window.setTimeout(resolve, ms));
 
@@ -105,6 +106,7 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
   const currentPlanRef = useRef<{ id: string; transcript: string; action: Action } | null>(null);
   const executionInProgressRef = useRef(false);
   const desktopSnapshotRef = useRef<DesktopSnapshot | null>(null);
+  const isNotepadCommand = OPEN_NOTEPAD.test(transcript.normalize("NFC").trim());
   const languageCode = language === "english" ? "en" : language === "telugu" ? "te" : "mixed";
 
   function cancelSpeech() {
@@ -199,6 +201,7 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
     }
     const qaContext = getDesktopQaContext();
     const token = getToken(); if (!token) { setStatus("Sign in again to interpret a command."); return; }
+    const planLocally = OPEN_NOTEPAD.test(normalized);
     executionGateRef.current.invalidatePlan();
     currentPlanRef.current = null;
     setBusy(true); setAction(null);
@@ -206,23 +209,27 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
     try {
       let targets = qaContext?.targets || [];
       let approved_sites = qaContext?.approved_sites || {};
-      if (!qaContext) {
+      if (!qaContext || planLocally) {
         const snapshot = await companion("/desktop/snapshot") as DesktopSnapshot;
         desktopSnapshotRef.current = snapshot;
         targets = targetsForCommand(snapshot, normalized);
         approved_sites = {};
       }
-      const response = await fetch("/api/v1/assistant/desktop/interpret", {
-        method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ transcript: normalized, targets, approved_sites }),
-      });
-      const value = await response.json();
-      if (!response.ok) throw new Error(value.detail || "Gemini could not interpret this command");
+      let proposed: Action = { action: "open_app", app_id: "notepad" };
+      if (!planLocally) {
+        assertExecutionActive(requestEpoch);
+        const response = await fetch("/api/v1/assistant/desktop/interpret", {
+          method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ transcript: normalized, targets, approved_sites }),
+        });
+        const value = await response.json();
+        if (!response.ok) throw new Error(value.detail || "Gemini could not interpret this command");
+        proposed = bindNamedClickTargets(value.action as Action, normalized, targets);
+      }
       if (!activeRef.current || !executionGateRef.current.isCurrent(requestEpoch)) {
         setStatus("Emergency Stop cancelled the pending command.");
         return;
       }
-      const proposed = bindNamedClickTargets(value.action as Action, normalized, targets);
       setCloseConfirmed(false);
       setAction(proposed);
       if (proposed.action === "clarify") {
@@ -404,7 +411,7 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
     setBusy(true);
     try {
       let summary: string;
-      if (currentContext) {
+      if (currentContext && !OPEN_NOTEPAD.test(normalized)) {
         summary = await executeStep(approvedAction, executionEpoch);
       } else {
         const snapshot = desktopSnapshotRef.current;
@@ -430,6 +437,8 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
         const response = await companion("/desktop/execute", { ...executionPayload, confirmation_token: confirmation.confirmation_token });
         assertExecutionActive(executionEpoch);
         if (response.ok !== true || response.action !== approvedAction.action
+          || (OPEN_NOTEPAD.test(normalized) && (response.app_id !== "notepad"
+            || typeof response.verified_window !== "string" || !response.verified_window.trim()))
           || (response.action === "sequence" && (!Array.isArray(response.steps)
             || response.steps.length !== approvedAction.steps?.length
             || response.steps.some((step: { ok?: boolean } | null) => step?.ok !== true)))) {
@@ -467,8 +476,8 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
       <button type="button" onClick={() => void stop()}>Emergency Stop</button>
     </div>
     <p>Prisma transcript: {transcript || "Record a command first."}</p>
-    {transcript.trim() && !STOP_WORDS.test(transcript.normalize("NFC").trim()) && <button type="button" disabled={!connected || !active || busy || reviewedTranscript === transcript.normalize("NFC").trim()} onClick={() => { executionGateRef.current.invalidatePlan(); currentPlanRef.current = null; setReviewedTranscript(transcript.normalize("NFC").trim()); setAction(null); setStatus("Transcript reviewed. You may ask Gemini to prepare a plan."); }}>I reviewed this transcript</button>}
-    <button type="button" disabled={!connected || !active || !transcript.trim() || busy || (!STOP_WORDS.test(transcript.normalize("NFC").trim()) && reviewedTranscript !== transcript.normalize("NFC").trim())} onClick={() => void interpret()}>{STOP_WORDS.test(transcript.normalize("NFC").trim()) ? "Voice Emergency Stop" : "Interpret with Gemini"}</button>
+    {transcript.trim() && !STOP_WORDS.test(transcript.normalize("NFC").trim()) && <button type="button" disabled={!connected || !active || busy || reviewedTranscript === transcript.normalize("NFC").trim()} onClick={() => { executionGateRef.current.invalidatePlan(); currentPlanRef.current = null; setReviewedTranscript(transcript.normalize("NFC").trim()); setAction(null); setStatus("Transcript reviewed. You can prepare the action plan."); }}>I reviewed this transcript</button>}
+    <button type="button" disabled={!connected || !active || !transcript.trim() || busy || (!STOP_WORDS.test(transcript.normalize("NFC").trim()) && reviewedTranscript !== transcript.normalize("NFC").trim())} onClick={() => void interpret()}>{STOP_WORDS.test(transcript.normalize("NFC").trim()) ? "Voice Emergency Stop" : isNotepadCommand ? "Prepare Notepad action" : "Interpret with Gemini"}</button>
     {action && (clarification
       ? <div role="status" aria-label="Clarification needed"><p>{action.clarification}</p><button type="button" onClick={() => setAction(null)}>Clear clarification</button></div>
       : <div role="group" aria-label="Confirm desktop action"><p>Proposed: <b>{describe(action)}</b>{action.action === "sequence" && <ol>{(action.steps || []).map((step, index) => <li key={index}>{describe(step)}</li>)}</ol>}</p>

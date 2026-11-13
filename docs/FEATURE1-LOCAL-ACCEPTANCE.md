@@ -43,7 +43,7 @@ In a third PowerShell window from the repository root:
 & .\.venv\Scripts\python.exe scripts\desktop_companion.py
 ```
 
-Open `http://127.0.0.1:5173/register` in a fresh browser profile, create a disposable student, then open `http://127.0.0.1:5173/voice`. Create a session with **New learning topic → + Create**. Leave desktop control disabled until the spoken command has been captured, reviewed locally, and correctly transcribed.
+Open `http://127.0.0.1:5173/register` in a fresh browser profile, create a disposable student, then open `http://127.0.0.1:5173/voice`. Create a session with **New learning topic → + Create**. Leave desktop control disabled until the spoken command has been captured, reviewed locally, and correctly transcribed. For the Phase 1 check, the exact English “Open Notepad” command is planned in the browser and requires no Gemini key. Gnani credentials are still needed for live Prisma transcription. Optional Timbre feedback uses the configured Gnani account.
 
 ## Diagnostic sequence
 1. Open the isolated Voice Tutor session and select **English**.
@@ -51,9 +51,9 @@ Open `http://127.0.0.1:5173/register` in a fresh browser profile, create a dispo
 3. With fresh permission, click **Start microphone recording**, accept the app consent dialog, and allow browser microphone access if prompted. When the recorder shows **Recording**, speak `Open Notepad`; click **Stop recording** immediately.
 4. Play the **local recording preview**. If it contains unrelated speech, silence, distortion, or the wrong input, **Discard** and investigate the device/browser path without contacting Prisma.
 5. If the preview audibly contains the intended phrase, explicitly approve **Send reviewed recording to Prisma**. Record duration, sample rate, RMS, peak, speech-active percentage, provider model, language code, format, latency, and transcript. Do not save raw audio or credentials in reports.
-6. If Prisma is wrong, stop before Gemini. With separate explicit approval for each upload, compare the **same approved recording** under `en-IN/transcribe` and `indic-auto/codemix` through a diagnostic-only path; never silently send to a different provider.
-7. If the transcript is correct, click **Connect to local companion → Enable control → I reviewed this transcript → Interpret with Gemini**. Verify the plan proposes only opening Notepad. With separate authorization for that action, click **Confirm and execute** and approve the matching native Windows prompt.
-8. Independently verify a newly opened disposable Notepad is foreground. Click **Emergency Stop** immediately afterward. Check that the panel offers **Enable control** and **Interpret with Gemini** is disabled. Report the commit, preview match, Prisma diagnostics and transcript, proposed action, whether both confirmations appeared, independent observation of Notepad, and the Stop result. Share no raw audio, credentials, or unredacted network exports.
+6. If Prisma is wrong, stop before preparing an action. With separate explicit approval for each upload, compare the **same approved recording** under `en-IN/transcribe` and `indic-auto/codemix` through a diagnostic-only path; never silently send to a different provider.
+7. If the transcript is correct, click **Connect to local companion → Enable control → I reviewed this transcript → Prepare Notepad action**. Verify the plan proposes only opening Notepad. With separate authorization for that action, click **Confirm and execute** and approve the matching native Windows prompt.
+8. Independently verify a newly opened disposable Notepad is foreground. Click **Emergency Stop** immediately afterward. Check that the panel offers **Enable control** and the plan button is disabled. Report the commit, preview match, Prisma diagnostics and transcript, proposed action, whether both confirmations appeared, independent observation of Notepad, and the Stop result. Share no raw audio, credentials, or unredacted network exports.
 
 ## Acceptance matrix
 - English Notepad open: NOT YET PASSED.
