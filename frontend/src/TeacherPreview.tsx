@@ -16,7 +16,7 @@ const states: TeacherState[] = ["idle", "walk", "turn", "explain", "point", "lis
 const expressions: Expression[] = ["neutral", "happy", "curious", "encouraging", "thinking"];
 
 type TeacherProps = { state: TeacherState; expression: Expression; target: BoardTarget | null; walkTarget: [number, number]; lookTarget: [number, number, number]; viseme: string; reduced: boolean; model: LoadedModel | null; photo: TeacherPhotoAsset | null; mode: TeacherMode; voiceState: ImmersiveVoiceState };
-type LoadedModel = { scene: Group; clips: AnimationClip[] };
+export type LoadedModel = { scene: Group; clips: AnimationClip[] };
 type LoadedTeacherProps = Omit<TeacherProps, "target" | "model" | "photo" | "mode" | "voiceState"> & { model: LoadedModel };
 
 class SceneErrorBoundary extends Component<{ children: ReactNode; onError: () => void }, { failed: boolean }> {
@@ -164,8 +164,8 @@ function Teacher(props: TeacherProps) {
 
 // Shared by the immersive scene; it reuses the prototype rendering contract
 // without importing the preview room or its board-oriented controls.
-export function ImmersiveTeacher({ state = "idle", reduced = false, voiceState = "idle", mode = "holographic" }: { state?: TeacherState; reduced?: boolean; voiceState?: ImmersiveVoiceState; mode?: TeacherMode }) {
-  return <Teacher state={state} expression={voiceState === "thinking" ? "thinking" : "neutral"} target={null} walkTarget={[-2, -0.5]} lookTarget={[0, 1.5, -2]} viseme="sil" reduced={reduced} model={null} photo={null} mode={mode} voiceState={voiceState} />;
+export function ImmersiveTeacher({ state = "idle", reduced = false, voiceState = "idle", mode = "holographic", model = null }: { state?: TeacherState; reduced?: boolean; voiceState?: ImmersiveVoiceState; mode?: TeacherMode; model?: LoadedModel | null }) {
+  return <Teacher state={state} expression={voiceState === "thinking" ? "thinking" : "neutral"} target={null} walkTarget={[-2, -0.5]} lookTarget={[0, 1.5, -2]} viseme="sil" reduced={reduced} model={model} photo={null} mode={mode} voiceState={voiceState} />;
 }
 
 function CameraRig({ cinematic }: { cinematic: boolean }) {
