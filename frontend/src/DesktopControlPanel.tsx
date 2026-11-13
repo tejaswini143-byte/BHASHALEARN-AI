@@ -411,6 +411,9 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
         assertExecutionActive(executionEpoch);
         summary = response.action === "sequence" ? `completed ${response.steps?.length || 0} approved desktop steps` : `completed ${response.action || approvedAction.action}`;
       }
+      // An in-flight request may finish after Emergency Stop or a changed transcript.
+      // Never display a stale success as a newly approved execution.
+      assertExecutionActive(executionEpoch);
       setHistory(items => [summary, ...items].slice(0, 20)); setStatus(`Completed: ${summary}`); setAction(null); void speak(`Completed. ${summary}.`);
     } catch (error) {
       if (!activeRef.current || !executionGateRef.current.isCurrent(executionEpoch)) setStatus("Stopped: Emergency Stop cancelled the remaining workflow.");
