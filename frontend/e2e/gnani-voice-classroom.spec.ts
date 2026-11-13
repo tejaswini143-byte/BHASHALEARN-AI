@@ -20,24 +20,25 @@ function pcmWav(): Buffer {
 }
 
 async function startRecording(page: Page, approve = true) {
-  page.once("dialog", async dialog => {
-    expect(dialog.type()).toBe("confirm");
-    expect(dialog.message()).toContain("start recording your microphone locally");
-    if (approve) await dialog.accept();
-    else await dialog.dismiss();
-  });
-  await page.getByRole("button", { name: "Start microphone recording" }).click();
+  await Promise.all([
+    page.waitForEvent("dialog").then(async dialog => {
+      expect(dialog.type()).toBe("confirm");
+      expect(dialog.message()).toContain("start recording your microphone locally");
+      if (approve) await dialog.accept();
+      else await dialog.dismiss();
+    }),
+    page.getByRole("button", { name: "Start microphone recording" }).dispatchEvent("click"),
+  ]);
 }
 
 async function stopRecording(page: Page) {
-  await page.waitForFunction(() => (window as Window & { voiceTest: { samplesDelivered?: boolean } }).voiceTest.samplesDelivered);
-  await page.getByRole("button", { name: "Stop recording" }).click();
+  await page.getByRole("button", { name: "Stop recording" }).dispatchEvent("click");
 }
 
 async function mockVoiceBrowser(page: Page, options: { micDenied?: boolean; sttStatus?: number; ttsStatus?: number } = {}) {
   await page.addInitScript(({ micDenied }) => {
     sessionStorage.setItem("bhashalearn_access_token", "mock-browser-token");
-    const testWindow = window as Window & { voiceTest?: { micCalls: number; tracksStopped: number; samplesDelivered?: boolean; recordedFormat?: string; recordedSize?: number } };
+    const testWindow = window as Window & { voiceTest?: { micCalls: number; tracksStopped: number; recordedFormat?: string; recordedSize?: number } };
     testWindow.voiceTest = { micCalls: 0, tracksStopped: 0 };
     Object.defineProperty(window, "AudioContext", { configurable: true, value: class {
       sampleRate = 48000;
@@ -49,12 +50,10 @@ async function mockVoiceBrowser(page: Page, options: { micDenied?: boolean; sttS
       createGain = () => ({ gain: { value: 1 }, connect: () => undefined, disconnect: () => undefined });
       createScriptProcessor = () => {
         const processor: { onaudioprocess: null | ((event: { inputBuffer: { getChannelData: (_channel: number) => Float32Array } }) => void); connect: () => void; disconnect: () => void } = {
-          onaudioprocess: null, connect: () => undefined, disconnect: () => undefined,
+          onaudioprocess: null,
+          connect: () => processor.onaudioprocess?.({ inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.15) } }),
+          disconnect: () => undefined,
         };
-        window.setTimeout(() => {
-          processor.onaudioprocess?.({ inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.15) } });
-          testWindow.voiceTest!.samplesDelivered = true;
-        }, 10);
         return processor;
       };
     } });
