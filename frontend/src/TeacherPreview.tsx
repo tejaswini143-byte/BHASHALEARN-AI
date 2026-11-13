@@ -10,6 +10,7 @@ import { settledTeacherState, teacherLessonSummary, validateTeacherAction, type 
 import { immersiveVoiceBridge, type ImmersiveVoiceState } from "./immersiveVoiceBridge";
 import { getSharedSessionContext, type SharedSessionContext } from "./sessionContext";
 import { disposeTeacherPhoto, loadTeacherPhoto, type TeacherPhotoAsset } from "./teacherPhoto";
+import { speechMorphWeight, type TeacherViseme } from "./teacherMouth";
 import "./teacher-preview.css";
 
 const states: TeacherState[] = ["idle", "walk", "turn", "explain", "point", "listen", "celebrate"];
@@ -87,9 +88,10 @@ function LoadedTeacher({ model, state, expression, viseme, walkTarget, lookTarge
       for (const [name, index] of Object.entries(dict)) {
         if (index === undefined) continue;
         const key = name.toLowerCase();
-        const active = viseme !== "sil" && (key.includes(viseme) || (viseme === "aa" && (key.includes("open") || key.includes("jaw"))));
-        const mood = expression === "neutral" ? false : key.includes(expression);
-        influences[index] = active || mood ? 0.55 : 0;
+        const speechWeight = speechMorphWeight(name, viseme as TeacherViseme);
+        const mood = expression !== "neutral" && key.includes(expression);
+        if (speechWeight !== null) influences[index] = speechWeight;
+        else if (mood) influences[index] = 0.55;
       }
     });
     invalidate();
@@ -109,9 +111,10 @@ function LoadedTeacher({ model, state, expression, viseme, walkTarget, lookTarge
         for (const [name, index] of Object.entries(dict)) {
           if (index === undefined) continue;
           const key = name.toLowerCase();
-          const speaking = syncedViseme !== "sil" && (key.includes(syncedViseme) || (syncedViseme === "aa" && (key.includes("open") || key.includes("jaw"))));
+          const speechWeight = speechMorphWeight(name, syncedViseme as TeacherViseme);
           const mood = expression !== "neutral" && key.includes(expression);
-          influences[index] = speaking || mood ? 0.55 : 0;
+          if (speechWeight !== null) influences[index] = speechWeight;
+          else if (mood) influences[index] = 0.55;
         }
       });
       invalidate();
