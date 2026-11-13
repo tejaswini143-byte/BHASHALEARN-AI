@@ -702,3 +702,16 @@ class AssistantCalendarEvent(Base):
     timezone_name: Mapped[str] = mapped_column(String(80), nullable=False)
     dedupe_key: Mapped[str] = mapped_column(String(64), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+
+class FutureSeekerReflection(Base):
+    """Student-owned, opt-in illustrative career reflection (never verified proficiency)."""
+    __tablename__ = "future_seeker_reflections"
+    __table_args__ = (Index("ix_future_seeker_owner_created", "student_id", "created_at"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    student_id: Mapped[str] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), nullable=False)
+    career_id: Mapped[str] = mapped_column(String(40), nullable=False)
+    completed_steps: Mapped[int] = mapped_column(Integer, nullable=False)
+    observed_skills_json: Mapped[str] = mapped_column(Text, nullable=False)
+    source: Mapped[str] = mapped_column(String(32), default="illustrative-simulation", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
