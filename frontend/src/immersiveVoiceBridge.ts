@@ -26,12 +26,16 @@ export class ImmersiveVoiceBridge {
   setState(state: ImmersiveVoiceState): void {
     if (state === this.state) return;
     this.state = state;
-    if (state !== "speaking") this.frame = { ...this.frame, viseme: "sil" };
+    if (state !== "speaking") {
+      this.frame = { ...this.frame, viseme: "sil" };
+      this.frameListeners.forEach(listener => listener());
+    }
     this.emit();
   }
 
   acceptFrame(frame: AvatarSyncFrame): void {
-    if (frame.generation < this.latestGeneration) return;
+    if (!Number.isSafeInteger(frame.generation) || frame.generation < this.latestGeneration || frame.generation === 0) return;
+    if (!Number.isFinite(frame.currentTimeMs) || frame.currentTimeMs < 0) return;
     this.latestGeneration = frame.generation;
     this.frame = { ...frame };
     this.frameListeners.forEach(listener => listener());
@@ -46,6 +50,8 @@ export class ImmersiveVoiceBridge {
   }
 
   clear(): void {
+    // A newly mounted voice controller starts generation numbering again.
+    // Its prior controller is cancelled by VoiceTutor before clearing.
     this.latestGeneration = 0;
     this.frame = { ...silentFrame };
     this.frameListeners.forEach(listener => listener());
