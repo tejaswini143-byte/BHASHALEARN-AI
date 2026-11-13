@@ -4,8 +4,10 @@
 
 - Branch: `feature/feature3-future-seeker`
 - Integration base: `integration/release-candidate-20261109` at `17eeee5a3bf3ab319479d0dc777d0743f6d2340a`
+- Feature implementation commit: `d0be919f4ffeaf9eefb1c8b81761218f1b3a6247`
+- Verified GitHub Actions run: [Feature 3 regression #2](https://github.com/tejaswini143-byte/BHASHALEARN-AI/actions/runs/43422008599) — all four jobs passed (backend/Feature 2 regressions and SQLite migration cycle, Windows contracts, frontend/mock browser/build, repository hygiene).
 - The base is the release-candidate integration branch, not the unmerged Feature 1 branch. This work uses its own checkout, Python environment, browser context, and SQLite file.
-- Update the tested head SHA in this section when publishing the handoff.
+- This Windows machine's local backend run remains blocked by the device application-control policy described below; the hosted CI run validated the server-side suite and migration against its isolated runner database.
 
 ## Requirements
 
