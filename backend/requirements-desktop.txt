@@ -1,0 +1,5 @@
+# Windows desktop companion is an optional local integration, not a server dependency.
+-r requirements.txt
+pyautogui>=0.9.54,<1
+pywinauto>=0.6.9,<1
+comtypes>=1.2,<2
