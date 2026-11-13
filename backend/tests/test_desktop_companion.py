@@ -19,6 +19,7 @@ def companion_server(monkeypatch):
     monkeypatch.setattr(companion, "last_action", "")
     monkeypatch.setattr(companion, "last_at", 0.0)
     monkeypatch.setattr(companion, "desktop_stop", Event())
+    monkeypatch.setattr(companion, "pending_execution_confirmations", {})
     monkeypatch.setattr(companion, "active_qa_bounds", lambda: (120, 80, 640, 480))
     server = ThreadingHTTPServer(("127.0.0.1", 0), companion.Handler)
     thread = Thread(target=server.serve_forever, daemon=True)
@@ -220,8 +221,40 @@ def test_desktop_execution_requires_enabled_control_and_local_origin(companion_s
     status, result = request(companion_server, "/desktop/execute", payload, origin="https://untrusted.example")
     assert status == 403 and not calls
     status, result = request(companion_server, "/desktop/execute", payload, origin="http://127.0.0.1:5173")
+    assert status == 409 and not calls
+    status, approval = request(companion_server, "/desktop/confirm", payload, origin="http://127.0.0.1:5173")
+    assert status == 200 and approval["confirmation_token"]
+    status, result = request(companion_server, "/desktop/execute", {
+        **payload, "confirmation_token": approval["confirmation_token"]
+    }, origin="http://127.0.0.1:5173")
     assert status == 200 and result["action"] == "open_app"
     assert calls == [payload["action"]]
+    status, _ = request(companion_server, "/desktop/execute", {
+        **payload, "confirmation_token": approval["confirmation_token"]
+    }, origin="http://127.0.0.1:5173")
+    assert status == 409 and calls == [payload["action"]]
+
+
+def test_confirmation_is_one_use_and_bound_to_the_exact_action(companion_server, monkeypatch):
+    calls = []
+    monkeypatch.setattr(companion.windows_automation, "execute_action", lambda action, **kwargs: calls.append(action) or {"ok": True, "action": action["action"]})
+    companion.active = True
+    companion.stopped = False
+    companion.desktop_stop.clear()
+    origin = "http://127.0.0.1:15199"
+    payload = {"snapshot_id": "snap", "action": {"action": "open_app", "app_id": "notepad"}}
+    status, approval = request(companion_server, "/desktop/confirm", payload, origin=origin)
+    assert status == 200 and calls == []
+    token = approval["confirmation_token"]
+    changed = {"snapshot_id": "snap", "action": {"action": "open_app", "app_id": "calculator"}, "confirmation_token": token}
+    status, _ = request(companion_server, "/desktop/execute", changed, origin=origin)
+    assert status == 409 and calls == []
+    status, _ = request(companion_server, "/desktop/execute", {**payload, "confirmation_token": token}, origin=origin)
+    assert status == 409 and calls == []
+
+    status, approval = request(companion_server, "/desktop/confirm", payload, origin=origin)
+    status, result = request(companion_server, "/desktop/execute", {**payload, "confirmation_token": approval["confirmation_token"]}, origin=origin)
+    assert status == 200 and result["action"] == "open_app" and calls == [payload["action"]]
 
 
 def test_emergency_stop_cancels_following_desktop_requests(companion_server, monkeypatch):
@@ -235,6 +268,43 @@ def test_emergency_stop_cancels_following_desktop_requests(companion_server, mon
                              {"snapshot_id": "snap", "action": {"action": "open_app", "app_id": "notepad"}},
                              origin="http://127.0.0.1:5173")
     assert status == 423 and "disabled" in result["error"]
+
+
+def test_authenticated_health_confirms_stop_and_fresh_enablement_is_required(companion_server, monkeypatch):
+    calls = []
+    monkeypatch.setattr(companion.windows_automation, "execute_action", lambda action, **kwargs: calls.append(action) or {"ok": True, "action": action["action"]})
+    companion.active = True
+    companion.stopped = False
+    companion.desktop_stop.clear()
+    status, before = request(companion_server, "/health")
+    assert status == 200 and before["active"] is True and before["stopped"] is False
+
+    origin = "http://127.0.0.1:15199"
+    payload = {"snapshot_id": "snap", "action": {"action": "open_app", "app_id": "notepad"}}
+    status, approval = request(companion_server, "/desktop/confirm", payload, origin=origin)
+    assert status == 200
+
+    status, stopped = request(companion_server, "/stop")
+    assert status == 200 and stopped["active"] is False
+    status, health = request(companion_server, "/health")
+    assert status == 200 and health["active"] is False and health["stopped"] is True
+
+    status, _ = request(companion_server, "/desktop/execute", {
+        **payload, "confirmation_token": approval["confirmation_token"]
+    }, origin=origin)
+    assert status == 423 and calls == []
+
+    status, enabled = request(companion_server, "/activate")
+    assert status == 200 and enabled["active"] is True
+    status, health = request(companion_server, "/health")
+    assert status == 200 and health["active"] is True and health["stopped"] is False
+    status, _ = request(companion_server, "/desktop/execute", payload, origin=origin)
+    assert status == 409 and calls == []
+    status, approval = request(companion_server, "/desktop/confirm", payload, origin=origin)
+    status, result = request(companion_server, "/desktop/execute", {
+        **payload, "confirmation_token": approval["confirmation_token"]
+    }, origin=origin)
+    assert status == 200 and result["action"] == "open_app" and calls == [payload["action"]]
 
 
 def test_active_action_stays_inside_qa_window(companion_server, monkeypatch):

@@ -100,12 +100,17 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const executionGateRef = useRef(createDesktopExecutionGate());
   const activeRef = useRef(false);
+  const nextPlanIdRef = useRef(0);
+  const currentPlanRef = useRef<{ id: string; transcript: string; action: Action } | null>(null);
+  const executionInProgressRef = useRef(false);
   const desktopSnapshotRef = useRef<DesktopSnapshot | null>(null);
   const languageCode = language === "english" ? "en" : language === "telugu" ? "te" : "mixed";
 
   useEffect(() => () => executionGateRef.current.disable(), []);
 
   useEffect(() => {
+    executionGateRef.current.invalidatePlan();
+    currentPlanRef.current = null;
     setReviewedTranscript("");
     setAction(null);
     setCloseConfirmed(false);
@@ -151,6 +156,7 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
     if (activeRef.current) {
       activeRef.current = false;
       executionGateRef.current.disable();
+      currentPlanRef.current = null;
       setActive(false);
     }
     try {
@@ -173,6 +179,8 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
     }
     const qaContext = getDesktopQaContext();
     const token = getToken(); if (!token) { setStatus("Sign in again to interpret a command."); return; }
+    executionGateRef.current.invalidatePlan();
+    currentPlanRef.current = null;
     setBusy(true); setAction(null);
     const requestEpoch = executionGateRef.current.snapshot();
     try {
@@ -201,6 +209,9 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
         setStatus(proposed.clarification || "Please clarify which target you mean.");
         void speak(proposed.clarification || "Please clarify which target you mean.");
       } else {
+        const planId = `${++nextPlanIdRef.current}:${Date.now()}`;
+        executionGateRef.current.registerPlan(planId);
+        currentPlanRef.current = { id: planId, transcript: normalized, action: proposed };
         setStatus("Review the proposed action before confirming.");
         void speak(`I understood ${describe(proposed)}. Confirm on screen to execute.`);
       }
@@ -338,53 +349,80 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
     throw new Error("That desktop action is not supported.");
   }
 
-  async function execute() {
+  async function execute(planId?: string) {
     if (!active || !action || action.action === "clarify") return;
-    if (reviewedTranscript !== transcript.normalize("NFC").trim()) {
+    const normalized = transcript.normalize("NFC").trim();
+    const plan = currentPlanRef.current;
+    if (!planId || !plan || plan.id !== planId || plan.action !== action || plan.transcript !== normalized) {
+      executionGateRef.current.invalidatePlan();
+      currentPlanRef.current = null;
+      setAction(null);
+      setStatus("The transcript changed. Review it again before planning another action.");
+      return;
+    }
+    if (reviewedTranscript !== normalized) {
+      executionGateRef.current.invalidatePlan();
+      currentPlanRef.current = null;
       setAction(null);
       setStatus("The transcript changed. Review it again before planning another action.");
       return;
     }
     const currentContext = getDesktopQaContext();
     if (hasCloseAction(action) && !closeConfirmed) { setStatus("Confirm that closing this window may discard unsaved work."); return; }
+    if (executionInProgressRef.current) return;
+    executionInProgressRef.current = true;
+    let executionEpoch: number;
+    try { executionEpoch = executionGateRef.current.begin(planId); }
+    catch (error) {
+      executionInProgressRef.current = false;
+      setStatus(error instanceof Error ? error.message : "A fresh confirmation is required.");
+      return;
+    }
+    const approvedAction = action;
+    currentPlanRef.current = null;
+    setAction(null);
     setBusy(true);
-    const executionEpoch = executionGateRef.current.begin();
     try {
       let summary: string;
       if (currentContext) {
-        summary = await executeStep(action, executionEpoch);
+        summary = await executeStep(approvedAction, executionEpoch);
       } else {
         const snapshot = desktopSnapshotRef.current;
         if (!snapshot) throw new Error("Refresh Windows UI Automation targets before executing this action.");
         const currentSnapshot = await companion("/desktop/snapshot") as DesktopSnapshot;
-        const needsBoundTargets = requiresBoundTargets(action);
+        const needsBoundTargets = requiresBoundTargets(approvedAction);
         if (needsBoundTargets && (currentSnapshot.active_window_id !== snapshot.active_window_id
           || currentSnapshot.focused_target_id !== snapshot.focused_target_id
           || JSON.stringify(currentSnapshot.targets) !== JSON.stringify(snapshot.targets))) {
           throw new Error("The active window or its UI Automation targets changed after planning. Reinterpret the command.");
         }
         assertExecutionActive(executionEpoch);
-        const response = await companion("/desktop/execute", {
+        const executionPayload = {
           snapshot_id: needsBoundTargets ? snapshot.snapshot_id : currentSnapshot.snapshot_id,
           active_window_id: needsBoundTargets ? snapshot.active_window_id : currentSnapshot.active_window_id,
           focus_target_id: needsBoundTargets ? snapshot.focused_target_id : currentSnapshot.focused_target_id,
           confirmed_close: closeConfirmed,
-          action: addWindowContext(action, snapshot),
-        });
+          action: addWindowContext(approvedAction, snapshot),
+        };
+        const confirmation = await companion("/desktop/confirm", executionPayload) as { confirmation_token?: string };
+        if (!confirmation.confirmation_token) throw new Error("The companion did not issue a one-time action confirmation.");
         assertExecutionActive(executionEpoch);
-        summary = response.action === "sequence" ? `completed ${response.steps?.length || 0} approved desktop steps` : `completed ${response.action || action.action}`;
+        const response = await companion("/desktop/execute", { ...executionPayload, confirmation_token: confirmation.confirmation_token });
+        assertExecutionActive(executionEpoch);
+        summary = response.action === "sequence" ? `completed ${response.steps?.length || 0} approved desktop steps` : `completed ${response.action || approvedAction.action}`;
       }
       setHistory(items => [summary, ...items].slice(0, 20)); setStatus(`Completed: ${summary}`); setAction(null); void speak(`Completed. ${summary}.`);
     } catch (error) {
       if (!activeRef.current || !executionGateRef.current.isCurrent(executionEpoch)) setStatus("Stopped: Emergency Stop cancelled the remaining workflow.");
       else setStatus(error instanceof Error ? error.message : "Action failed");
     }
-    finally { setBusy(false); }
+    finally { executionGateRef.current.finish(executionEpoch); executionInProgressRef.current = false; setBusy(false); }
   }
 
   async function stop() {
     executionGateRef.current.disable();
     activeRef.current = false;
+    currentPlanRef.current = null;
     setActive(false); setAction(null); setReviewedTranscript("");
     try { await companion("/stop"); setStatus("Emergency stop sent; explicitly re-enable to continue."); }
     catch { setConnected(false); setStatus("Stop could not reach the companion. Use its PyAutoGUI fail-safe or close its process."); }
@@ -399,13 +437,13 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
       <button type="button" onClick={() => void stop()}>Emergency Stop</button>
     </div>
     <p>Prisma transcript: {transcript || "Record a command first."}</p>
-    {transcript.trim() && !STOP_WORDS.test(transcript.normalize("NFC").trim()) && <button type="button" disabled={!connected || !active || busy || reviewedTranscript === transcript.normalize("NFC").trim()} onClick={() => { setReviewedTranscript(transcript.normalize("NFC").trim()); setAction(null); setStatus("Transcript reviewed. You may ask Gemini to prepare a plan."); }}>I reviewed this transcript</button>}
+    {transcript.trim() && !STOP_WORDS.test(transcript.normalize("NFC").trim()) && <button type="button" disabled={!connected || !active || busy || reviewedTranscript === transcript.normalize("NFC").trim()} onClick={() => { executionGateRef.current.invalidatePlan(); currentPlanRef.current = null; setReviewedTranscript(transcript.normalize("NFC").trim()); setAction(null); setStatus("Transcript reviewed. You may ask Gemini to prepare a plan."); }}>I reviewed this transcript</button>}
     <button type="button" disabled={!connected || !active || !transcript.trim() || busy || (!STOP_WORDS.test(transcript.normalize("NFC").trim()) && reviewedTranscript !== transcript.normalize("NFC").trim())} onClick={() => void interpret()}>{STOP_WORDS.test(transcript.normalize("NFC").trim()) ? "Voice Emergency Stop" : "Interpret with Gemini"}</button>
     {action && (clarification
       ? <div role="status" aria-label="Clarification needed"><p>{action.clarification}</p><button type="button" onClick={() => setAction(null)}>Clear clarification</button></div>
       : <div role="group" aria-label="Confirm desktop action"><p>Proposed: <b>{describe(action)}</b>{action.action === "sequence" && <ol>{(action.steps || []).map((step, index) => <li key={index}>{describe(step)}</li>)}</ol>}</p>
         {hasCloseAction(action) && <label><input type="checkbox" checked={closeConfirmed} disabled={!active || busy} onChange={event => setCloseConfirmed(event.target.checked)}/> I confirm closing this window may discard unsaved work.</label>}
-        <button type="button" disabled={!active || busy || (hasCloseAction(action) && !closeConfirmed)} onClick={() => void execute()}>Confirm and execute</button><button type="button" onClick={() => { setCloseConfirmed(false); setAction(null); }}>Cancel</button></div>)}
+        <button type="button" disabled={!active || busy || (hasCloseAction(action) && !closeConfirmed)} onClick={() => void execute(currentPlanRef.current?.id)}>Confirm and execute</button><button type="button" onClick={() => { executionGateRef.current.invalidatePlan(); currentPlanRef.current = null; setCloseConfirmed(false); setAction(null); }}>Cancel</button></div>)}
     <button type="button" onClick={() => setHistory([])}>Clear action history</button><ol aria-label="Recent desktop actions">{history.map((item,index)=><li key={`${index}-${item}`}>{item}</li>)}</ol>
     <audio ref={audioRef} controls aria-label="Gnani Timbre action confirmation" />
   </section>;

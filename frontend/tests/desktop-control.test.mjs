@@ -29,13 +29,75 @@ test("desktop commands use the approved QA page and semantic targets only", asyn
   assert.match(panel, /companion\("\/action", \{ action: "move_to", \.\.\.point \}\);\s*assertExecutionActive\(executionEpoch\);\s*await wait\(280\)/);
   assert.match(panel, /executionGateRef\.current\.assertCurrent\(executionEpoch\)/);
   assert.match(panel, /executionGateRef\.current\.disable\(\)/);
+  assert.match(panel, /currentPlanRef\.current = \{ id: planId, transcript: normalized, action: proposed \}/);
+  assert.match(panel, /onClick=\{\(\) => void execute\(currentPlanRef\.current\?\.id\)\}/);
+  assert.match(panel, /executionInProgressRef\.current = true/);
+  assert.match(panel, /executionGateRef\.current\.begin\(planId\)/);
+});
+
+test("transcript review and Gemini planning only prepare a plan and never execute it", async () => {
+  const panel = await read("../src/DesktopControlPanel.tsx");
+  const interpret = panel.slice(panel.indexOf("async function interpret()"), panel.indexOf("function describe("));
+  const review = panel.slice(panel.indexOf('>I reviewed this transcript</button>') - 800, panel.indexOf('>I reviewed this transcript</button>') + 40);
+  assert.match(interpret, /assistant\/desktop\/interpret/);
+  assert.match(interpret, /registerPlan\(planId\)/);
+  assert.doesNotMatch(interpret, /\bexecute\s*\(/);
+  assert.doesNotMatch(interpret, /\/desktop\/execute/);
+  assert.match(review, /setReviewedTranscript\(/);
+  assert.doesNotMatch(review, /execute\s*\(|\/desktop\/execute/);
+});
+
+test("only the confirmed plan handler requests a one-use companion execution ticket", async () => {
+  const panel = await read("../src/DesktopControlPanel.tsx");
+  const execute = panel.slice(panel.indexOf("async function execute("), panel.indexOf("async function stop("));
+  assert.match(execute, /executionGateRef\.current\.begin\(planId\)/);
+  assert.match(execute, /companion\("\/desktop\/confirm", executionPayload\)/);
+  assert.match(execute, /companion\("\/desktop\/execute", \{ \.\.\.executionPayload, confirmation_token: confirmation\.confirmation_token \}\)/);
+  assert.ok(execute.indexOf('companion("/desktop/confirm"') < execute.indexOf('companion("/desktop/execute"'));
+  assert.match(execute, /executionInProgressRef\.current\) return/);
+});
+
+test("a plan requires one fresh confirmation and cannot be consumed twice", async () => {
+  const { createDesktopExecutionGate } = await import("../src/desktopExecution.mjs");
+  const gate = createDesktopExecutionGate();
+  gate.enable();
+  assert.throws(() => gate.begin("plan-1"), /fresh confirmation/);
+  gate.registerPlan("plan-1");
+  const token = gate.begin("plan-1");
+  assert.throws(() => gate.begin("plan-1"), /already executing/);
+  gate.finish(token);
+  assert.throws(() => gate.begin("plan-1"), /fresh confirmation/);
+  gate.registerPlan("plan-2");
+  assert.doesNotThrow(() => gate.begin("plan-2"));
+});
+
+test("a changed transcript invalidates its pending action approval", async () => {
+  const { createDesktopExecutionGate } = await import("../src/desktopExecution.mjs");
+  const panel = await read("../src/DesktopControlPanel.tsx");
+  const gate = createDesktopExecutionGate();
+  gate.enable();
+  gate.registerPlan("open-notepad-transcript-1");
+  assert.match(panel, /useEffect\(\(\) => \{\s*executionGateRef\.current\.invalidatePlan\(\);\s*currentPlanRef\.current = null;\s*setReviewedTranscript\(""\);/);
+  gate.invalidatePlan();
+  assert.throws(() => gate.begin("open-notepad-transcript-1"), /fresh confirmation/);
+});
+
+test("disabled desktop control cannot start an approved plan", async () => {
+  const { createDesktopExecutionGate } = await import("../src/desktopExecution.mjs");
+  const gate = createDesktopExecutionGate();
+  assert.throws(() => gate.begin("plan-1"), /disabled/);
+  gate.enable();
+  gate.registerPlan("plan-1");
+  gate.disable();
+  assert.throws(() => gate.begin("plan-1"), /disabled/);
 });
 
 test("Emergency Stop cancels the remaining ordered desktop steps", async () => {
   const { createDesktopExecutionGate } = await import("../src/desktopExecution.mjs");
   const gate = createDesktopExecutionGate();
   gate.enable();
-  const token = gate.begin();
+  gate.registerPlan("pending-sequence");
+  const token = gate.begin("pending-sequence");
   const completed = [];
   let release;
   const pendingAction = new Promise(resolve => { release = resolve; });
@@ -64,7 +126,7 @@ test("a Prisma transcript must be explicitly reviewed before Gemini planning", a
 test("target-independent app launches use a fresh snapshot without weakening target-bound checks", async () => {
   const panel = await read("../src/DesktopControlPanel.tsx");
   assert.match(panel, /function requiresBoundTargets\(step: Action\)/);
-  assert.match(panel, /const needsBoundTargets = requiresBoundTargets\(action\)/);
+  assert.match(panel, /const needsBoundTargets = requiresBoundTargets\(approvedAction\)/);
   assert.match(panel, /needsBoundTargets \? snapshot\.snapshot_id : currentSnapshot\.snapshot_id/);
   assert.match(panel, /if \(needsBoundTargets && \(currentSnapshot\.active_window_id/);
 });

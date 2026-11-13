@@ -43,11 +43,24 @@ background_lock = threading.Lock()
 background_config: dict[str, str] = {}
 background_stop = threading.Event()
 desktop_stop = threading.Event()
+confirmation_lock = threading.Lock()
+pending_execution_confirmations: dict[str, tuple[float, str]] = {}
 call_ui_root = None
 call_windows: dict[str, dict] = {}
 call_windows_lock = threading.Lock()
 pyautogui.FAILSAFE = True
 pyautogui.PAUSE = 0.15
+
+
+def _confirmation_fingerprint(payload: dict) -> str:
+    relevant = {key: payload.get(key) for key in (
+        "action", "snapshot_id", "active_window_id", "focus_target_id", "confirmed_close")}
+    return json.dumps(relevant, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _clear_execution_confirmations() -> None:
+    with confirmation_lock:
+        pending_execution_confirmations.clear()
 
 QA_WINDOW_TITLE = "BHASHALEARN Desktop Control QA"
 WINDOW_PADDING = 24
@@ -603,27 +616,44 @@ class Handler(BaseHTTPRequestHandler):
             if not any(t.name == "bhashalearn-local-reminders" and t.is_alive() for t in threading.enumerate()):
                 threading.Thread(target=_background_poll, name="bhashalearn-local-reminders", daemon=True).start()
             return self._send(200, {"enabled": True, "delivery": "loopback_companion"})
-        if self.path not in {"/activate", "/disable", "/stop", "/action", "/desktop/execute"}:
+        if self.path not in {"/activate", "/disable", "/stop", "/action", "/desktop/confirm", "/desktop/execute"}:
             return self._send(404, {"error": "not found"})
         if self.path == "/stop":
             with lock: active = False; stopped = True; desktop_stop.set()
+            _clear_execution_confirmations()
             last_action = "Emergency stop; desktop control disabled"
             return self._send(200, {"ok": True, "active": False, "last_action": last_action})
         if self.path == "/disable":
             with lock: active = False; desktop_stop.set()
+            _clear_execution_confirmations()
             return self._send(200, {"ok": True, "active": False})
         if self.path == "/activate":
             with lock: active = True; stopped = False; desktop_stop.clear()
+            _clear_execution_confirmations()
             return self._send(200, {"ok": True, "active": True})
         if not active or stopped: return self._send(423, {"error": "desktop control is disabled"})
-        if self.path == "/desktop/execute":
+        if self.path in {"/desktop/confirm", "/desktop/execute"}:
             if self.headers.get("Origin") not in ALLOWED_ORIGINS:
-                return self._send(403, {"error": "desktop execution is available only to the local BHASHALEARN app"})
+                return self._send(403, {"error": "desktop approval is available only to the local BHASHALEARN app"})
             length = min(int(self.headers.get("Content-Length", "0")), 8192)
             try: payload = json.loads(self.rfile.read(length))
             except Exception: return self._send(400, {"error": "invalid JSON"})
             if not isinstance(payload, dict) or not isinstance(payload.get("action"), dict):
                 return self._send(422, {"error": "a validated action plan is required"})
+            if self.path == "/desktop/confirm":
+                confirmation = secrets.token_urlsafe(32)
+                fingerprint = _confirmation_fingerprint(payload)
+                with confirmation_lock:
+                    now = time.monotonic()
+                    for key, (expires, _) in list(pending_execution_confirmations.items()):
+                        if expires <= now: pending_execution_confirmations.pop(key, None)
+                    pending_execution_confirmations[confirmation] = (now + 60.0, fingerprint)
+                return self._send(200, {"confirmation_token": confirmation, "expires_in_seconds": 60})
+            confirmation = payload.get("confirmation_token")
+            with confirmation_lock:
+                pending = pending_execution_confirmations.pop(confirmation, None) if isinstance(confirmation, str) else None
+            if not pending or pending[0] <= time.monotonic() or pending[1] != _confirmation_fingerprint(payload):
+                return self._send(409, {"error": "a fresh one-time user confirmation is required for this exact action"})
             def ensure_control_active():
                 if desktop_stop.is_set() or not active or stopped:
                     raise RuntimeError("Emergency Stop cancelled the remaining desktop actions.")
