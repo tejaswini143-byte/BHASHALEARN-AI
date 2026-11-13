@@ -70,8 +70,8 @@ def _require_native_execution_approval(action: dict) -> bool:
     action_name = str(action.get("action", "unknown"))[:80]
     app_name = str(action.get("app_id") or action.get("target_name") or "")[:80]
     detail = f"{action_name}: {app_name}" if app_name else action_name
-    message = ("BHASHALEARN AI requests a Windows desktop action:\\n\\n"
-               + detail + "\\n\\nApprove this action? Choose No to cancel.")
+    message = ("BHASHALEARN AI requests a Windows desktop action:\n\n"
+               + detail + "\n\nApprove this action? Choose No to cancel.")
     # MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2 | MB_TOPMOST
     return ctypes.windll.user32.MessageBoxW(None, message, "BHASHALEARN AI — Desktop approval",
                                              0x00000004 | 0x00000030 | 0x00000100 | 0x00040000) == 6
