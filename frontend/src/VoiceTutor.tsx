@@ -511,18 +511,10 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
       processor.onaudioprocess = event => {
         const samples = new Float32Array(event.inputBuffer.getChannelData(0));
         chunksRef.current.push(samples);
-        let energy = 0;
-        for (const sample of samples) energy += sample * sample;
-        const rms = Math.sqrt(energy / Math.max(1, samples.length));
-        const now = performance.now();
-        // Stop shortly after the utterance instead of sending up to 30 seconds of room noise.
-        // Low-gain Windows microphones can deliver speech below -40 dBFS even with AGC.
-        if (rms >= 0.0045) {
-          speechStartedAtRef.current ??= now;
-          lastSpeechAtRef.current = now;
-        } else if (speechStartedAtRef.current !== null && now - lastSpeechAtRef.current >= 1400) {
-          void finishRecording();
-        }
+        // Do not infer utterance completion from a fixed RMS threshold:
+        // noise suppression and Windows AGC vary across Realtek microphones.
+        // The user explicitly stops the recording; 30 seconds is a safety cap.
+        // Never send microphone samples from this callback.
       };
       source.connect(processor); processor.connect(mute); mute.connect(context.destination);
       recordingActive.current = true; setRecording(true);
@@ -530,7 +522,7 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
       const started = Date.now();
       const timer = window.setInterval(() => {
         const elapsed = Math.floor((Date.now() - started) / 1000); setRecordingSeconds(elapsed);
-        if (elapsed >= 30) void finishRecording();
+        if (elapsed >= 30) { setNotice("Maximum 30-second recording reached. Review the local audio before any upload."); void finishRecording(); }
       }, 500);
       recordingTimer.current = timer;
     } catch {
