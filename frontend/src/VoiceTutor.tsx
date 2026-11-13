@@ -10,6 +10,7 @@ import { immersiveVoiceBridge } from "./immersiveVoiceBridge";
 import { matchVoiceNavigationCommand } from "./voiceNavigation.mjs";
 import { DesktopControlPanel } from "./DesktopControlPanel";
 import { wavFromFloatChunks } from "./voiceWav";
+import { measureVoiceAudio, type VoiceAudioMetrics } from "./voiceAudioMetrics";
 import "./voice.css";
 
 type Language = "english" | "telugu" | "mixed";
@@ -87,6 +88,7 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
   const [loading, setLoading] = useState(true);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [captureMetrics, setCaptureMetrics] = useState<VoiceAudioMetrics | null>(null);
   const [audioUrl, setAudioUrl] = useState("");
   const [playbackElementKey, setPlaybackElementKey] = useState(0);
   const [demoMode, setDemoMode] = useState(false);
@@ -403,7 +405,7 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
     transcriptionRequestRef.current?.abort();
     const controller = new AbortController();
     transcriptionRequestRef.current = controller;
-    setTranscribing(true); setError(""); setNotice("Sending PCM WAV to Gnani Prisma…");
+    setTranscribing(true); setError(""); setNotice(`Sending ${blob.size.toLocaleString()} byte PCM WAV to Gnani Prisma…`);
     try {
       const form = new FormData(); form.append("audio", blob, "microphone.wav"); form.append("language", language);
       const response = await fetch(`/api/v1/voice/sessions/${encodeURIComponent(sessionId)}/transcribe`, { method: "POST", headers: { ...headers(), "X-Request-ID": crypto.randomUUID() }, body: form, signal: controller.signal });
@@ -426,7 +428,8 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
     if (recordingTimer.current !== null) { window.clearInterval(recordingTimer.current); recordingTimer.current = null; }
     const context = contextRef.current;
     try {
-      await releaseMicrophone();
+      try { if (context) setCaptureMetrics(measureVoiceAudio(chunksRef.current, context.sampleRate)); }
+      finally { await releaseMicrophone(); }
       await transcribeWav(wavFromFloatChunks(chunksRef.current, context?.sampleRate || 48000));
     }
     catch (cause) { handleError(cause); }
@@ -612,6 +615,7 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
         <div className={recording ? "vt-orb-area vt-recording" : "vt-orb-area"}><div className="vt-orb-ring"/><div className="vt-orb-ring vt-ring-two"/><button className="vt-orb" disabled={!selected || busy || transcribing || micStarting} onClick={() => void toggleRecording()} aria-label={recording ? "Stop recording" : "Start microphone recording"} aria-pressed={recording}><svg viewBox="0 0 24 24" width="45" height="45" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><rect x="9" y="2" width="6" height="13" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5m-4 0h8"/></svg></button></div>
         <div className={recording ? "vt-wave vt-wave-active" : "vt-wave"} aria-hidden="true">{Array.from({length: 35}, (_, index) => <i key={index} style={{ height: `${12 + Math.abs(Math.sin(index * 1.43)) * 38}px`, animationDelay: `${index * 37}ms` }}/>)}</div>
         <div className="vt-status" role="status">{micStarting ? "Requesting microphone permission…" : recording ? `Recording… ${recordingSeconds}s / 30s — tap the orb to stop` : transcribing ? "Transcribing with Gnani Prisma…" : speaking ? "Tutor audio is playing…" : speechLoading ? "Generating tutor audio with Gnani Timbre…" : busy ? "Gemini tutor is thinking…" : selected ? "Tap the orb to record a question" : "Choose a learning session first"}</div>
+        {captureMetrics && <p className="vt-notice" role="status" aria-label="Last microphone capture quality">Last capture: {captureMetrics.durationSeconds.toFixed(1)} s · RMS {captureMetrics.rmsDbfs.toFixed(1)} dBFS · peak {captureMetrics.peakDbfs.toFixed(1)} dBFS · speech-level frames {captureMetrics.speechFramePercent.toFixed(1)}% · clipped {captureMetrics.clippedPercent.toFixed(2)}%. {captureMetrics.rmsDbfs < -42 ? "Input is quiet; check the selected Windows microphone and input level." : ""}</p>}
         <label className="vt-autospeak"><input type="checkbox" checked={autoSpeak} onChange={event => setAutoSpeak(event.target.checked)}/> Generate and play tutor replies automatically</label>
         {speechLoading && !audioUrl && <button type="button" className="vt-stop-generation" onClick={() => stopPlayback()}>Cancel speech generation</button>}
         {localDemoAvailable && !demoMode && <button type="button" className="vt-demo-play" onClick={() => { const last = [...messages].reverse().find(item => item.role === "assistant"); if (last && selected) generateLocalDemo(last.content, selected, language); }}>Play local demo tone</button>}

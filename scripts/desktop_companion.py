@@ -31,7 +31,7 @@ except ImportError:  # Direct script entry point: scripts/ is sys.path[0].
 
 HOST, PORT = "127.0.0.1", int(os.getenv("BHASHALEARN_COMPANION_PORT", "18765"))
 ALLOWED_ORIGINS = {"http://127.0.0.1:5173", "http://localhost:5173", "http://127.0.0.1:5200", "http://localhost:5200", "http://127.0.0.1:5201", "http://localhost:5201", "http://127.0.0.1:5202", "http://localhost:5202", "http://127.0.0.1:5203", "http://localhost:5203", "http://127.0.0.1:15199", "http://localhost:15199", "http://127.0.0.1:5199", "http://localhost:5199", "http://127.0.0.1:5198", "http://localhost:5198", "http://127.0.0.1:5210", "http://localhost:5210", "http://127.0.0.1:5211", "http://localhost:5211"}
-ALLOWED_API_PORTS = {8027, 18029, 18030, 18031, 18034, 5198, 5199, 5200, 5201, 5202, 5203, 5210, 5211, 5173}
+ALLOWED_API_PORTS = {8027, 18027, 18029, 18030, 18031, 18034, 5198, 5199, 5200, 5201, 5202, 5203, 5210, 5211, 5173}
 TOKEN = os.getenv("BHASHALEARN_COMPANION_TOKEN") or secrets.token_urlsafe(32)
 SHOW_PAIRING_TOKEN = os.getenv("BHASHALEARN_SHOW_COMPANION_TOKEN", "").casefold() == "true"
 lock = threading.Lock()

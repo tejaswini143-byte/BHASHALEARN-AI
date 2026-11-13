@@ -62,6 +62,22 @@ def test_pairing_token_is_released_only_to_allowlisted_local_app(companion_serve
     assert "only to the local BHASHALEARN app" in result["error"]
 
 
+def test_background_connection_accepts_documented_loopback_backend_port(companion_server, monkeypatch):
+    monkeypatch.setattr(companion, "background_config", {})
+    monkeypatch.setattr(companion.httpx, "get", lambda *_args, **_kwargs: type("Response", (), {"status_code": 200})())
+    origin = "http://127.0.0.1:15199"
+    payload = {"api_base": "http://127.0.0.1:18027/api/v1", "access_token": "synthetic-session-token"}
+    status, result = request(companion_server, "/background/enable", payload, origin=origin)
+    assert status == 200
+    assert result["enabled"] is True
+    assert companion.background_config["api_base"] == payload["api_base"]
+    status, result = request(companion_server, "/background/enable", {
+        **payload, "api_base": "http://127.0.0.1:18028/api/v1"
+    }, origin=origin)
+    assert status == 422
+    assert "Only an authenticated loopback" in result["error"]
+
+
 def test_repeated_reminder_poll_reserves_only_one_call_window(monkeypatch):
     class Root:
         def __init__(self):

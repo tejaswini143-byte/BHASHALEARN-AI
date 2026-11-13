@@ -72,6 +72,23 @@ def test_compound_notepad_dictation_stays_local_and_is_planned_as_sequence(monke
     assert "BHASHALEARN AI" not in captured[0]
 
 
+def test_unbound_notepad_type_into_is_bound_only_after_explicit_open_step(monkeypatch):
+    monkeypatch.setattr(desktop_commands, "generate_tutor_reply", lambda *_: (
+        '{"action":"sequence","steps":[{"action":"open_app","app_id":"notepad"},'
+        '{"action":"type_into","text":"[LOCAL_DICTATION]"}]}'
+    ))
+    plan = desktop_commands.interpret_desktop_command("Open Notepad and type BHASHALEARN AI")
+    assert [step.action for step in plan.steps] == ["open_app", "type"]
+    assert plan.steps[1].text == "BHASHALEARN AI"
+
+    monkeypatch.setattr(desktop_commands, "generate_tutor_reply", lambda *_: (
+        '{"action":"sequence","steps":[{"action":"type_into","text":"[LOCAL_DICTATION]"}]}'
+    ))
+    with pytest.raises(HTTPException) as error:
+        desktop_commands.interpret_desktop_command("Open Notepad and type BHASHALEARN AI")
+    assert error.value.status_code == 502
+
+
 def test_youtube_search_query_is_redacted_and_kept_local(monkeypatch):
     captured = []
     def fake(_instruction, history):

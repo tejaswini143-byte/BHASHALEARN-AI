@@ -320,6 +320,24 @@ def interpret_desktop_command(
         value = json.loads(raw)
         if value.get("action") == "unsupported":
             raise HTTPException(422, "I couldn't safely identify that command. Please say one clear supported action.")
+        # Gemini may name the new Notepad document as a generic type_into field
+        # before that window exists in the current UIA snapshot. Bind only this
+        # explicit open-then-type sequence to the guarded `type` action, which
+        # re-identifies the new app's unique editable document before typing.
+        if value.get("action") == "sequence" and isinstance(value.get("steps"), list):
+            steps = value["steps"]
+            opened_notepad = any(
+                isinstance(step, dict) and step.get("action") == "open_app" and step.get("app_id") == "notepad"
+                for step in steps
+            )
+            if opened_notepad:
+                value["steps"] = [
+                    ({"action": "type", "text": step.get("text")}
+                     if isinstance(step, dict) and step.get("action") == "type_into"
+                     and not step.get("target_id") and step.get("text") == "[LOCAL_DICTATION]"
+                     else step)
+                    for step in steps
+                ]
         action = DesktopAction.model_validate(value)
     except HTTPException:
         raise
