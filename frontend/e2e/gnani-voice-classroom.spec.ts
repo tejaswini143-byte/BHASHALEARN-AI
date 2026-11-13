@@ -354,7 +354,7 @@ test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
     expect(requests).toEqual(["/desktop/confirm", "/desktop/execute"]);
   });
 
-  test("pointer plans reject duplicate names before requesting native approval", async ({ page }) => {
+  test("pointer plans reject duplicate names and a switched QA tab before native approval", async ({ page }) => {
     const snapshot = {
       snapshot_id: "qa", active_window_id: "window", focused_target_id: null, pointer_qa_window: true,
       targets: [
@@ -389,6 +389,16 @@ test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
     await panel.getByRole("button", { name: "Prepare pointer action" }).click();
     await expect(panel.getByRole("status", { name: "Clarification needed" })).toContainText("More than one visible button");
     await expect(panel.getByRole("button", { name: "Confirm and execute" })).toHaveCount(0);
+    expect(actionRequests).toEqual([]);
+
+    await page.getByLabel("Prisma transcript or typed message").fill("Move the cursor right.");
+    await panel.getByRole("button", { name: "I reviewed this transcript" }).click();
+    await panel.getByRole("button", { name: "Prepare pointer action" }).click();
+    const confirm = panel.getByRole("button", { name: "Confirm and execute" });
+    await expect(confirm).toBeVisible();
+    snapshot.pointer_qa_window = false;
+    await confirm.click();
+    await expect(panel.getByRole("status")).toContainText("QA window is no longer active");
     expect(actionRequests).toEqual([]);
   });
 

@@ -78,7 +78,7 @@ planned locally. No Gemini key is needed.
 
 In a disposable Chrome or Edge window, open the local
 `/desktop-control-test.html` page and use its embedded Voice Tutor. Keep
-the QA window in the foreground and place the cursor inside it. Use a fresh
+the QA window in the foreground and place the cursor away from its edges. Use a fresh
 approved recording and Prisma upload for each live command.
 
 - Say “Move the cursor right.” Review the transcript and select **Prepare
@@ -87,7 +87,7 @@ approved recording and Prisma upload for each live command.
   prompt. After both approvals, check that the button changes to **CLICK VERIFIED**.
 - Say “Click Open chapter.” The two matching buttons should produce a
   clarification without an execution button. Change the window or button after
-  planning to check that stale targets are rejected.
+  planning to check that stale targets are rejected. Try switching tabs or disabling the button before a click. If a companion response is lost, inspect the page before preparing a fresh action.
 
 The companion reports that it sent the click. Verify the visible page change
 separately and use **Emergency Stop** when finished.

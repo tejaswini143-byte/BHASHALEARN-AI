@@ -404,16 +404,20 @@ def execute_action(payload: dict, *, type_text, cancel_check, confirmed_close: b
                 or not _is_pointer_qa_window(window["app_id"], window["wrapper"])):
             raise RuntimeError("Keep the disposable desktop QA window in the foreground.")
         bounds = window["wrapper"].rectangle()
+        # Keep moves away from the resize border and the global corner fail-safe.
+        left, top, right, bottom = bounds.left + 8, bounds.top + 8, bounds.right - 8, bounds.bottom - 8
+        if right <= left or bottom <= top:
+            raise RuntimeError("The disposable QA window is too small. Enlarge it and prepare the action again.")
         if action == "move_qa_pointer":
             direction = payload.get("direction")
             delta = {"left": (-80, 0), "right": (80, 0), "up": (0, -80), "down": (0, 80)}.get(direction) if isinstance(direction, str) else None
             if delta is None:
                 raise RuntimeError("Choose left, right, up, or down.")
             start = pyautogui.position()
-            if not (bounds.left <= start.x < bounds.right and bounds.top <= start.y < bounds.bottom):
+            if not (left <= start.x < right and top <= start.y < bottom):
                 raise RuntimeError("Place the cursor inside the disposable desktop QA window first.")
-            x = max(bounds.left, min(bounds.right - 1, start.x + delta[0]))
-            y = max(bounds.top, min(bounds.bottom - 1, start.y + delta[1]))
+            x = max(left, min(right - 1, start.x + delta[0]))
+            y = max(top, min(bottom - 1, start.y + delta[1]))
             if (x, y) == (start.x, start.y):
                 raise RuntimeError("The cursor is already at the edge of the QA window.")
         else:
@@ -434,7 +438,7 @@ def execute_action(payload: dict, *, type_text, cancel_check, confirmed_close: b
                 raise RuntimeError("The approved button is missing or its name is no longer unique.")
             x, y = (rect.left + rect.right) // 2, (rect.top + rect.bottom) // 2
 
-        if not (bounds.left <= x < bounds.right and bounds.top <= y < bounds.bottom):
+        if not (left <= x < right and top <= y < bottom):
             raise RuntimeError("The approved target is outside the disposable QA window.")
         cancel_check()
         if _foreground_handle() != window["handle"]:
@@ -443,10 +447,21 @@ def execute_action(payload: dict, *, type_text, cancel_check, confirmed_close: b
         actual = pyautogui.position()
         if (actual.x, actual.y) != (x, y):
             raise RuntimeError("Windows did not move the cursor to the approved position.")
+        if (_foreground_handle() != window["handle"]
+                or not _is_pointer_qa_window(window["app_id"], window["wrapper"])):
+            raise RuntimeError("The desktop QA window changed during pointer movement.")
         if action == "click_qa_control":
             cancel_check()
             hit = Desktop(backend="uia").from_point(x, y)
-            if _foreground_handle() != window["handle"] or hit.element_info != wrapper.element_info:
+            current = wrapper.rectangle()
+            current_pointer = pyautogui.position()
+            if (_foreground_handle() != window["handle"]
+                    or not _is_pointer_qa_window(window["app_id"], window["wrapper"])
+                    or hit.element_info != wrapper.element_info
+                    or not wrapper.is_visible() or not wrapper.is_enabled()
+                    or str(wrapper.element_info.name or "").strip() != label
+                    or [current.left, current.top, current.right, current.bottom] != target["rect"]
+                    or (current_pointer.x, current_pointer.y) != (x, y)):
                 raise RuntimeError("The approved button is no longer under the cursor.")
             cancel_check()
             pyautogui.click(x, y)

@@ -130,16 +130,19 @@ def test_approved_link_reports_browser_dispatch_failure(monkeypatch, browser_err
                                           type_text=lambda _: None, cancel_check=lambda: None)
 
 
-@pytest.mark.parametrize("outcome", ["move", "click", "duplicate", "changed", "wrong_window", "obscured"])
+@pytest.mark.parametrize("outcome", ["move", "edge", "click", "duplicate", "changed", "wrong_window", "obscured",
+                                     "renamed_after_move", "resized_after_move", "disabled_after_move", "left_qa_tab"])
 def test_qa_pointer_is_bounded_to_the_approved_window(monkeypatch, outcome):
     bounds = SimpleNamespace(left=100, top=100, right=600, bottom=600)
     rect = SimpleNamespace(left=200, top=200, right=300, bottom=260)
+    moved = False
     button = SimpleNamespace(
         element_info=SimpleNamespace(name="Changed" if outcome == "changed" else "Search"),
-        rectangle=lambda: rect, is_visible=lambda: True, is_enabled=lambda: True,
+        rectangle=lambda: rect, is_visible=lambda: True,
+        is_enabled=lambda: not (moved and outcome == "disabled_after_move"),
     )
     window = SimpleNamespace(
-        rectangle=lambda: bounds, window_text=lambda: "BHASHALEARN Desktop Control QA",
+        rectangle=lambda: bounds, window_text=lambda: "Another tab" if moved and outcome == "left_qa_tab" else "BHASHALEARN Desktop Control QA",
         descendants=lambda **_: [button, button] if outcome == "duplicate" else [button],
     )
     entries = {
@@ -152,22 +155,28 @@ def test_qa_pointer_is_bounded_to_the_approved_window(monkeypatch, outcome):
     monkeypatch.setattr(windows_automation, "Desktop", lambda **_: SimpleNamespace(
         from_point=lambda *_: SimpleNamespace(element_info=None) if outcome == "obscured" else button,
     ))
-    position = SimpleNamespace(x=200, y=200)
+    position = SimpleNamespace(x=580 if outcome == "edge" else 200, y=200)
     clicks = []
     monkeypatch.setattr(windows_automation.pyautogui, "position", lambda: position)
 
     def move(x, y, **_):
+        nonlocal moved
         position.x, position.y = x, y
+        moved = True
+        if outcome == "renamed_after_move":
+            button.element_info.name = "Changed"
+        if outcome == "resized_after_move":
+            rect.right += 5
 
     monkeypatch.setattr(windows_automation.pyautogui, "moveTo", move)
     monkeypatch.setattr(windows_automation.pyautogui, "click", lambda x, y: clicks.append((x, y)))
-    payload = {"action": "move_qa_pointer", "direction": "right"} if outcome == "move" else {
+    payload = {"action": "move_qa_pointer", "direction": "right"} if outcome in {"move", "edge"} else {
         "action": "click_qa_control", "target_id": "button", "target_name": "Search",
     }
-    if outcome in {"move", "click"}:
+    if outcome in {"move", "edge", "click"}:
         result = windows_automation.execute_action(payload, snapshot_id="snap", active_window_id="window",
                                                    type_text=lambda _: None, cancel_check=lambda: None)
-        assert result["cursor"] == ([280, 200] if outcome == "move" else [250, 230])
+        assert result["cursor"] == {"move": [280, 200], "edge": [591, 200], "click": [250, 230]}[outcome]
     else:
         with pytest.raises(RuntimeError):
             windows_automation.execute_action(payload, snapshot_id="snap", active_window_id="window",

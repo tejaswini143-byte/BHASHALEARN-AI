@@ -502,6 +502,9 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
           if (!snapshot) throw new Error("Refresh Windows UI Automation targets before executing this action.");
           const currentSnapshot = await companion("/desktop/snapshot") as DesktopSnapshot;
           const needsBoundTargets = requiresBoundTargets(approvedAction);
+          if (pointerCommand(normalized) && currentSnapshot.pointer_qa_window !== true) {
+            throw new Error("The disposable desktop QA window is no longer active. Prepare the action again.");
+          }
           if (needsBoundTargets && (currentSnapshot.active_window_id !== snapshot.active_window_id
             || currentSnapshot.focused_target_id !== snapshot.focused_target_id
             || JSON.stringify(currentSnapshot.targets) !== JSON.stringify(snapshot.targets))) {
@@ -520,10 +523,14 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
         if (!confirmation.confirmation_token) throw new Error("The companion did not issue a one-time action confirmation.");
         assertExecutionActive(executionEpoch);
         const executingLink = approvedAction.action === "open_named_link";
+        const executingPointer = ["move_qa_pointer", "click_qa_control"].includes(approvedAction.action);
         const response = await companion("/desktop/execute", { ...executionPayload, confirmation_token: confirmation.confirmation_token },
-          pairing, executingLink ? AbortSignal.timeout(15_000) : undefined).catch(error => {
+          pairing, executingLink || executingPointer ? AbortSignal.timeout(15_000) : undefined).catch(error => {
           if (executingLink && (error instanceof TypeError || error?.name === "TimeoutError")) {
             throw new Error("The companion did not respond. Check whether the link opened before retrying.");
+          }
+          if (executingPointer && (error instanceof TypeError || error?.name === "TimeoutError")) {
+            throw new Error("The companion did not respond. Check the QA window before preparing a fresh pointer action.");
           }
           throw error;
         });
