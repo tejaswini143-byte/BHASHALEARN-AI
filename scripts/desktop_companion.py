@@ -58,6 +58,25 @@ def _confirmation_fingerprint(payload: dict) -> str:
     return json.dumps(relevant, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
+def _require_native_execution_approval(action: dict) -> bool:
+    """Fail closed unless the local Windows operator approves the exact action.
+
+    Browser-origin requests and a bearer token do not prove a human clicked
+    the web confirmation button. A separate native prompt is required.
+    """
+    if os.name != "nt":
+        return False
+    import ctypes
+    action_name = str(action.get("action", "unknown"))[:80]
+    app_name = str(action.get("app_id") or action.get("target_name") or "")[:80]
+    detail = f"{action_name}: {app_name}" if app_name else action_name
+    message = ("BHASHALEARN AI requests a Windows desktop action:\\n\\n"
+               + detail + "\\n\\nApprove this action? Choose No to cancel.")
+    # MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2 | MB_TOPMOST
+    return ctypes.windll.user32.MessageBoxW(None, message, "BHASHALEARN AI — Desktop approval",
+                                             0x00000004 | 0x00000030 | 0x00000100 | 0x00040000) == 6
+
+
 def _clear_execution_confirmations() -> None:
     with confirmation_lock:
         pending_execution_confirmations.clear()
@@ -641,6 +660,12 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(payload, dict) or not isinstance(payload.get("action"), dict):
                 return self._send(422, {"error": "a validated action plan is required"})
             if self.path == "/desktop/confirm":
+                # Independent OS-level consent: an authenticated browser request
+                # alone must never mint an executable confirmation ticket.
+                if not _require_native_execution_approval(payload["action"]):
+                    return self._send(403, {"error": "local Windows operator did not approve this action"})
+                if not active or stopped or desktop_stop.is_set():
+                    return self._send(423, {"error": "desktop control was stopped during approval"})
                 confirmation = secrets.token_urlsafe(32)
                 fingerprint = _confirmation_fingerprint(payload)
                 with confirmation_lock:
