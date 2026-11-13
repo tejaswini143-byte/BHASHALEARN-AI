@@ -113,6 +113,8 @@ function LessonWorkspace({ student }: { student: Student }) {
     return () => controller.abort();
   }, []);
   const [language, setLanguage] = useState<"en" | "te">("en");
+  const immersiveUrl = `/immersive?lesson=${encodeURIComponent(controls.lessonId)}`;
+  const voiceUrl = `/voice?topic=${encodeURIComponent(lesson?.title[language] ?? "Visual lesson")}`;
   const [reduced, setReduced] = useState(() => typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   const [replayKey, setReplayKey] = useState(0);
   const lesson = catalog.find(item => item.id === controls.lessonId);
@@ -163,6 +165,7 @@ function LessonWorkspace({ student }: { student: Student }) {
         <aside className="vl-side">
           <section className="vl-card"><span className="vl-eyebrow">{language === "en" ? "LEARNING OBJECTIVES" : "అభ్యసన లక్ష్యాలు"}</span><h3>{language === "en" ? "By the end, you can…" : "పూర్తయ్యే సరికి మీరు…"}</h3><ul>{lesson.objectives.map((item, index) => <li key={index}>{item[language]}</li>)}</ul></section>
           <section className="vl-card vl-guided"><span className="vl-eyebrow">{language === "en" ? "GUIDED EXPLORATION" : "మార్గదర్శక అన్వేషణ"}</span><h3>{step ? step.title[language] : (language === "en" ? "Start exploring" : "అన్వేషణ ప్రారంభించండి")}</h3><p aria-live="polite">{step ? step.explanation[language] : lesson.description[language]}</p><div className="vl-step-actions"><button aria-label="Previous lesson step" onClick={() => advance(-1)} disabled={controls.step < 0}>←</button><span>{Math.max(0, controls.step + 1)} / {lesson.steps.length}</span><button aria-label="Next lesson step" onClick={() => advance(1)} disabled={controls.step >= lesson.steps.length - 1}>→</button></div><button className="vl-replay" onClick={reset}>↺ {language === "en" ? "Reset and replay" : "మళ్లీ ప్రారంభించండి"}</button><small>← → {language === "en" ? "steps · R reset" : "దశలు · R మళ్లీ ప్రారంభించు"}</small></section>
+          <section className="vl-card vl-crossmode" aria-label="Continue learning"><span className="vl-eyebrow">{language === "en" ? "CONTINUE LEARNING" : "అభ్యాసాన్ని కొనసాగించండి"}</span><h3>{language === "en" ? "Learn with your AI teacher" : "AI ఉపాధ్యాయునితో నేర్చుకోండి"}</h3><p>{language === "en" ? "Continue this topic in the immersive smartboard classroom or discuss it with the voice tutor." : "ఈ అంశాన్ని స్మార్ట్‌బోర్డ్ తరగతిలో కొనసాగించండి లేదా వాయిస్ ట్యూటర్‌తో చర్చించండి."}</p><div className="vl-crossmode-links"><Link to={immersiveUrl}>3D classroom</Link><Link to={voiceUrl}>Voice tutor</Link></div></section>
           <section className="vl-card"><span className="vl-eyebrow">{language === "en" ? "KEY TAKEAWAY" : "ముఖ్యాంశం"}</span><ul>{lesson.takeaways.map((item, index) => <li key={index}>{item[language]}</li>)}</ul></section>
           {controls.lessonId === "solar-system" && <section className="vl-card vl-planet-detail"><span className="vl-eyebrow">{language === "en" ? "PLANET PROFILE" : "గ్రహ పరిచయం"}</span><h3>{selectedPlanet.name[language]}</h3><p>{selectedPlanet.description[language]}</p><strong>{language === "en" ? "Orbital period" : "కక్ష్య కాలం"}: {selectedPlanet.orbitalDays.toLocaleString()} {language === "en" ? "days" : "రోజులు"}</strong></section>}
         </aside>
