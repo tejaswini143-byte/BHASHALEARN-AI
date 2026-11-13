@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import tempfile
+import wave
+from contextlib import closing
 from collections import defaultdict, deque
 from enum import Enum
 from pathlib import Path
@@ -80,6 +82,15 @@ class TranscriptionResponse(BaseModel):
     transcript: str
     detected_language: str | None = None
     language_mode: LanguageMode
+    provider: Literal["gnani_prisma"] = "gnani_prisma"
+    provider_status: Literal["success"] = "success"
+    provider_latency_ms: int = Field(ge=0)
+    provider_model: str
+    provider_language_code: str
+    provider_format: str
+    audio_sample_rate_hz: int = Field(gt=0)
+    audio_channels: int = Field(gt=0)
+    audio_bits_per_sample: int = Field(gt=0)
 
 
 class SpeechRequest(BaseModel):
@@ -235,12 +246,18 @@ async def transcribe_audio(
             path = Path(folder) / f"{uuid4().hex}.wav"
             path.write_bytes(data)
             validate_audio(path)
+            with closing(wave.open(str(path), "rb")) as audio_info:
+                audio_sample_rate_hz = audio_info.getframerate()
+                audio_channels = audio_info.getnchannels()
+                audio_bits_per_sample = audio_info.getsampwidth() * 8
             try:
                 provider = create_prisma_client_for_language(language.value)
             except VoiceProviderNotConfigured as exc:
                 raise HTTPException(status_code=503, detail=str(exc)) from exc
             try:
+                provider_started = monotonic()
                 result = await run_in_threadpool(PrismaTranscriptionAdapter(provider).transcribe, path)
+                provider_latency_ms = max(0, round((monotonic() - provider_started) * 1000))
             except STTStageError as exc:
                 # The reused POC adapter emits safe, credential-free provider errors.
                 if exc.code == "timeout":
@@ -253,6 +270,13 @@ async def transcribe_audio(
         transcript=result.text,
         detected_language=result.detected_language,
         language_mode=language,
+        provider_latency_ms=provider_latency_ms,
+        provider_model=getattr(getattr(provider, "config", None), "model", "prisma-v3.0"),
+        provider_language_code=getattr(getattr(provider, "config", None), "language", {"english": "en-IN", "telugu": "te-IN", "mixed": "indic-auto"}[language.value]),
+        provider_format=getattr(getattr(provider, "config", None), "output_format", {"english": "transcribe", "telugu": "transcribe", "mixed": "codemix"}[language.value]),
+        audio_sample_rate_hz=audio_sample_rate_hz,
+        audio_channels=audio_channels,
+        audio_bits_per_sample=audio_bits_per_sample,
     )
 
 

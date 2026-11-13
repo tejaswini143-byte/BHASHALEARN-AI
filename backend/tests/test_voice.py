@@ -109,6 +109,16 @@ def test_stt_success_language_modes_keep_raw_transcript(client, monkeypatch):
         assert response.json()["transcript"] == expected
         assert response.json()["language_mode"] == mode
         assert response.json()["detected_language"] == "te"
+        diagnostics = response.json()
+        assert diagnostics["provider"] == "gnani_prisma"
+        assert diagnostics["provider_status"] == "success"
+        assert diagnostics["provider_model"] == "prisma-v3.0"
+        assert diagnostics["audio_sample_rate_hz"] == 16000
+        assert diagnostics["audio_channels"] == 1
+        assert diagnostics["audio_bits_per_sample"] == 16
+        assert diagnostics["provider_latency_ms"] >= 0
+        expected_settings = {"english": ("en-IN", "transcribe"), "telugu": ("te-IN", "transcribe"), "mixed": ("indic-auto", "codemix")}
+        assert (diagnostics["provider_language_code"], diagnostics["provider_format"]) == expected_settings[mode]
     assert stub.calls == 3
     assert client.get(f"/api/v1/sessions/{session_id}/messages", headers=headers).json() == []
 

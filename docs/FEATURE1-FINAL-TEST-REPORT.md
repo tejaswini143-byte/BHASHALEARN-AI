@@ -122,3 +122,40 @@ No source code was changed during this live continuation. The latest available r
 ### Final disposition
 
 Feature 1 remains **incomplete**. The minimum next acceptance step is a separately authorized Prisma tuning/diagnostic session, followed by a fresh user-approved spoken command only if the user chooses to resume. This report does not claim successful microphone-to-Windows execution, completion of representative commands, or a completed live acceptance.
+
+## Recovery engineering and Phase C — 2026-11-13
+
+**Status: BLOCKED pending explicit authorization for one new microphone recording. No real spoken Windows action has passed in this attempt.**
+
+The Prisma source comparison, unresolved root cause, and limits of the available audio evidence are documented in FEATURE1-ROOT-CAUSE-REPORT.md. The previous approved captures remain the only speech evidence in this report: 6.1 s at −20.6 dBFS RMS / −0.5 dBFS peak with 65.0% speech-level frames returned “Open Notepad and type ‘Bash Learn AI’”; 8.4 s at −21.3 dBFS RMS / approximately 0 dBFS peak with 74.5% speech-level frames returned “Open Notepad and and reply, Barsha, learn AI.” The first capture was not auto-forwarded; the earlier unsafe ambient capture remains separately disclosed above. No previous WAV is available for forensic waveform inspection.
+
+### Repairs in this recovery
+
+- Replaced simple bin averaging with windowed-sinc low-pass resampling to mono 16 kHz PCM16 WAV.
+- Added a deterministic synthetic signal test for WAV header, sample rate, channels, bit depth, duration, in-band preservation, and out-of-band attenuation. This is not a speech recognition test.
+- Added server-reported Prisma status, provider latency, selected language/model/format, and uploaded WAV header metadata; Voice Tutor displays these with the capture metrics.
+- Removed automatic Gemini planning on each newly returned transcript. The user must review the transcript, then review the separate plan before confirming execution.
+- Fixed target-independent Notepad/app launches being rejected by unrelated UI Automation target-list changes. Bound targets still require the existing strict snapshot checks.
+
+### Phase C evidence (diagnostic only)
+
+- Backend /health, /ready, and /api/v1/ready returned HTTP 200. Frontend login returned HTTP 200. The existing isolated Feature 1 SQLite file was preserved while the backend was reloaded to serve the diagnostics changes.
+- The disposable student account authenticated and one existing Voice Tutor session was selected. Provider readiness reported live/configured. Browser microphone permission displayed granted, but no recording started and prior permission was not treated as authorization.
+- The companion paired through its origin-checked local route. Desktop Control was initially inactive, then explicitly enabled for the synthetic executor diagnostic, and Emergency Stop returned it to inactive/stopped.
+- A typed synthetic “Open Notepad” transcript could not invoke Gemini until the explicit review button was used. The real Gemini endpoint returned HTTP 200 and a structured open_app(notepad) proposal; the proposal was not executed until the separate confirmation button was clicked.
+- The first controlled executor attempt was rejected because its target snapshot became stale after planning. After the target-independent launch repair, the reviewed plan opened a new scratch Notepad. Independent Windows checks confirmed a Notepad process in the foreground; the authenticated UI Automation snapshot contained one editable text target. This proves the direct executor path only, not the speech pipeline.
+- No ChatGPT/YouTube/mouse/scroll/window-close/multistep/Telugu/mixed voice commands were run. They remain gated on a successful real spoken Notepad command.
+
+### Regression and Feature 2
+
+| Check | Result |
+|---|---|
+| POC-01 Prisma adapter offline tests | 8 passed |
+| Focused backend voice endpoint tests | 9 passed |
+| Full backend regression | 328 passed, 3 skipped |
+| Full frontend suite | 96 passed |
+| Production frontend build | Passed; existing Three.js chunk-size advisory |
+| Synthetic WAV transport/resampling | 3 focused tests passed |
+| Feature 2 | No source changes; its coverage is part of the full backend run |
+
+No audio was sent to any additional provider. No speech fixture was available. The next and only live step requested is one fresh user-authorized recording of “Open Notepad.” If the transcript is inaccurate, testing will stop before Gemini or Windows execution.

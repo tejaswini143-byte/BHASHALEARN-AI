@@ -17,6 +17,11 @@ type Language = "english" | "telugu" | "mixed";
 type Session = { id: string; topic: string; language: Language; created_at: string };
 type Message = { id: string; role: "user" | "assistant"; content: string; created_at: string; language?: Language };
 type TutorReply = { reply: string; session_id: string; language: string; learning_level: string };
+type PrismaDiagnostics = {
+  provider_status: "success"; provider_latency_ms: number; provider_model: string;
+  provider_language_code: string; provider_format: string;
+  audio_sample_rate_hz: number; audio_channels: number; audio_bits_per_sample: number;
+};
 type Preferences = LearningPreferences;
 type PlaybackState = "idle" | "listening" | "thinking" | "speaking" | "paused" | "interrupted" | "error";
 type ResumeStatus = "none" | "awaiting_confirmation" | "resumed" | "dismissed";
@@ -89,6 +94,7 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
   const [historyLoading, setHistoryLoading] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [captureMetrics, setCaptureMetrics] = useState<VoiceAudioMetrics | null>(null);
+  const [prismaDiagnostics, setPrismaDiagnostics] = useState<PrismaDiagnostics | null>(null);
   const [audioUrl, setAudioUrl] = useState("");
   const [playbackElementKey, setPlaybackElementKey] = useState(0);
   const [demoMode, setDemoMode] = useState(false);
@@ -405,13 +411,21 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
     transcriptionRequestRef.current?.abort();
     const controller = new AbortController();
     transcriptionRequestRef.current = controller;
-    setTranscribing(true); setError(""); setNotice(`Sending ${blob.size.toLocaleString()} byte PCM WAV to Gnani Prisma…`);
+    setTranscribing(true); setError(""); setPrismaDiagnostics(null); setNotice(`Sending ${blob.size.toLocaleString()} byte PCM WAV to Gnani Prisma…`);
     try {
       const form = new FormData(); form.append("audio", blob, "microphone.wav"); form.append("language", language);
       const response = await fetch(`/api/v1/voice/sessions/${encodeURIComponent(sessionId)}/transcribe`, { method: "POST", headers: { ...headers(), "X-Request-ID": crypto.randomUUID() }, body: form, signal: controller.signal });
-      const body = await response.json().catch(() => null) as { transcript?: unknown; detail?: unknown } | null;
+      const body = await response.json().catch(() => null) as ({ transcript?: unknown; detail?: unknown } & Partial<PrismaDiagnostics>) | null;
       if (!response.ok) throw new ApiError(response.status, typeof body?.detail === "string" ? body.detail : "Speech transcription failed. You can type your question instead.");
       if (selectedRef.current !== sessionId) return;
+      if (body?.provider_status === "success" && typeof body.provider_latency_ms === "number" && Number.isFinite(body.provider_latency_ms) && typeof body.provider_model === "string" && typeof body.provider_language_code === "string" && typeof body.provider_format === "string" && typeof body.audio_sample_rate_hz === "number" && typeof body.audio_channels === "number" && typeof body.audio_bits_per_sample === "number") {
+        setPrismaDiagnostics({
+          provider_status: body.provider_status, provider_latency_ms: body.provider_latency_ms,
+          provider_model: body.provider_model, provider_language_code: body.provider_language_code,
+          provider_format: body.provider_format, audio_sample_rate_hz: body.audio_sample_rate_hz,
+          audio_channels: body.audio_channels, audio_bits_per_sample: body.audio_bits_per_sample,
+        });
+      }
       if (typeof body?.transcript !== "string" || !body.transcript.trim()) throw new Error("Prisma did not recognize speech. Try again or type your question.");
       setDraft(body.transcript); setNotice("Transcript ready. Review or correct it, then send it to your tutor.");
       if (!demoMode) void saveVoiceState({ voice_transcript: body.transcript, playback_state: resumePrompt ? "interrupted" : "idle" }, sessionId);
@@ -615,7 +629,8 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
         <div className={recording ? "vt-orb-area vt-recording" : "vt-orb-area"}><div className="vt-orb-ring"/><div className="vt-orb-ring vt-ring-two"/><button className="vt-orb" disabled={!selected || busy || transcribing || micStarting} onClick={() => void toggleRecording()} aria-label={recording ? "Stop recording" : "Start microphone recording"} aria-pressed={recording}><svg viewBox="0 0 24 24" width="45" height="45" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><rect x="9" y="2" width="6" height="13" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5m-4 0h8"/></svg></button></div>
         <div className={recording ? "vt-wave vt-wave-active" : "vt-wave"} aria-hidden="true">{Array.from({length: 35}, (_, index) => <i key={index} style={{ height: `${12 + Math.abs(Math.sin(index * 1.43)) * 38}px`, animationDelay: `${index * 37}ms` }}/>)}</div>
         <div className="vt-status" role="status">{micStarting ? "Requesting microphone permission…" : recording ? `Recording… ${recordingSeconds}s / 30s — tap the orb to stop` : transcribing ? "Transcribing with Gnani Prisma…" : speaking ? "Tutor audio is playing…" : speechLoading ? "Generating tutor audio with Gnani Timbre…" : busy ? "Gemini tutor is thinking…" : selected ? "Tap the orb to record a question" : "Choose a learning session first"}</div>
-        {captureMetrics && <p className="vt-notice" role="status" aria-label="Last microphone capture quality">Last capture: {captureMetrics.durationSeconds.toFixed(1)} s · RMS {captureMetrics.rmsDbfs.toFixed(1)} dBFS · peak {captureMetrics.peakDbfs.toFixed(1)} dBFS · speech-level frames {captureMetrics.speechFramePercent.toFixed(1)}% · clipped {captureMetrics.clippedPercent.toFixed(2)}%. {captureMetrics.rmsDbfs < -42 ? "Input is quiet; check the selected Windows microphone and input level." : ""}</p>}
+        {captureMetrics && <p className="vt-notice" role="status" aria-label="Last microphone capture quality">Last capture: {captureMetrics.durationSeconds.toFixed(1)} s · source {captureMetrics.sampleRateHz.toLocaleString()} Hz · output WAV 16 kHz mono PCM 16-bit · RMS {captureMetrics.rmsDbfs.toFixed(1)} dBFS · peak {captureMetrics.peakDbfs.toFixed(1)} dBFS · speech-level frames {captureMetrics.speechFramePercent.toFixed(1)}% · clipped {captureMetrics.clippedPercent.toFixed(2)}%. {captureMetrics.rmsDbfs < -42 ? "Input is quiet; check the selected Windows microphone and input level." : ""}</p>}
+        {prismaDiagnostics && <p className="vt-notice" role="status" aria-label="Last Gnani Prisma request diagnostics">Gnani Prisma {prismaDiagnostics.provider_status} · {prismaDiagnostics.provider_model} · {prismaDiagnostics.provider_language_code}/{prismaDiagnostics.provider_format} · {prismaDiagnostics.provider_latency_ms} ms provider time · received WAV {prismaDiagnostics.audio_sample_rate_hz.toLocaleString()} Hz, {prismaDiagnostics.audio_channels} channel, {prismaDiagnostics.audio_bits_per_sample}-bit PCM.</p>}
         <label className="vt-autospeak"><input type="checkbox" checked={autoSpeak} onChange={event => setAutoSpeak(event.target.checked)}/> Generate and play tutor replies automatically</label>
         {speechLoading && !audioUrl && <button type="button" className="vt-stop-generation" onClick={() => stopPlayback()}>Cancel speech generation</button>}
         {localDemoAvailable && !demoMode && <button type="button" className="vt-demo-play" onClick={() => { const last = [...messages].reverse().find(item => item.role === "assistant"); if (last && selected) generateLocalDemo(last.content, selected, language); }}>Play local demo tone</button>}

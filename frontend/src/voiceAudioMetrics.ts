@@ -1,5 +1,6 @@
 export type VoiceAudioMetrics = {
   durationSeconds: number;
+  sampleRateHz: number;
   rmsDbfs: number;
   peakDbfs: number;
   clippedPercent: number;
@@ -41,6 +42,7 @@ export function measureVoiceAudio(chunks: Float32Array[], sampleRate: number): V
   const dbfs = (value: number) => value > 0 ? 20 * Math.log10(value) : -120;
   return {
     durationSeconds: sampleCount / sampleRate,
+    sampleRateHz: sampleRate,
     rmsDbfs: dbfs(Math.sqrt(sumSquares / sampleCount)),
     peakDbfs: dbfs(peak),
     clippedPercent: clipped / sampleCount * 100,

@@ -95,16 +95,21 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
   const [action, setAction] = useState<Action | null>(null);
   const [history, setHistory] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
-  const [voiceCommands, setVoiceCommands] = useState(false);
+  const [reviewedTranscript, setReviewedTranscript] = useState("");
   const [closeConfirmed, setCloseConfirmed] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const lastTranscriptRef = useRef("");
   const executionGateRef = useRef(createDesktopExecutionGate());
   const activeRef = useRef(false);
   const desktopSnapshotRef = useRef<DesktopSnapshot | null>(null);
   const languageCode = language === "english" ? "en" : language === "telugu" ? "te" : "mixed";
 
   useEffect(() => () => executionGateRef.current.disable(), []);
+
+  useEffect(() => {
+    setReviewedTranscript("");
+    setAction(null);
+    setCloseConfirmed(false);
+  }, [transcript]);
 
   async function companion(path: string, body?: object, authToken = pairing) {
     const response = await fetch(base + path, { method: path === "/health" || path === "/desktop/snapshot" ? "GET" : "POST", headers: { Authorization: `Bearer ${authToken}`, ...(body ? { "Content-Type": "application/json" } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
@@ -162,6 +167,10 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
   async function interpret() {
     const normalized = transcript.normalize("NFC").trim();
     if (STOP_WORDS.test(normalized)) { await stop(); return; }
+    if (!normalized || reviewedTranscript !== normalized) {
+      setStatus("Review and confirm the Prisma transcript before asking Gemini to plan an action.");
+      return;
+    }
     const qaContext = getDesktopQaContext();
     const token = getToken(); if (!token) { setStatus("Sign in again to interpret a command."); return; }
     setBusy(true); setAction(null);
@@ -216,6 +225,11 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
 
   function hasCloseAction(step: Action): boolean {
     return step.action === "close_window" || (step.action === "sequence" && (step.steps || []).some(hasCloseAction));
+  }
+
+  function requiresBoundTargets(step: Action): boolean {
+    if (step.action === "sequence") return (step.steps || []).some(requiresBoundTargets);
+    return !["open_app", "open_website", "search_web", "search_youtube", "open_approved_site", "navigate_back", "navigate_forward", "stop", "clarify"].includes(step.action);
   }
 
   function addWindowContext(step: Action, snapshot: DesktopSnapshot): Action {
@@ -326,6 +340,11 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
 
   async function execute() {
     if (!active || !action || action.action === "clarify") return;
+    if (reviewedTranscript !== transcript.normalize("NFC").trim()) {
+      setAction(null);
+      setStatus("The transcript changed. Review it again before planning another action.");
+      return;
+    }
     const currentContext = getDesktopQaContext();
     if (hasCloseAction(action) && !closeConfirmed) { setStatus("Confirm that closing this window may discard unsaved work."); return; }
     setBusy(true);
@@ -338,16 +357,17 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
         const snapshot = desktopSnapshotRef.current;
         if (!snapshot) throw new Error("Refresh Windows UI Automation targets before executing this action.");
         const currentSnapshot = await companion("/desktop/snapshot") as DesktopSnapshot;
-        if (currentSnapshot.active_window_id !== snapshot.active_window_id
+        const needsBoundTargets = requiresBoundTargets(action);
+        if (needsBoundTargets && (currentSnapshot.active_window_id !== snapshot.active_window_id
           || currentSnapshot.focused_target_id !== snapshot.focused_target_id
-          || JSON.stringify(currentSnapshot.targets) !== JSON.stringify(snapshot.targets)) {
+          || JSON.stringify(currentSnapshot.targets) !== JSON.stringify(snapshot.targets))) {
           throw new Error("The active window or its UI Automation targets changed after planning. Reinterpret the command.");
         }
         assertExecutionActive(executionEpoch);
         const response = await companion("/desktop/execute", {
-          snapshot_id: snapshot.snapshot_id,
-          active_window_id: snapshot.active_window_id,
-          focus_target_id: snapshot.focused_target_id,
+          snapshot_id: needsBoundTargets ? snapshot.snapshot_id : currentSnapshot.snapshot_id,
+          active_window_id: needsBoundTargets ? snapshot.active_window_id : currentSnapshot.active_window_id,
+          focus_target_id: needsBoundTargets ? snapshot.focused_target_id : currentSnapshot.focused_target_id,
           confirmed_close: closeConfirmed,
           action: addWindowContext(action, snapshot),
         });
@@ -365,18 +385,10 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
   async function stop() {
     executionGateRef.current.disable();
     activeRef.current = false;
-    setActive(false); setAction(null); setVoiceCommands(false);
+    setActive(false); setAction(null); setReviewedTranscript("");
     try { await companion("/stop"); setStatus("Emergency stop sent; explicitly re-enable to continue."); }
     catch { setConnected(false); setStatus("Stop could not reach the companion. Use its PyAutoGUI fail-safe or close its process."); }
   }
-
-  useEffect(() => {
-    const value = transcript.normalize("NFC").trim();
-    if (!voiceCommands || !active || !value || value === lastTranscriptRef.current) return;
-    lastTranscriptRef.current = value;
-    if (STOP_WORDS.test(value)) { void stop(); return; }
-    void interpret();
-  }, [transcript, voiceCommands, active]);
 
   const clarification = action?.action === "clarify";
   return <section aria-label="Windows desktop control" style={{ margin: "12px 0", padding: 14, border: "1px solid #53648d", borderRadius: 12, background: "#101a30" }}>
@@ -386,9 +398,9 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
       <button type="button" disabled={!connected || busy} onClick={() => void toggle()}>{active ? "Disable control" : "Enable control"}</button>
       <button type="button" onClick={() => void stop()}>Emergency Stop</button>
     </div>
-    <label><input type="checkbox" checked={voiceCommands} disabled={!active} onChange={event => { lastTranscriptRef.current = ""; setVoiceCommands(event.target.checked); }}/> Interpret each new Prisma transcript as a desktop command</label>
     <p>Prisma transcript: {transcript || "Record a command first."}</p>
-    <button type="button" disabled={!connected || !active || !transcript.trim() || busy} onClick={() => void interpret()}>{STOP_WORDS.test(transcript.normalize("NFC").trim()) ? "Voice Emergency Stop" : "Interpret with Gemini"}</button>
+    {transcript.trim() && !STOP_WORDS.test(transcript.normalize("NFC").trim()) && <button type="button" disabled={!connected || !active || busy || reviewedTranscript === transcript.normalize("NFC").trim()} onClick={() => { setReviewedTranscript(transcript.normalize("NFC").trim()); setAction(null); setStatus("Transcript reviewed. You may ask Gemini to prepare a plan."); }}>I reviewed this transcript</button>}
+    <button type="button" disabled={!connected || !active || !transcript.trim() || busy || (!STOP_WORDS.test(transcript.normalize("NFC").trim()) && reviewedTranscript !== transcript.normalize("NFC").trim())} onClick={() => void interpret()}>{STOP_WORDS.test(transcript.normalize("NFC").trim()) ? "Voice Emergency Stop" : "Interpret with Gemini"}</button>
     {action && (clarification
       ? <div role="status" aria-label="Clarification needed"><p>{action.clarification}</p><button type="button" onClick={() => setAction(null)}>Clear clarification</button></div>
       : <div role="group" aria-label="Confirm desktop action"><p>Proposed: <b>{describe(action)}</b>{action.action === "sequence" && <ol>{(action.steps || []).map((step, index) => <li key={index}>{describe(step)}</li>)}</ol>}</p>

@@ -106,3 +106,36 @@ This report combines source inspection and prior recorded evidence. The report d
 - **Current setup check:** Gnani Prisma can be constructed for default, English, Telugu, and mixed modes without exposing credentials. `sounddevice` is installed; Windows reports seven input-capable devices and a default input. This checks configuration/device presence only; no audio was captured in this audit.
 - **Current runtime check:** No documented local frontend, API, or companion health endpoint was listening during this audit. No user speech sample was available. The historical Prisma results therefore remain the latest actual STT evidence: one incorrect and one empty transcript.
 - **Revised disposition:** Provider configuration and device availability are present, but real Prisma transcript quality and full voice-to-Windows acceptance remain NOT TESTED in this run. Prior direct Windows action evidence remains historical and must not be conflated with voice-driven execution.
+
+## Recovery investigation — 2026-11-13
+
+**Root cause status: unresolved.** The live attempts establish that Prisma returned inaccurate text for two approved English captures, but their WAV files were not retained. There is no authorized spoken WAV fixture in the repository, so the waveform from those failed requests cannot now be inspected or replayed safely. No provider call was made with synthetic tones.
+
+### POC-01 comparison
+
+The current production adapter delegates to POC-01's PrismaSTTAdapter. The endpoint default, X-API-Key-ID header, audio_file multipart field, audio/wav MIME type, prisma-v3.0 model, timeout/error handling, and supported response extraction match the POC contract. Both paths validate uncompressed PCM WAV before upload. The successful HTTP responses also show that the live request reached a provider endpoint and produced a parseable response; they do not establish that the audio encoding or language selection was optimal.
+
+One concrete request difference remains: the production English mode sends language_code=en-IN, format=transcribe; Telugu sends te-IN/transcribe; mixed sends indic-auto/codemix. POC-01's verified default is indic-auto/codemix. The two latest approved live attempts used English mode. This is a plausible recognition-quality variable, but no controlled recording exists to establish it as the cause. It is intentionally left unchanged pending a permitted one-variable live comparison.
+
+### Browser audio path
+
+The browser captures mono Float32 audio at the active AudioContext rate, applies browser echo cancellation, noise suppression and automatic gain control, then resamples to mono 16 kHz PCM16 WAV. The prior resampler averaged output bins, which provided only a weak anti-alias filter before decimation. It has been replaced with a windowed-sinc low-pass resampler. This is a confirmed encoding-quality improvement, but without the original live waveform it cannot be declared the cause of the Prisma transcript errors.
+
+A new deterministic synthetic transport test confirms RIFF/WAVE PCM, one channel, 16 kHz, 16-bit samples, expected duration and preservation of a 1 kHz signal. A 12 kHz synthetic input is attenuated below 0.005 RMS after 3:1 downsampling. These synthetic tones validate encoding and filtering only; they say nothing about speech recognition accuracy.
+
+### Additional safety and observability repairs
+
+- The desktop panel no longer sends each new Prisma transcript to Gemini automatically. The user must explicitly mark the transcript reviewed before asking Gemini for a plan, and the resulting plan still requires separate execution confirmation.
+- A synthetic open_app(notepad) plan was initially blocked because the accessibility tree changed after planning. App launch does not depend on a UI target; the panel now uses a fresh companion snapshot for target-independent actions and retains strict equality checks for target-bound actions.
+- The transcription response now reports Prisma provider/model/status/latency, the actual language code and format sent, and the sample rate/channel/bit depth read from the uploaded WAV header. The Voice Tutor displays these alongside capture duration, source rate, RMS, peak, speech-active percentage and clipping.
+- No fallback STT provider was added and no audio was sent to another provider.
+
+### Evidence boundaries
+
+The 2026-11-13 live report records the precise historical capture metrics and Prisma transcripts. Both approved English transcripts were wrong; the second was not forwarded to Gemini. One earlier capture was unapproved ambient audio and returned an empty transcript; that process error is disclosed in the final test report. No audio file was retained locally, and provider-side retention cannot be verified.
+
+Offline POC-01 adapter tests passed 8/8; the backend suite passed 328 with 3 skipped; frontend tests passed 96/96; and the production build passed with the existing Three.js chunk-size advisory. Feature 2 source was not changed, and its backend tests remain included in the full backend suite.
+
+Phase C checks used synthetic text and one explicitly confirmed disposable Notepad action. The real Gemini planner returned open_app(notepad); the authenticated companion executed that diagnostic plan; independent Windows checks found Notepad foreground and one editable text target. Emergency Stop then left companion control disabled. This is not voice acceptance.
+
+No new microphone recording has been made in this recovery attempt. The browser permission state was granted, but that state was not treated as permission to record. The requested real spoken test remains pending fresh explicit user approval.

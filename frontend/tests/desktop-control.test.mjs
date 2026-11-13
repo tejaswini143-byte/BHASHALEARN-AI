@@ -53,6 +53,22 @@ test("Emergency Stop cancels the remaining ordered desktop steps", async () => {
   assert.equal(gate.isCurrent(token), false);
 });
 
+test("a Prisma transcript must be explicitly reviewed before Gemini planning", async () => {
+  const panel = await read("../src/DesktopControlPanel.tsx");
+  assert.match(panel, /I reviewed this transcript/);
+  assert.match(panel, /reviewedTranscript !== normalized/);
+  assert.match(panel, /reviewedTranscript !== transcript\.normalize\("NFC"\)\.trim\(\)/);
+  assert.doesNotMatch(panel, /Interpret each new Prisma transcript as a desktop command/);
+});
+
+test("target-independent app launches use a fresh snapshot without weakening target-bound checks", async () => {
+  const panel = await read("../src/DesktopControlPanel.tsx");
+  assert.match(panel, /function requiresBoundTargets\(step: Action\)/);
+  assert.match(panel, /const needsBoundTargets = requiresBoundTargets\(action\)/);
+  assert.match(panel, /needsBoundTargets \? snapshot\.snapshot_id : currentSnapshot\.snapshot_id/);
+  assert.match(panel, /if \(needsBoundTargets && \(currentSnapshot\.active_window_id/);
+});
+
 test("disposable QA provides uniquely named, duplicate, search, typing, and sandbox targets", async () => {
   const page = await read("../public/desktop-control-test.html");
   const sandbox = await read("../public/desktop-control-sandbox.html");
