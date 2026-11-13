@@ -86,7 +86,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(knowledge_router, prefix=config.api_prefix)
     app.include_router(research_router, prefix=config.api_prefix)
     app.include_router(career_router, prefix=config.api_prefix)
-    app.include_router(future_seeker_router, prefix="/api/v1")
+    app.include_router(future_seeker_router, prefix=config.api_prefix)
     app.include_router(visual_lessons_router, prefix=config.api_prefix)
 
     @app.get("/health", tags=["health"])
