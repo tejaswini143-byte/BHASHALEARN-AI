@@ -1,7 +1,7 @@
 import { Component, useCallback, useEffect, useState, useSyncExternalStore, type ChangeEvent, type ErrorInfo, type ReactNode } from "react";
 import { Canvas, useThree } from "@react-three/fiber";
 import { OrbitControls, Stars } from "@react-three/drei";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { ApiError, clearToken, getCurrentStudent, getToken, type Student } from "./auth";
 import { ImmersiveTeacher, type LoadedModel } from "./TeacherPreview";
 import { disposeAvatar, loadLocalAvatar } from "./avatarAsset";
@@ -74,7 +74,18 @@ function AccessGate({ children }: { children: (student: Student, offlineDemo: bo
 }
 
 function ImmersiveExperience({ student, offlineDemo }: { student: Student; offlineDemo: boolean }) {
-  const [lessonIndex, setLessonIndex] = useState(0);
+  const [searchParams] = useSearchParams();
+  const requestedLesson = searchParams.get("lesson");
+  const initialLesson = requestedLesson === "geometry" ? "pythagoras" : requestedLesson;
+  const [lessonIndex, setLessonIndex] = useState(() => Math.max(0, sampleLessons.findIndex(item => item.id === initialLesson)));
+  useEffect(() => {
+    const index = sampleLessons.findIndex(item => item.id === initialLesson);
+    if (index < 0) return;
+    setLessonIndex(index);
+    setPlayback({ step: -1, playing: false });
+    setExerciseChoice("");
+    setExerciseChecked(false);
+  }, [initialLesson]);
   const [playback, setPlayback] = useState({ step: -1, playing: false });
   const [preset, setPreset] = useState<CameraPreset>("overview");
   const [reduced, setReduced] = useState(() => window.matchMedia("(prefers-reduced-motion: reduce)").matches);
