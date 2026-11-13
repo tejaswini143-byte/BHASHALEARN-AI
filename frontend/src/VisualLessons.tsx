@@ -108,7 +108,7 @@ function LessonWorkspace({ student }: { student: Student }) {
     if (!token) return;
     const controller = new AbortController();
     fetchVisualLessonCatalog(token, controller.signal)
-      .then(items => { if (!controller.signal.aborted) { setCatalog(items); setCatalogStatus("Lessons synchronized with backend"); } })
+      .then(items => { if (!controller.signal.aborted) { setCatalog(items); dispatch({ type: "reset" }); setReplayKey(key => key + 1); setCatalogStatus("Lessons synchronized with backend"); } })
       .catch(error => { if (!controller.signal.aborted) setCatalogStatus(visualLessonApiError(error)); });
     return () => controller.abort();
   }, []);
