@@ -199,14 +199,54 @@ class CareerGoal(Base):
     career_key: Mapped[str] = mapped_column(String(64), nullable=False)
     custom_goal: Mapped[str | None] = mapped_column(String(160))
     education_level: Mapped[str] = mapped_column(String(32), nullable=False)
+    field_of_study: Mapped[str | None] = mapped_column(String(120))
     interests_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     weekly_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    daily_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=120)
+    study_days_per_week: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    learning_format: Mapped[str] = mapped_column(String(24), nullable=False, default="mixed")
+    timeframe_weeks: Mapped[int | None] = mapped_column(Integer)
+    constraints_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     preferred_language: Mapped[str] = mapped_column(String(16), nullable=False)
     target_date: Mapped[str | None] = mapped_column(String(10))
     active: Mapped[bool] = mapped_column(default=True, nullable=False)
     roadmap_json: Mapped[str | None] = mapped_column(Text)
+    analysis_json: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+
+class CareerRoadmapVersion(Base):
+    """Immutable, student-owned snapshots retained when a roadmap is revised."""
+    __tablename__ = "career_roadmap_versions"
+    __table_args__ = (
+        UniqueConstraint("student_id", "goal_id", "version_number", name="uq_career_roadmap_version_owner_goal"),
+        Index("ix_career_roadmap_versions_owner_goal", "student_id", "goal_id", "version_number"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    student_id: Mapped[str] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), nullable=False)
+    goal_id: Mapped[str] = mapped_column(ForeignKey("career_goals.id", ondelete="CASCADE"), nullable=False)
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    roadmap_json: Mapped[str] = mapped_column(Text, nullable=False)
+    change_reason: Mapped[str] = mapped_column(String(64), nullable=False, default="generated")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
+class CareerSavedResource(Base):
+    """A student's saved resource from the curated catalog for one career goal."""
+    __tablename__ = "career_saved_resources"
+    __table_args__ = (
+        UniqueConstraint("student_id", "goal_id", "resource_url", name="uq_career_saved_resource_owner_goal_url"),
+        Index("ix_career_saved_resources_owner_goal", "student_id", "goal_id"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    student_id: Mapped[str] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), nullable=False)
+    goal_id: Mapped[str] = mapped_column(ForeignKey("career_goals.id", ondelete="CASCADE"), nullable=False)
+    resource_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    kind: Mapped[str] = mapped_column(String(80), nullable=False)
+    free: Mapped[bool | None] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
 
 class StudentSkillProfile(Base):

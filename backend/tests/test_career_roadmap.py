@@ -110,6 +110,95 @@ def test_validation_and_ownership_responses(client):
     assert client.post("/api/v1/career/goals/missing/roadmap", headers=headers).status_code == 404
 
 
+def test_future_seeker_profile_planning_capacity_and_version_history(client):
+    headers = auth(client, "future-seeker@example.com")
+    goal = create_goal(client, headers, field_of_study="Computer science", daily_minutes=60,
+                       study_days_per_week=5, weekly_minutes=300, learning_format="practice",
+                       timeframe_weeks=20, constraints=["shared computer"]).json()
+    assert goal["field_of_study"] == "Computer science"
+    assert goal["learning_format"] == "practice" and goal["timeframe_weeks"] == 20
+    first = client.post(f"/api/v1/career/goals/{goal['id']}/roadmap", headers=headers).json()
+    assert first["version_number"] == 1
+    assert len(first["weekly_plan"]) == 5
+    assert sum(day["minutes"] for day in first["weekly_plan"]) == 300
+    assert max(day["minutes"] for day in first["weekly_plan"]) <= 60
+    assert next(item for item in first["phases"] if item["skill_key"] == "python")["resources"][0]["url"].startswith("https://")
+
+    changed = {"career_key": "ai-engineer", "education_level": "beginner", "field_of_study": "Computer science",
+               "interests": ["AI"], "constraints": ["shared computer"], "weekly_minutes": 300,
+               "daily_minutes": 60, "study_days_per_week": 5, "learning_format": "practice",
+               "timeframe_weeks": 20, "preferred_language": "mixed", "target_date": None}
+    assert client.put(f"/api/v1/career/goals/{goal['id']}", headers=headers, json=changed).status_code == 409
+    changed["confirm_major_change"] = True
+    assert client.put(f"/api/v1/career/goals/{goal['id']}", headers=headers, json=changed).status_code == 200
+    second = client.post(f"/api/v1/career/goals/{goal['id']}/roadmap", headers=headers).json()
+    assert second["version_number"] == 2 and second["career_title"] == "AI engineer"
+    history = client.get(f"/api/v1/career/goals/{goal['id']}/versions", headers=headers).json()
+    assert [item["version_number"] for item in history] == [2, 1]
+    assert client.get(f"/api/v1/career/goals/{goal['id']}/versions/1", headers=headers).json()["career_title"] == "Software developer"
+    other = auth(client, "future-seeker-other@example.com")
+    assert client.get(f"/api/v1/career/goals/{goal['id']}/versions", headers=other).status_code == 404
+    assert client.get(f"/api/v1/career/goals/{goal['id']}/versions/1", headers=other).status_code == 404
+
+
+def test_weekly_plan_respects_selected_days_and_daily_capacity(client):
+    headers = auth(client, "capacity@example.com")
+    goal = create_goal(client, headers, weekly_minutes=180, daily_minutes=60,
+                       study_days_per_week=3, timeframe_weeks=8).json()
+    plan = client.post(f"/api/v1/career/goals/{goal['id']}/roadmap", headers=headers).json()
+    assert [day["day"] for day in plan["weekly_plan"]] == ["Monday", "Tuesday", "Wednesday"]
+    assert sum(day["minutes"] for day in plan["weekly_plan"]) == 180
+    assert all(day["minutes"] <= 60 for day in plan["weekly_plan"])
+
+
+def test_assessment_history_is_authenticated_and_student_scoped(client):
+    headers = auth(client, "career-history@example.com")
+    goal = create_goal(client, headers).json()
+    assert client.get(f"/api/v1/career/goals/{goal['id']}/assessments", headers=headers).json() == []
+    assert client.get(f"/api/v1/career/goals/{goal['id']}/assessments").status_code == 401
+
+
+def test_saved_resources_are_curated_idempotent_and_student_scoped(client):
+    owner, other = auth(client, "saved-resource-owner@example.com"), auth(client, "saved-resource-other@example.com")
+    goal = create_goal(client, owner).json()
+    plan = client.post(f"/api/v1/career/goals/{goal['id']}/roadmap", headers=owner).json()
+    resource_url = next(phase["resources"][0]["url"] for phase in plan["phases"] if phase["resources"])
+    path = f"/api/v1/career/goals/{goal['id']}/saved-resources"
+    assert client.post(path, headers=owner, json={"resource_url": "https://untrusted.example/course"}).status_code == 404
+    saved = client.post(path, headers=owner, json={"resource_url": resource_url})
+    assert saved.status_code == 201
+    assert client.post(path, headers=owner, json={"resource_url": resource_url}).json()["id"] == saved.json()["id"]
+    assert client.get(path, headers=owner).json() == [saved.json()]
+    assert client.get(path, headers=other).status_code == 404
+    assert client.delete(f"{path}/{saved.json()['id']}", headers=other).status_code == 404
+    assert client.delete(f"{path}/{saved.json()['id']}", headers=owner).status_code == 204
+    assert client.get(path, headers=owner).json() == []
+
+
+def test_gemini_skill_analysis_is_schema_validated_and_student_scoped(client, monkeypatch):
+    from backend.app.services import career_ai
+    headers = auth(client, "career-analysis@example.com")
+    goal = create_goal(client, headers).json()
+    valid = {"summary_en": "Start with foundations, then practise each new concept.",
+             "summary_te": "తెలుగులో దశలవారీగా నేర్చుకొని సాధన చేయండి.",
+             "advice": [{"skill_key": key, "priority": 2, "estimated_hours": 8,
+                         "explanation_en": f"Build a solid foundation in {key} before moving on.",
+                         "explanation_te": f"{key} నైపుణ్యాన్ని సాధనతో అభివృద్ధి చేయండి.",
+                         "next_step_en": f"Practise one small {key} exercise.",
+                         "next_step_te": f"{key} పై చిన్న సాధన చేయండి."}
+                        for key in ["digital-literacy", "programming-basics", "python", "problem-solving", "version-control", "communication", "portfolio", "interview-prep"]]}
+    monkeypatch.setattr(career_ai, "generate_tutor_reply", lambda *_: __import__("json").dumps(valid, ensure_ascii=False))
+    result = client.post(f"/api/v1/career/goals/{goal['id']}/analysis", headers=headers)
+    assert result.status_code == 200 and result.json()["provider"] == "gemini"
+    assert len(result.json()["advice"]) == 8
+    assert client.get(f"/api/v1/career/goals/{goal['id']}/analysis", headers=headers).json() == result.json()
+    other = auth(client, "career-analysis-other@example.com")
+    assert client.get(f"/api/v1/career/goals/{goal['id']}/analysis", headers=other).status_code == 404
+    valid["advice"][-1]["skill_key"] = "python"
+    assert client.post(f"/api/v1/career/goals/{goal['id']}/analysis", headers=headers).status_code == 502
+    assert client.post(f"/api/v1/career/goals/{goal['id']}/analysis").status_code == 401
+
+
 def test_skill_gap_states_separate_reported_from_assessed():
     rows = skill_gaps(["digital-literacy", "programming-basics", "python"],
                       [{"skill_key": "programming-basics", "proficiency": "advanced"}, {"skill_key": "python", "proficiency": "unknown"}],

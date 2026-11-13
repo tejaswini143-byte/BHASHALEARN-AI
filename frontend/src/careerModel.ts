@@ -4,9 +4,10 @@ export type CareerPhase = {
   lesson_id: string | null; lesson_title: string | null; practice: string; practice_te: string;
   assessment: string; assessment_topic: string | null; project: string; milestone_description: string; milestone_description_te: string;
   estimated_hours: number; milestone_id: string; completed: boolean; lesson_completed: boolean;
+  resources: { title: string; url: string; kind: string; free: boolean | null }[];
 };
 export type CareerRoadmap = {
-  goal_id: string; career_key: string; career_title: string; summary: string; summary_te: string;
+  goal_id: string; career_key: string; career_title: string; career_title_te?: string; summary: string; summary_te: string;
   language: "english" | "telugu" | "mixed"; phases: CareerPhase[];
   weekly_plan: { day: string; minutes: number; activity: string }[];
   total_estimated_hours: number; planner: string;
@@ -17,13 +18,17 @@ export type CareerRoadmap = {
     previous_target_minutes: number | null; previous_studied_minutes: number | null;
     recommended_weekly_minutes: number; current_week_start: string; current_week_studied_minutes: number;
   };
+  version_number: number;
+  estimated_weeks: number;
+  available_minutes_per_day: number;
+  scheduled_weekly_minutes: number;
 };
 export const percentComplete = (roadmap: CareerRoadmap) => roadmap.progress.total_milestones
-  ? Math.min(100, Math.max(0, Math.round(100 * roadmap.progress.completed_milestones / roadmap.progress.total_milestones))) : 100;
+  ? Math.min(100, Math.max(0, Math.round(100 * roadmap.progress.completed_milestones / roadmap.progress.total_milestones))) : 0;
 export const gapLabel = (status: string, language: string) => {
   const en: Record<string, string> = { already_demonstrated: "Demonstrated", self_reported: "Self-reported", needs_assessment: "Needs assessment", recommended_next: "Recommended next", not_started: "Not started" };
-  const te: Record<string, string> = { already_demonstrated: "???????? ?????????????", self_reported: "????? ?????", needs_assessment: "????? ?????", recommended_next: "?????? ????????", not_started: "??????????????" };
+  const te: Record<string, string> = { already_demonstrated: "నైపుణ్యం నిరూపించబడింది", self_reported: "స్వయంగా తెలిపిన నైపుణ్యం", needs_assessment: "మదింపు అవసరం", recommended_next: "తదుపరి సూచన", not_started: "ఇంకా ప్రారంభించలేదు" };
   if (language === "telugu") return te[status] ?? status;
-  if (language === "mixed") return `${en[status] ?? status} ? ${te[status] ?? status}`;
+  if (language === "mixed") return `${en[status] ?? status} · ${te[status] ?? status}`;
   return en[status] ?? status;
 };
