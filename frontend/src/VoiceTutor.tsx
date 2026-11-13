@@ -412,6 +412,8 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
     } catch (cause) { setLanguage(previous); handleError(cause); }
   }
 
+  useEffect(() => () => { if (capturePreviewUrl) URL.revokeObjectURL(capturePreviewUrl); }, [capturePreviewUrl]);
+
   async function refreshMicrophoneDevices() {
     if (!navigator.mediaDevices?.enumerateDevices) return;
     try {
