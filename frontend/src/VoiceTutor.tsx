@@ -424,7 +424,8 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
 
   function discardPendingCapture() {
     setPendingCapture(null);
-    setCapturePreviewUrl(previous => { if (previous) URL.revokeObjectURL(previous); return ""; });
+    // The preview URL effect revokes the previous object URL after state changes.
+    setCapturePreviewUrl("");
   }
 
   async function submitPendingCapture() {
