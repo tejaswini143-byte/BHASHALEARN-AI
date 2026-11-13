@@ -102,6 +102,7 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
   const speechRequestRef = useRef<AbortController | null>(null);
   const executionGateRef = useRef(createDesktopExecutionGate());
   const activeRef = useRef(false);
+  const controlRequestRef = useRef(0);
   const nextPlanIdRef = useRef(0);
   const currentPlanRef = useRef<{ id: string; transcript: string; action: Action } | null>(null);
   const executionInProgressRef = useRef(false);
@@ -156,7 +157,13 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
   }
 
   async function connect() {
+    cancelSpeech();
+    activeRef.current = false;
+    executionGateRef.current.disable();
+    currentPlanRef.current = null;
+    setConnected(false); setActive(false); setAction(null); setReviewedTranscript("");
     setBusy(true);
+    const requestEpoch = ++controlRequestRef.current;
     try {
       const pairingResponse = await fetch(base + "/pair", { mode: "cors", cache: "no-store" });
       const pairingState = await pairingResponse.json().catch(() => ({}));
@@ -164,15 +171,21 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
       const localToken = pairingState.token as string;
       setPairing(localToken);
       const state = await companion("/health", undefined, localToken);
-      const enabled = Boolean(state.active);
-      activeRef.current = enabled;
-      if (enabled) executionGateRef.current.enable(); else executionGateRef.current.disable();
-      setConnected(true); setActive(enabled); setStatus(enabled ? "Connected · desktop control enabled" : "Connected · control disabled");
-    } catch (error) { setConnected(false); setActive(false); setStatus(error instanceof Error ? error.message : "Connection failed"); }
+      if (typeof state.active !== "boolean") throw new Error("The companion did not report its control state.");
+      if (state.active) {
+        const disabled = await companion("/disable", undefined, localToken);
+        if (disabled.active !== false) throw new Error("The companion did not confirm desktop control was disabled.");
+      }
+      if (requestEpoch !== controlRequestRef.current) return;
+      setConnected(true); setStatus("Connected · control disabled");
+    } catch (error) {
+      if (requestEpoch === controlRequestRef.current) setStatus(error instanceof Error ? error.message : "Connection failed");
+    }
     finally { setBusy(false); }
   }
 
   async function toggle() {
+    const requestEpoch = ++controlRequestRef.current;
     setBusy(true);
     if (activeRef.current) {
       cancelSpeech();
@@ -183,12 +196,24 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
     }
     try {
       const state = await companion(active ? "/disable" : "/activate");
+      if (requestEpoch !== controlRequestRef.current) {
+        if (state.active === true) {
+          try { await companion("/stop"); }
+          catch {
+            setConnected(false);
+            setStatus("Stop could not reach the companion. Close the companion process before reconnecting.");
+          }
+        }
+        return;
+      }
       const enabled = Boolean(state.active);
       activeRef.current = enabled;
       if (enabled) executionGateRef.current.enable(); else executionGateRef.current.disable();
       setActive(enabled); setStatus(enabled ? "Windows desktop control enabled" : "Desktop control disabled");
       if (state.active) void speak("Windows desktop control is enabled. Review every proposed action before execution.");
-    } catch (error) { setStatus(error instanceof Error ? error.message : "Control request failed"); }
+    } catch (error) {
+      if (requestEpoch === controlRequestRef.current) setStatus(error instanceof Error ? error.message : "Control request failed");
+    }
     finally { setBusy(false); }
   }
 
@@ -209,7 +234,7 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
     try {
       let targets = qaContext?.targets || [];
       let approved_sites = qaContext?.approved_sites || {};
-      if (!qaContext || planLocally) {
+      if (!qaContext && !planLocally) {
         const snapshot = await companion("/desktop/snapshot") as DesktopSnapshot;
         desktopSnapshotRef.current = snapshot;
         targets = targetsForCommand(snapshot, normalized);
@@ -414,23 +439,29 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
       if (currentContext && !OPEN_NOTEPAD.test(normalized)) {
         summary = await executeStep(approvedAction, executionEpoch);
       } else {
-        const snapshot = desktopSnapshotRef.current;
-        if (!snapshot) throw new Error("Refresh Windows UI Automation targets before executing this action.");
-        const currentSnapshot = await companion("/desktop/snapshot") as DesktopSnapshot;
-        const needsBoundTargets = requiresBoundTargets(approvedAction);
-        if (needsBoundTargets && (currentSnapshot.active_window_id !== snapshot.active_window_id
-          || currentSnapshot.focused_target_id !== snapshot.focused_target_id
-          || JSON.stringify(currentSnapshot.targets) !== JSON.stringify(snapshot.targets))) {
-          throw new Error("The active window or its UI Automation targets changed after planning. Reinterpret the command.");
+        const planLocally = OPEN_NOTEPAD.test(normalized);
+        let executionPayload: { confirmed_close: boolean; action: Action } & Partial<{
+          snapshot_id: string; active_window_id: string | null; focus_target_id: string | null;
+        }> = { confirmed_close: closeConfirmed, action: approvedAction };
+        if (!planLocally) {
+          const snapshot = desktopSnapshotRef.current;
+          if (!snapshot) throw new Error("Refresh Windows UI Automation targets before executing this action.");
+          const currentSnapshot = await companion("/desktop/snapshot") as DesktopSnapshot;
+          const needsBoundTargets = requiresBoundTargets(approvedAction);
+          if (needsBoundTargets && (currentSnapshot.active_window_id !== snapshot.active_window_id
+            || currentSnapshot.focused_target_id !== snapshot.focused_target_id
+            || JSON.stringify(currentSnapshot.targets) !== JSON.stringify(snapshot.targets))) {
+            throw new Error("The active window or its UI Automation targets changed after planning. Reinterpret the command.");
+          }
+          executionPayload = {
+            snapshot_id: needsBoundTargets ? snapshot.snapshot_id : currentSnapshot.snapshot_id,
+            active_window_id: needsBoundTargets ? snapshot.active_window_id : currentSnapshot.active_window_id,
+            focus_target_id: needsBoundTargets ? snapshot.focused_target_id : currentSnapshot.focused_target_id,
+            confirmed_close: closeConfirmed,
+            action: addWindowContext(approvedAction, snapshot),
+          };
         }
         assertExecutionActive(executionEpoch);
-        const executionPayload = {
-          snapshot_id: needsBoundTargets ? snapshot.snapshot_id : currentSnapshot.snapshot_id,
-          active_window_id: needsBoundTargets ? snapshot.active_window_id : currentSnapshot.active_window_id,
-          focus_target_id: needsBoundTargets ? snapshot.focused_target_id : currentSnapshot.focused_target_id,
-          confirmed_close: closeConfirmed,
-          action: addWindowContext(approvedAction, snapshot),
-        };
         const confirmation = await companion("/desktop/confirm", executionPayload) as { confirmation_token?: string };
         if (!confirmation.confirmation_token) throw new Error("The companion did not issue a one-time action confirmation.");
         assertExecutionActive(executionEpoch);
@@ -458,6 +489,7 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
   }
 
   async function stop() {
+    controlRequestRef.current += 1;
     cancelSpeech();
     executionGateRef.current.disable();
     activeRef.current = false;

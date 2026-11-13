@@ -203,7 +203,7 @@ def _foreground_handle() -> int:
     return int(ctypes.windll.user32.GetForegroundWindow())
 
 
-def _launch_app(app_id: str) -> dict:
+def _launch_app(app_id: str, *, cancel_check) -> dict:
     if app_id not in SUPPORTED_APPS:
         raise RuntimeError("Only Notepad, Chrome, and Edge can be launched by voice.")
     paths = {
@@ -225,16 +225,23 @@ def _launch_app(app_id: str) -> dict:
         scratch = Path(tempfile.gettempdir()) / f"BHASHALEARN-Desktop-Control-{secrets.token_hex(6)}.txt"
         scratch.write_text("", encoding="utf-8")
         command.append(str(scratch))
+    cancel_check()
     subprocess.Popen(command, close_fds=True)
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
         time.sleep(0.25)
+        cancel_check()
         opened = [item for item in _windows() if item["app_id"] == app_id]
-        if opened:
-            newest = next((item for item in opened if item["handle"] not in before), opened[-1])
+        newest = next((item for item in opened if item["handle"] not in before), None)
+        if newest is None and opened and app_id != "notepad":
+            newest = opened[-1]
+        if newest is not None:
+            cancel_check()
             newest["wrapper"].set_focus()
             return {"ok": True, "action": "open_app", "app_id": app_id,
                     "verified_window": newest["id"]}
+    if app_id == "notepad":
+        raise RuntimeError("No new Notepad window was verified. Check whether Notepad opened the scratch file in an existing tab before retrying.")
     raise RuntimeError(f"{SUPPORTED_APPS[app_id]} did not open a visible window within 10 seconds.")
 
 
@@ -261,7 +268,7 @@ def execute_action(payload: dict, *, type_text, cancel_check, confirmed_close: b
                                           focus_target_id=focus_target_id))
         return {"ok": True, "action": "sequence", "steps": results}
     if action == "open_app":
-        result = _launch_app(payload.get("app_id"))
+        result = _launch_app(payload.get("app_id"), cancel_check=cancel_check)
         context["launched_app"] = payload.get("app_id")
         return result
     if action == "open_website":

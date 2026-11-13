@@ -178,7 +178,6 @@ test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
     const requests: string[] = [];
     const proposed = { action: "open_app", app_id: "notepad" };
     const origin = "http://127.0.0.1:18765";
-    const snapshot = { snapshot_id: "mock-snapshot", targets: [] };
     const cors = {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -186,15 +185,26 @@ test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
     };
     let nativeApproved = false;
     let verifyExecution = false;
+    let delayActivation = false;
+    let releaseActivation!: () => void;
+    const activationHeld = new Promise<void>(resolve => { releaseActivation = resolve; });
+    let stopRequests = 0;
     await page.route(`${origin}/**`, async route => {
       const request = route.request();
       if (request.method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
       const path = new URL(request.url()).pathname;
       switch (path) {
         case "/pair": return route.fulfill({ headers: cors, json: { token: "mock-pairing" } });
-        case "/health": return route.fulfill({ headers: cors, json: { active: false } });
-        case "/activate": return route.fulfill({ headers: cors, json: { active: true } });
-        case "/desktop/snapshot": return route.fulfill({ headers: cors, json: snapshot });
+        case "/health": return route.fulfill({ headers: cors, json: { active: true } });
+        case "/disable":
+          requests.push("disable");
+          return route.fulfill({ headers: cors, json: { active: false } });
+        case "/activate":
+          if (delayActivation) await activationHeld;
+          return route.fulfill({ headers: cors, json: { active: true } });
+        case "/desktop/snapshot":
+          requests.push("snapshot");
+          return route.fulfill({ headers: cors, status: 503, json: { error: "Window inventory unavailable." } });
         case "/desktop/confirm":
           requests.push("confirm");
           expect(request.postDataJSON().action).toEqual(proposed);
@@ -205,7 +215,9 @@ test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
           requests.push("execute");
           expect(request.postDataJSON()).toMatchObject({ action: proposed, confirmation_token: "mock-one-use-ticket" });
           return route.fulfill({ headers: cors, json: verifyExecution ? { ok: true, action: "open_app", app_id: "notepad", verified_window: "mock-window" } : { ok: true, action: "open_app", app_id: "notepad" } });
-        case "/stop": return route.fulfill({ headers: cors, json: { active: false } });
+        case "/stop":
+          stopRequests += 1;
+          return route.fulfill({ headers: cors, json: { active: false } });
         default: return route.abort();
       }
     });
@@ -225,6 +237,8 @@ test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
     const interpret = panel.getByRole("button", { name: "Prepare Notepad action" });
     const confirm = panel.getByRole("button", { name: "Confirm and execute" });
     await panel.getByRole("button", { name: "Connect to local companion" }).click();
+    await expect(panel.getByRole("status")).toContainText("Connected · control disabled");
+    expect(requests.splice(0)).toEqual(["disable"]);
     await panel.getByRole("button", { name: "Enable control" }).click();
     await expect(interpret).toBeDisabled();
     expect(requests).toEqual([]);
@@ -252,6 +266,17 @@ test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
     expect(requests).toEqual(["confirm", "confirm", "execute", "confirm", "execute"]);
     await panel.getByRole("button", { name: "Emergency Stop" }).click();
     await expect(interpret).toBeDisabled();
+    await expect(confirm).toHaveCount(0);
+
+    delayActivation = true;
+    const activating = page.waitForRequest(`${origin}/activate`);
+    await panel.getByRole("button", { name: "Enable control" }).click();
+    await activating;
+    await panel.getByRole("button", { name: "Emergency Stop" }).click();
+    await expect.poll(() => stopRequests).toBe(2);
+    releaseActivation();
+    await expect.poll(() => stopRequests).toBe(3);
+    await expect(panel.getByRole("button", { name: "Enable control" })).toBeEnabled();
     await expect(confirm).toHaveCount(0);
   });
 
