@@ -116,6 +116,7 @@ function ImmersiveExperience({ student, offlineDemo }: { student: Student; offli
     </Canvas></SceneBoundary></div>
     <header className="ic-topbar"><Link to="/dashboard" className="ic-brand" aria-label="BHASHALEARN AI dashboard"><span>✦</span> BHASHA<span className="ic-brand-accent">LEARN</span><small> AI</small></Link><div className="ic-student"><i aria-hidden="true"/>{student.display_name || "Student"}{offlineDemo && <span className="ic-offline-status">LOCAL DEMO - BACKEND UNAVAILABLE</span>}<span>·</span><span>IMMERSIVE CLASS</span></div><Link to="/dashboard" className="ic-exit">Exit classroom <span aria-hidden="true">↗</span></Link></header>
     <div className="ic-scene-label"><i aria-hidden="true"/> LIVE 3D LEARNING SPACE</div>
+    <p className="ic-avatar-notice" role="status">3D teacher avatar not loaded. Lesson board and voice controls remain available; a licensed rigged character is required for teacher animation.</p>
     <aside className="ic-board" aria-label="Interactive lesson board" aria-live="polite">
       <span className="ic-board-kicker">LESSON BOARD · {lesson.subject}</span>
       <h2>{activeStep?.title || lesson.title}</h2>
