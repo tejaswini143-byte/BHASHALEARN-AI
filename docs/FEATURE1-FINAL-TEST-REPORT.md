@@ -82,3 +82,43 @@ No dependency was installed.
 4. Repeat complete backend/frontend/build/security checks after any further acceptance-driven code changes.
 
 Until those checks pass, Feature 1 is not complete. The current code and automated tests are ready for local acceptance, but the recorded low microphone level and lack of a fresh speech sample prevent a claim of end-to-end success.
+
+## Live acceptance run — 2026-11-13
+
+**Status: LOCAL ACCEPTANCE REQUIRED — end-to-end speech-to-desktop acceptance did not pass.** The requested spoken command was attempted in an isolated local session. Gnani Prisma returned incorrect transcripts on both user-approved captures. The mixed-language retry was not performed because the user explicitly stopped voice testing. No Notepad action was executed and no Windows action is claimed.
+
+### Startup, login, and companion
+
+- Continued with the already running local stack; did not restart or rebuild working services. Final read-only checks returned HTTP 200 from backend `/ready` (port 18027) and frontend `/login` (port 15199). The companion service on port 18765 returned its expected unauthenticated response when queried without its session credentials.
+- Used a separate Chrome test profile and verified the local origin and BHASHALEARN AI page identity before signing in. The disposable test account was read locally; its password is not reproduced here.
+- The Voice Tutor session connected to the existing Windows companion, and Desktop Control was enabled for the isolated test session. Emergency Stop was issued after the attempts; companion control was left disabled. No unrelated tabs or user documents were used.
+- Windows microphone consent was enabled. Windows listed seven input-capable devices; the default input was `Microphone (Realtek(R) Audio)` (2 channels, 44.1 kHz). Chrome’s normal microphone permission prompt was approved by the user for the authorized captures.
+
+### Microphone and Prisma evidence
+
+| Capture | User approval and mode | UI metrics | Prisma result | Subsequent stages |
+|---|---|---|---|---|
+| Initial unintended ambient capture | **Not approved.** An earlier Playwright profile unexpectedly entered recording after its permission state changed from `prompt`. This process error was disclosed to the user. | 5.5 s; RMS −36.5 dBFS; peak −12.0 dBFS; speech-level frames 30.6%; clipped 0%. No audio file was retained locally. | HTTP 200; empty transcript. | No Gemini plan or desktop action. |
+| Spoken Notepad command | Approved; English | 6.1 s; RMS −20.6 dBFS; peak −0.5 dBFS; speech-level frames 65.0%; clipped 0%. | Incorrect: “Open Notepad and type ‘Bash Learn AI’.” | Gemini displayed an open-Notepad-then-type plan. It was canceled because the dictated product name was wrong. No companion execution or Notepad action. |
+| Spoken retry | Approved; English | 8.4 s; RMS −21.3 dBFS; peak approximately 0 dBFS; speech-level frames 74.5%; clipped 0%. | Incorrect: “Open Notepad and and reply, Barsha, learn AI.” | Auto-interpret was disabled; no Gemini request or desktop action. |
+| Mixed-language retry | Not performed | — | — | User said “Stop voice testing here”; testing stopped as requested. |
+
+The two approved captures had healthy signal level and substantial speech activity, and the intended Realtek input was already selected as the Windows default. The observed blocker is Prisma recognition of the spoken product name in this run, rather than a quiet microphone or missing Windows input permission. The first unauthorized capture was a procedural error; it was disclosed, was not retained as a local audio file, and was not repeated. Provider-side retention cannot be verified from this session.
+
+### Command acceptance results
+
+| Requested command/action | Result |
+|---|---|
+| “Open Notepad and type BHASHALEARN AI” | **Failed at transcript validation.** No Notepad was opened and no text was typed. |
+| Open ChatGPT; scroll; move cursor; harmless link click; switch windows; YouTube search; close disposable window; Emergency Stop during an active sequence | Not tested in this live run. Emergency Stop was issued only after the failed voice attempts, not during a multi-step action. |
+| Telugu and mixed-language commands | Not tested. The user stopped before an additional mixed-language capture. |
+
+No microphone sample was sent to Gemini after the inaccurate retry transcript. The earlier spoken attempt produced a visible Gemini plan, but it was not approved for execution due to transcript mismatch. No companion action response or resulting Notepad state exists for this run.
+
+### Regression status and Feature 2
+
+No source code was changed during this live continuation. The latest available regression results from the preceding pushed source state are: backend 328 passed, 3 skipped; frontend 91 passed; production build passed with the existing large Three.js chunk advisory. These were not rerun because this continuation only adds this report evidence. Feature 2 source was not changed; its existing backend coverage was included in that reported backend suite.
+
+### Final disposition
+
+Feature 1 remains **incomplete**. The minimum next acceptance step is a separately authorized Prisma tuning/diagnostic session, followed by a fresh user-approved spoken command only if the user chooses to resume. This report does not claim successful microphone-to-Windows execution, completion of representative commands, or a completed live acceptance.
