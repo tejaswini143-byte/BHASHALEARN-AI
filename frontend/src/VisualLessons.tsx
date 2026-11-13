@@ -59,7 +59,7 @@ function GeometryScene({ shape, size, rotation, reduced }: { shape: ShapeKind; s
 function PendulumScene({ length, gravity, playing, reduced, resetKey }: { length: number; gravity: number; playing: boolean; reduced: boolean; resetKey: number }) {
   const pivot = useRef<THREE.Group>(null);
   const elapsed = useRef(0);
-  useEffect(() => { elapsed.current = 0; }, [resetKey]);
+  useEffect(() => { elapsed.current = 0; if (pivot.current) pivot.current.rotation.z = 0; }, [resetKey]);
   const period = pendulumPeriod(length, gravity);
   useFrame((_state, delta) => {
     if (!pivot.current || !playing || reduced) return;
@@ -109,6 +109,7 @@ function LessonWorkspace({ student }: { student: Student }) {
   const subjectOptions = useMemo(() => [...new Map(visualLessons.map(item => [item.subject.en, item.subject])).entries()], []);
   const filteredLessons = visualLessons.filter(item => item.subject.en === (lesson?.subject.en ?? visualLessons[0].subject.en));
   const advance = useCallback((delta: number) => { if (lesson) dispatch({ type: "step", delta, stepCount: lesson.steps.length }); }, [lesson]);
+  const reset = useCallback(() => { dispatch({ type: "reset" }); setReplayKey(key => key + 1); }, []);
   useEffect(() => {
     const media = window.matchMedia("(prefers-reduced-motion: reduce)"), update = () => setReduced(media.matches);
     media.addEventListener("change", update); return () => media.removeEventListener("change", update);
@@ -121,8 +122,7 @@ function LessonWorkspace({ student }: { student: Student }) {
       if (event.key.toLowerCase() === "r") reset();
     };
     window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey);
-  }, [advance]);
-  function reset() { dispatch({ type: "reset" }); setReplayKey(key => key + 1); }
+  }, [advance, reset]);
 
   if (!lesson) return <main className="vl-empty"><h1>No visual lessons available</h1><p>There are no lessons in this catalog yet.</p></main>;
   return <main className="vl-page" aria-label="Interactive visual lessons">
