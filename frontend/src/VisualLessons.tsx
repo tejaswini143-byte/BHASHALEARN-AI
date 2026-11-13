@@ -4,6 +4,8 @@ import * as THREE from "three";
 import { Link, useNavigate } from "react-router-dom";
 import { ApiError, clearToken, getCurrentStudent, getToken, type Student } from "./auth";
 import { initialVisualControls, pendulumPeriod, planetPosition, shapeMeasurements, solarPlanets, visualControlsReducer, visualLessons, type ShapeKind, type SolarPlanet, type VisualLessonId } from "./visualLessonsModel";
+import { fetchVisualLessonCatalog, visualLessonApiError } from "./visualLessonsApi";
+import type { VisualLesson } from "./visualLessonsModel";
 import "./visual-lessons.css";
 
 class SimulationBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
@@ -99,15 +101,26 @@ function AuthGate({ children }: { children: (student: Student) => ReactNode }) {
 
 function LessonWorkspace({ student }: { student: Student }) {
   const [controls, dispatch] = useReducer(visualControlsReducer, initialVisualControls);
+  const [catalog, setCatalog] = useState<VisualLesson[]>(visualLessons);
+  const [catalogStatus, setCatalogStatus] = useState("Loading authenticated lesson catalog…");
+  useEffect(() => {
+    const token = getToken();
+    if (!token) return;
+    const controller = new AbortController();
+    fetchVisualLessonCatalog(token, controller.signal)
+      .then(items => { if (!controller.signal.aborted) { setCatalog(items); setCatalogStatus("Lessons synchronized with backend"); } })
+      .catch(error => { if (!controller.signal.aborted) setCatalogStatus(visualLessonApiError(error)); });
+    return () => controller.abort();
+  }, []);
   const [language, setLanguage] = useState<"en" | "te">("en");
   const [reduced, setReduced] = useState(() => typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   const [replayKey, setReplayKey] = useState(0);
-  const lesson = visualLessons.find(item => item.id === controls.lessonId);
+  const lesson = catalog.find(item => item.id === controls.lessonId);
   const step = lesson && controls.step >= 0 ? lesson.steps[controls.step] : null;
   const selectedPlanet = solarPlanets.find(planet => planet.id === controls.selectedPlanet) ?? solarPlanets[2];
   const measurements = shapeMeasurements(controls.shape, controls.size);
-  const subjectOptions = useMemo(() => [...new Map(visualLessons.map(item => [item.subject.en, item.subject])).entries()], []);
-  const filteredLessons = visualLessons.filter(item => item.subject.en === (lesson?.subject.en ?? visualLessons[0].subject.en));
+  const subjectOptions = useMemo(() => [...new Map(catalog.map(item => [item.subject.en, item.subject])).entries()], [catalog]);
+  const filteredLessons = catalog.filter(item => item.subject.en === (lesson?.subject.en ?? catalog[0]?.subject.en));
   const advance = useCallback((delta: number) => { if (lesson) dispatch({ type: "step", delta, stepCount: lesson.steps.length }); }, [lesson]);
   const reset = useCallback(() => { dispatch({ type: "reset" }); setReplayKey(key => key + 1); }, []);
   useEffect(() => {
@@ -129,7 +142,8 @@ function LessonWorkspace({ student }: { student: Student }) {
     <header className="vl-header"><Link to="/dashboard" className="vl-brand" aria-label="BHASHALEARN AI dashboard"><span>✦</span> BHASHA<span>LEARN</span><small> AI</small></Link><div className="vl-student"><i aria-hidden="true"/>{student.display_name || "Student"}</div><Link to="/dashboard" className="vl-exit">Exit lessons ↗</Link></header>
     <div className="vl-shell">
       <section className="vl-title"><div><span className="vl-eyebrow">INTERACTIVE VISUAL LESSONS</span><h1>Ideas you can <span>explore.</span></h1><p>Choose a subject and topic, then learn by interacting with the model.</p></div><label className="vl-language">Explanation language<select aria-label="Explanation language" value={language} onChange={event => setLanguage(event.target.value as "en" | "te")}><option value="en">English</option><option value="te">తెలుగు</option></select></label></section>
-      <section className="vl-picker" aria-label="Lesson selection"><label>Subject<select aria-label="Choose subject" value={lesson.subject.en} onChange={event => { const next = visualLessons.find(item => item.subject.en === event.target.value); if (next) { dispatch({ type: "lesson", id: next.id }); setReplayKey(key => key + 1); } }}>{subjectOptions.map(([key, text]) => <option key={key} value={key}>{text[language]}</option>)}</select></label><label>Topic<select aria-label="Choose topic" value={lesson.id} onChange={event => { dispatch({ type: "lesson", id: event.target.value as VisualLessonId }); setReplayKey(key => key + 1); }}>{filteredLessons.map(item => <option key={item.id} value={item.id}>{item.topic[language]}</option>)}</select></label><span className="vl-meta">{lesson.subject[language]} · {lesson.topic[language]}</span></section>
+      <p role="status" aria-live="polite" className="vl-meta">{catalogStatus}</p>
+      <section className="vl-picker" aria-label="Lesson selection"><label>Subject<select aria-label="Choose subject" value={lesson.subject.en} onChange={event => { const next = catalog.find(item => item.subject.en === event.target.value); if (next) { dispatch({ type: "lesson", id: next.id }); setReplayKey(key => key + 1); } }}>{subjectOptions.map(([key, text]) => <option key={key} value={key}>{text[language]}</option>)}</select></label><label>Topic<select aria-label="Choose topic" value={lesson.id} onChange={event => { dispatch({ type: "lesson", id: event.target.value as VisualLessonId }); setReplayKey(key => key + 1); }}>{filteredLessons.map(item => <option key={item.id} value={item.id}>{item.topic[language]}</option>)}</select></label><span className="vl-meta">{lesson.subject[language]} · {lesson.topic[language]}</span></section>
       <section className="vl-lesson-head"><div><h2>{lesson.title[language]}</h2><p>{lesson.description[language]}</p></div><button className="vl-reset" onClick={reset}>↺ Reset lesson</button></section>
       <section className="vl-layout">
         <div className="vl-primary">
