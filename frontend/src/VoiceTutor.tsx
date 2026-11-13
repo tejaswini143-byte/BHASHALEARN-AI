@@ -457,7 +457,7 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
         });
       }
       if (typeof body?.transcript !== "string" || !body.transcript.trim()) throw new Error("Prisma did not recognize speech. Try again or type your question.");
-      setDraft(body.transcript); setNotice("Transcript ready. Review or correct it, then send it to your tutor.");
+      setDraft(body.transcript); setNotice("Prisma transcript ready. Review the words below. For a Windows command, use the Desktop Control panel (not Send to tutor), then explicitly approve Gemini planning and execution.");
       if (!demoMode) void saveVoiceState({ voice_transcript: body.transcript, playback_state: resumePrompt ? "interrupted" : "idle" }, sessionId);
       return true;
     } catch (cause) { if (!controller.signal.aborted) handleError(cause); return false; }
