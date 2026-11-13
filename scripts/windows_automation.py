@@ -277,8 +277,13 @@ def execute_action(payload: dict, *, type_text, cancel_check, confirmed_close: b
         if not isinstance(url, str) or url not in APPROVED_LINKS:
             raise RuntimeError("Choose an approved link: YouTube, ChatGPT, or Google.")
         cancel_check()
-        if not webbrowser.open(url, new=2, autoraise=True):
-            raise RuntimeError("Windows could not send the approved link to the default browser.")
+        failure = "Windows could not send the approved link to the default browser. Check that a default browser is configured."
+        try:
+            dispatched = webbrowser.open(url, new=2, autoraise=True)
+        except (OSError, webbrowser.Error):
+            raise RuntimeError(failure) from None
+        if not dispatched:
+            raise RuntimeError(failure)
         return {"ok": True, "action": action, "url": url}
     if action == "open_website":
         url = payload.get("url")

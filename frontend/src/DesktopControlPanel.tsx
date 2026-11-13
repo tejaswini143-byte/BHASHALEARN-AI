@@ -86,7 +86,9 @@ const allowedCompanionBases = new Set(["http://127.0.0.1:18765", "http://127.0.0
 const base = requestedBase && allowedCompanionBases.has(requestedBase) ? requestedBase : "http://127.0.0.1:18765";
 const APPROVED_LINKS = new Map([
   ["youtube", "https://www.youtube.com/"],
+  ["you tube", "https://www.youtube.com/"],
   ["chatgpt", "https://chatgpt.com/"],
+  ["chat gpt", "https://chatgpt.com/"],
   ["google", "https://www.google.com/"],
 ]);
 
@@ -152,8 +154,8 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
     cancelSpeech();
   }, [transcript, language]);
 
-  async function companion(path: string, body?: object, authToken = pairing) {
-    const response = await fetch(base + path, { method: path === "/health" || path === "/desktop/snapshot" ? "GET" : "POST", headers: { Authorization: `Bearer ${authToken}`, ...(body ? { "Content-Type": "application/json" } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
+  async function companion(path: string, body?: object, authToken = pairing, signal?: AbortSignal) {
+    const response = await fetch(base + path, { signal, method: path === "/health" || path === "/desktop/snapshot" ? "GET" : "POST", headers: { Authorization: `Bearer ${authToken}`, ...(body ? { "Content-Type": "application/json" } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
     const value = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(value.error || `Companion returned ${response.status}`);
     return value;
@@ -486,7 +488,14 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
         const confirmation = await companion("/desktop/confirm", executionPayload) as { confirmation_token?: string };
         if (!confirmation.confirmation_token) throw new Error("The companion did not issue a one-time action confirmation.");
         assertExecutionActive(executionEpoch);
-        const response = await companion("/desktop/execute", { ...executionPayload, confirmation_token: confirmation.confirmation_token });
+        const executingLink = approvedAction.action === "open_named_link";
+        const response = await companion("/desktop/execute", { ...executionPayload, confirmation_token: confirmation.confirmation_token },
+          pairing, executingLink ? AbortSignal.timeout(15_000) : undefined).catch(error => {
+          if (executingLink && (error instanceof TypeError || error?.name === "TimeoutError")) {
+            throw new Error("The companion did not respond. Check whether the link opened before retrying.");
+          }
+          throw error;
+        });
         assertExecutionActive(executionEpoch);
         if (response.ok !== true || response.action !== approvedAction.action
           || (localPlan?.action === "open_app" && (response.app_id !== "notepad"
@@ -507,7 +516,12 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
       setHistory(items => [summary, ...items].slice(0, 20)); setStatus(`Completed: ${summary}`); setAction(null); void speak(`Completed. ${summary}.`);
     } catch (error) {
       if (!activeRef.current || !executionGateRef.current.isCurrent(executionEpoch)) setStatus("Stopped: Emergency Stop cancelled the remaining workflow.");
-      else setStatus(error instanceof Error ? error.message : "Action failed");
+      else {
+        const detail = error instanceof Error ? error.message : "Action failed";
+        setStatus(approvedAction.action === "open_named_link" && error instanceof TypeError
+          ? "Could not reach the companion. Check that it is running, then reconnect."
+          : detail);
+      }
     }
     finally { executionGateRef.current.finish(executionEpoch); executionInProgressRef.current = false; setBusy(false); }
   }

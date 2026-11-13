@@ -52,7 +52,7 @@ test("only the confirmed plan handler requests a one-use companion execution tic
   const execute = panel.slice(panel.indexOf("async function execute("), panel.indexOf("async function stop("));
   assert.match(execute, /executionGateRef\.current\.begin\(planId\)/);
   assert.match(execute, /companion\("\/desktop\/confirm", executionPayload\)/);
-  assert.match(execute, /companion\("\/desktop\/execute", \{ \.\.\.executionPayload, confirmation_token: confirmation\.confirmation_token \}\)/);
+  assert.match(execute, /companion\("\/desktop\/execute", \{ \.\.\.executionPayload, confirmation_token: confirmation\.confirmation_token \},/);
   assert.ok(execute.indexOf('companion("/desktop/confirm"') < execute.indexOf('companion("/desktop/execute"'));
   assert.match(execute, /executionInProgressRef\.current\) return/);
 });

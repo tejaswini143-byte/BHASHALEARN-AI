@@ -283,6 +283,7 @@ test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
   test("approved link previews its exact URL and unknown links never reach the companion", async ({ page }) => {
     const origin = "http://127.0.0.1:18765";
     const requests: string[] = [];
+    let dropExecutionResponse = false;
     const action = { action: "open_named_link", url: "https://www.youtube.com/" };
     const cors = {
       "Access-Control-Allow-Origin": "*",
@@ -303,6 +304,7 @@ test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
       }
       if (path === "/desktop/execute") {
         expect(request.postDataJSON()).toMatchObject({ action, confirmation_token: "mock-link-ticket" });
+        if (dropExecutionResponse) return route.abort();
         return route.fulfill({ headers: cors, json: { ok: true, ...action } });
       }
       return route.abort();
@@ -312,12 +314,12 @@ test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
       requests.push("gemini");
       return route.abort();
     });
-    await mockVoiceBrowser(page, { transcript: "Open YouTube." });
+    await mockVoiceBrowser(page, { transcript: "Open You Tube." });
     await startRecording(page);
     await stopRecording(page);
     await page.getByRole("button", { name: "Send reviewed recording to Prisma" }).click();
     const transcriptBox = page.getByLabel("Prisma transcript or typed message");
-    await expect(transcriptBox).toHaveValue("Open YouTube.");
+    await expect(transcriptBox).toHaveValue("Open You Tube.");
     const panel = page.getByRole("region", { name: "Windows desktop control" });
     const prepare = panel.getByRole("button", { name: "Prepare link action" });
     const confirm = panel.getByRole("button", { name: "Confirm and execute" });
@@ -336,8 +338,16 @@ test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
     await expect(confirm).toHaveCount(0);
     expect(requests).toEqual([]);
 
-    await transcriptBox.fill("Open YouTube.");
+    await transcriptBox.fill("Open You Tube.");
     await panel.getByRole("button", { name: "I reviewed this transcript" }).click();
+    await prepare.click();
+    dropExecutionResponse = true;
+    await confirm.click();
+    await expect(panel.getByRole("status")).toContainText("Check whether the link opened before retrying");
+    await expect(confirm).toHaveCount(0);
+    expect(requests.splice(0)).toEqual(["/desktop/confirm", "/desktop/execute"]);
+
+    dropExecutionResponse = false;
     await prepare.click();
     await confirm.click();
     await expect(panel.getByRole("status")).toContainText("sent https://www.youtube.com/ to the default browser");

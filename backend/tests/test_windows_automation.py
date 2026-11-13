@@ -117,8 +117,14 @@ def test_unapproved_link_never_dispatches(monkeypatch, url):
                                           type_text=lambda _: None, cancel_check=lambda: None)
 
 
-def test_approved_link_reports_browser_dispatch_failure(monkeypatch):
-    monkeypatch.setattr(windows_automation.webbrowser, "open", lambda *args, **kwargs: False)
-    with pytest.raises(RuntimeError, match="could not send the approved link"):
+@pytest.mark.parametrize("browser_error", [False, True])
+def test_approved_link_reports_browser_dispatch_failure(monkeypatch, browser_error):
+    def open_link(*args, **kwargs):
+        if browser_error:
+            raise OSError("Shell handler failed")
+        return False
+
+    monkeypatch.setattr(windows_automation.webbrowser, "open", open_link)
+    with pytest.raises(RuntimeError, match="Check that a default browser is configured"):
         windows_automation.execute_action({"action": "open_named_link", "url": "https://chatgpt.com/"},
                                           type_text=lambda _: None, cancel_check=lambda: None)

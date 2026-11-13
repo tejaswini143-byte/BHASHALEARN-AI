@@ -65,7 +65,11 @@ browser proposal and native Windows prompt both show
 intended page appears in the default browser. The app reports dispatch to the
 browser. Page loading is verified by the operator.
 
-The same path supports “Open ChatGPT” and “Open Google.” To test clarification,
+The same path supports “Open ChatGPT” and “Open Google.” The planner also
+accepts the common transcript spellings “You Tube” and “Chat GPT.”
+If the companion loses its response after confirmation, check the browser
+before preparing a fresh action. If Windows reports a dispatch failure, check
+the default browser configuration. To test clarification,
 try the reviewed text “Open the website Example.” The panel should list the
 approved links and offer no execution button. These exact link commands are
 planned locally. No Gemini key is needed.
