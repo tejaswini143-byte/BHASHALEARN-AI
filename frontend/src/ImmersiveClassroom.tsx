@@ -8,7 +8,7 @@ import { disposeAvatar, loadLocalAvatar } from "./avatarAsset";
 import { VoiceTutor } from "./VoiceTutor";
 import { immersiveVoiceBridge } from "./immersiveVoiceBridge";
 import { playbackReducer, sampleLessons } from "./lessonEngine";
-import { cameraPresets, type CameraPreset } from "./immersiveCore";
+import { cameraPresets, focusedLessonObjectIds, type CameraPreset } from "./immersiveCore";
 import "./immersive-classroom.css";
 
 class SceneBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
@@ -128,6 +128,8 @@ function ImmersiveExperience({ student, offlineDemo }: { student: Student; offli
   }
 
   const activeStep = playback.step >= 0 ? lesson.steps[playback.step] : null;
+  const focusedIds = focusedLessonObjectIds(lesson, playback.step);
+  const focusedObjects = focusedIds.map(id => lesson.objects.find(item => item.id === id)).filter((item): item is NonNullable<typeof item> => Boolean(item));
   return <main className="ic-experience" aria-label="Immersive classroom">
     <div className="ic-scene"><SceneBoundary><Canvas aria-label="Decorative immersive 3D classroom" shadows dpr={[1, 1.5]} camera={{ position: cameraPresets.overview.position, fov: 39 }} gl={{ antialias: true, alpha: false, powerPreference: "low-power" }} frameloop={reduced ? "demand" : "always"} fallback={<WebGLFallback/>}>
       <CameraDirector preset={preset}/><VoiceFrameScheduler reduced={reduced}/><ImmersiveRoom reduced={reduced}/><ImmersiveTeacher state={activeStep ? "explain" : "idle"} reduced={reduced} voiceState={voiceState} model={avatar}/>
@@ -140,6 +142,7 @@ function ImmersiveExperience({ student, offlineDemo }: { student: Student; offli
       <span className="ic-board-kicker">LESSON BOARD · {lesson.subject}</span>
       <h2>{activeStep?.title || lesson.title}</h2>
       <p>{activeStep?.explanation || lesson.intro}</p>
+      {focusedObjects.length > 0 && <div className="ic-board-focus" aria-label="Objects highlighted by the teacher">{focusedObjects.map(item => <span key={item.id} title={item.explanation || item.id}>{item.text || item.id}</span>)}</div>}
     </aside>
     <aside className="ic-hud" aria-label="Lesson controls">
       <div className="ic-hud-top"><div><span className="ic-eyebrow">{lesson.subject}</span><h1>{lesson.title}</h1></div><label className="ic-lesson-select">Lesson<select aria-label="Choose lesson" value={lessonIndex} onChange={event => { setLessonIndex(Number(event.target.value)); setPlayback({ step: -1, playing: false }); setExerciseChoice(""); setExerciseChecked(false); }}>{sampleLessons.map((item, index) => <option key={item.id} value={index}>{item.title}</option>)}</select></label></div>
