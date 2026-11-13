@@ -69,9 +69,9 @@ test("unavailable recording does not discard an existing reviewed capture", () =
 
 test("microphone activation is not triggered by page effects", () => {
   const capture = source.slice(source.indexOf("async function toggleRecording()"), source.indexOf("function generateLocalDemo("));
-  assert.match(capture, /navigator\\.mediaDevices\\.getUserMedia/);
+  assert.match(capture, /navigator\.mediaDevices\.getUserMedia/);
   const outsideCapture = source.replace(capture, "");
-  assert.doesNotMatch(outsideCapture, /navigator\\.mediaDevices\\.getUserMedia\\(/);
+  assert.doesNotMatch(outsideCapture, /navigator\.mediaDevices\.getUserMedia\(/);
 });
 
 
