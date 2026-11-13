@@ -94,6 +94,10 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
   const [historyLoading, setHistoryLoading] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [captureMetrics, setCaptureMetrics] = useState<VoiceAudioMetrics | null>(null);
+  const [microphoneDevices, setMicrophoneDevices] = useState<MediaDeviceInfo[]>([]);
+  const [microphoneDeviceId, setMicrophoneDeviceId] = useState("");
+  const [pendingCapture, setPendingCapture] = useState<Blob | null>(null);
+  const [capturePreviewUrl, setCapturePreviewUrl] = useState("");
   const [prismaDiagnostics, setPrismaDiagnostics] = useState<PrismaDiagnostics | null>(null);
   const [audioUrl, setAudioUrl] = useState("");
   const [playbackElementKey, setPlaybackElementKey] = useState(0);
@@ -265,6 +269,8 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
       if (recordingTimer.current !== null) window.clearInterval(recordingTimer.current);
       void releaseMicrophone();
       speechRequestRef.current?.abort(); speechRequestRef.current = null;
+      // A pending local preview is ephemeral; do not retain it across navigation.
+      // Object URLs are released on component unmount.
       transcriptionRequestRef.current?.abort(); transcriptionRequestRef.current = null;
       syncControllerRef.current?.cancel();
       syncGenerationRef.current = null;
@@ -273,6 +279,7 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
       if (playbackSourceRef.current) { playbackSourceRef.current.disconnect(); playbackSourceRef.current = null; }
       if (playbackContextRef.current && playbackContextRef.current.state !== "closed") void playbackContextRef.current.close();
       audioCache.current.forEach(url => URL.revokeObjectURL(url));
+      // The preview URL is released on discard/submit or when replaced.
       immersiveVoiceBridge.clear();
     };
   }, [releaseMicrophone]);
@@ -405,6 +412,26 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
     } catch (cause) { setLanguage(previous); handleError(cause); }
   }
 
+  async function refreshMicrophoneDevices() {
+    if (!navigator.mediaDevices?.enumerateDevices) return;
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      if (mounted.current) setMicrophoneDevices(devices.filter(device => device.kind === "audioinput"));
+    } catch { setNotice("Microphone devices could not be listed. The default device remains available."); }
+  }
+
+  function discardPendingCapture() {
+    setPendingCapture(null);
+    setCapturePreviewUrl(previous => { if (previous) URL.revokeObjectURL(previous); return ""; });
+  }
+
+  async function submitPendingCapture() {
+    if (!pendingCapture || recording || transcribing) return;
+    const blob = pendingCapture;
+    discardPendingCapture();
+    await transcribeWav(blob);
+  }
+
   async function transcribeWav(blob: Blob) {
     const sessionId = selected;
     if (!sessionId) return;
@@ -444,7 +471,11 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
     try {
       try { if (context) setCaptureMetrics(measureVoiceAudio(chunksRef.current, context.sampleRate)); }
       finally { await releaseMicrophone(); }
-      await transcribeWav(wavFromFloatChunks(chunksRef.current, context?.sampleRate || 48000));
+      const blob = wavFromFloatChunks(chunksRef.current, context?.sampleRate || 48000);
+      discardPendingCapture();
+      setPendingCapture(blob);
+      setCapturePreviewUrl(URL.createObjectURL(blob));
+      setNotice("Recording stopped. Listen locally, then explicitly choose Send to Prisma or Discard. No audio has been uploaded.");
     }
     catch (cause) { handleError(cause); }
     finally { setTranscribing(false); chunksRef.current = []; voiceTurnActive.current = false; if (immersiveVoiceBridge.getState() === "thinking") immersiveVoiceBridge.setState("idle"); }
@@ -452,14 +483,15 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
 
   async function toggleRecording() {
     if (recordingActive.current) { await finishRecording(); return; }
-    setError(""); setNotice(""); interruptSpeechForQuestion();
+    setError(""); setNotice(""); discardPendingCapture(); interruptSpeechForQuestion();
     if (demoMode) { setError("Microphone capture is unavailable in local demo mode. Type a question to continue."); immersiveVoiceBridge.setState("error"); return; }
     if (!selected || busy || transcribing || voiceTurnActive.current || micRequestActive.current) return;
     if (!navigator.mediaDevices?.getUserMedia || typeof AudioContext === "undefined") { setError("Microphone recording is unavailable in this browser. Type your question instead."); immersiveVoiceBridge.setState("error"); return; }
     immersiveVoiceBridge.setState("listening");
     micRequestActive.current = true; voiceTurnActive.current = true; setMicStarting(true);
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true, ...(microphoneDeviceId ? { deviceId: { exact: microphoneDeviceId } } : {}) } });
+      void refreshMicrophoneDevices();
       if (!mounted.current) { stream.getTracks().forEach(track => track.stop()); return; }
       streamRef.current = stream;
       const context = new AudioContext();
@@ -627,6 +659,8 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
       <header className="vt-topbar"><div><button className="vt-mobile-menu" onClick={() => setMobileMenu(!mobileMenu)} aria-label="Toggle sessions">☰</button><span className="vt-eyebrow">✦ VOICE LEARNING STUDIO</span>{demoMode && <span className="vt-demo-badge">LOCAL DEMO - NO GNANI AUDIO</span>}<h2>{current?.topic || "Your voice classroom"}</h2></div><div className="vt-top-actions">{immersive && <label>Learning session <select aria-label="Voice learning session" value={selected} disabled={busy || transcribing || recording} onChange={event => chooseSession(event.target.value)}>{sessions.map(item => <option key={item.id} value={item.id}>{item.topic}</option>)}</select></label>}<label>Tutor language <select value={language} disabled={recording || transcribing || busy} onChange={event => void changeLanguage(event.target.value as Language)}><option value="mixed">Telugu + English</option><option value="english">English</option><option value="telugu">తెలుగు</option></select></label></div>{!immersive && <SessionModeNav sessionId={selected} active="voice"/>}{onClose && <button type="button" className="vt-embedded-close" onClick={onClose} aria-label="Close voice tutor">Close</button>}</header>
       <div className="vt-layout"><section className="vt-stage"><div className="vt-stage-heading"><span className="vt-eyebrow">✦ SPEAK • LEARN • GROW</span><h1>Speak naturally.<br/><span className="gradient-text">Learn confidently.</span></h1><p>Gnani Prisma transcribes your voice; Gemini tutors in your selected language.</p></div>
         <div className={recording ? "vt-orb-area vt-recording" : "vt-orb-area"}><div className="vt-orb-ring"/><div className="vt-orb-ring vt-ring-two"/><button className="vt-orb" disabled={!selected || busy || transcribing || micStarting} onClick={() => void toggleRecording()} aria-label={recording ? "Stop recording" : "Start microphone recording"} aria-pressed={recording}><svg viewBox="0 0 24 24" width="45" height="45" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><rect x="9" y="2" width="6" height="13" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5m-4 0h8"/></svg></button></div>
+        <div className="vt-notice" aria-label="Microphone diagnostics"><label>Microphone input <select value={microphoneDeviceId} disabled={recording || micStarting || transcribing} onChange={event => setMicrophoneDeviceId(event.target.value)}><option value="">System default</option>{microphoneDevices.map(device => <option key={device.deviceId} value={device.deviceId}>{device.label || `Microphone ${device.deviceId.slice(0, 8)}`}</option>)}</select></label> <button type="button" onClick={() => void refreshMicrophoneDevices()} disabled={recording || micStarting}>Refresh devices</button></div>
+        {pendingCapture && capturePreviewUrl && <div className="vt-notice" aria-label="Local recording review"><p>Local recording only — nothing sent to Prisma yet. Play it to check the microphone source, then choose what to do.</p><audio controls src={capturePreviewUrl} preload="metadata" aria-label="Play back captured microphone audio locally"/><div><button type="button" disabled={transcribing} onClick={() => void submitPendingCapture()}>Send reviewed recording to Prisma</button> <button type="button" disabled={transcribing} onClick={discardPendingCapture}>Discard recording</button></div></div>}
         <div className={recording ? "vt-wave vt-wave-active" : "vt-wave"} aria-hidden="true">{Array.from({length: 35}, (_, index) => <i key={index} style={{ height: `${12 + Math.abs(Math.sin(index * 1.43)) * 38}px`, animationDelay: `${index * 37}ms` }}/>)}</div>
         <div className="vt-status" role="status">{micStarting ? "Requesting microphone permission…" : recording ? `Recording… ${recordingSeconds}s / 30s — tap the orb to stop` : transcribing ? "Transcribing with Gnani Prisma…" : speaking ? "Tutor audio is playing…" : speechLoading ? "Generating tutor audio with Gnani Timbre…" : busy ? "Gemini tutor is thinking…" : selected ? "Tap the orb to record a question" : "Choose a learning session first"}</div>
         {captureMetrics && <p className="vt-notice" role="status" aria-label="Last microphone capture quality">Last capture: {captureMetrics.durationSeconds.toFixed(1)} s · source {captureMetrics.sampleRateHz.toLocaleString()} Hz · output WAV 16 kHz mono PCM 16-bit · RMS {captureMetrics.rmsDbfs.toFixed(1)} dBFS · peak {captureMetrics.peakDbfs.toFixed(1)} dBFS · speech-level frames {captureMetrics.speechFramePercent.toFixed(1)}% · clipped {captureMetrics.clippedPercent.toFixed(2)}%. {captureMetrics.rmsDbfs < -42 ? "Input is quiet; check the selected Windows microphone and input level." : ""}</p>}
