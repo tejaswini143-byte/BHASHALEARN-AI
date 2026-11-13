@@ -35,7 +35,7 @@ async function stopRecording(page: Page) {
   await page.getByRole("button", { name: "Stop recording" }).dispatchEvent("click");
 }
 
-async function mockVoiceBrowser(page: Page, options: { micDenied?: boolean; sttStatus?: number; ttsStatus?: number } = {}) {
+async function mockVoiceBrowser(page: Page, options: { micDenied?: boolean; sttStatus?: number; ttsStatus?: number; transcript?: string } = {}) {
   await page.addInitScript(({ micDenied }) => {
     sessionStorage.setItem("bhashalearn_access_token", "mock-browser-token");
     const testWindow = window as Window & { voiceTest?: { micCalls: number; tracksStopped: number; recordedFormat?: string; recordedSize?: number } };
@@ -115,7 +115,7 @@ async function mockVoiceBrowser(page: Page, options: { micDenied?: boolean; sttS
     }, { contentType: request.headers()["content-type"], size: body?.byteLength ?? 0, hasWaveHeader: raw.includes("RIFF") && raw.includes("WAVE") && raw.includes("fmt ") });
     await route.fulfill(options.sttStatus && options.sttStatus !== 200
       ? { status: options.sttStatus, json: { detail: "Mock Prisma unavailable." } }
-      : { json: { session_id: session.id, transcript, detected_language: "te+en", language_mode: "mixed" } });
+      : { json: { session_id: session.id, transcript: options.transcript ?? transcript, detected_language: "te+en", language_mode: "mixed" } });
   });
   await page.route(`**/api/v1/tutor/sessions/${session.id}/chat`, route => route.fulfill({ json: reply }));
   await page.route(`**/api/v1/voice/sessions/${session.id}/speech`, route => options.ttsStatus && options.ttsStatus !== 200
@@ -172,6 +172,81 @@ test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
     await page.getByRole("button", { name: "Stop audio" }).click();
     await expect.poll(() => audio.evaluate(element => element.paused)).toBe(true);
     await expect.poll(() => audio.evaluate(element => element.currentTime)).toBe(0);
+  });
+
+  test("a Prisma transcript needs review, browser confirmation, and native approval before execution", async ({ page }) => {
+    const requests: string[] = [];
+    const proposed = { action: "open_app", app_id: "notepad" };
+    const origin = "http://127.0.0.1:18765";
+    const snapshot = { snapshot_id: "mock-snapshot", targets: [] };
+    const cors = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Authorization, Content-Type",
+    };
+    let nativeApproved = false;
+    await page.route(`${origin}/**`, async route => {
+      const request = route.request();
+      if (request.method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
+      const path = new URL(request.url()).pathname;
+      switch (path) {
+        case "/pair": return route.fulfill({ headers: cors, json: { token: "mock-pairing" } });
+        case "/health": return route.fulfill({ headers: cors, json: { active: false } });
+        case "/activate": return route.fulfill({ headers: cors, json: { active: true } });
+        case "/desktop/snapshot": return route.fulfill({ headers: cors, json: snapshot });
+        case "/desktop/confirm":
+          requests.push("confirm");
+          expect(request.postDataJSON().action).toEqual(proposed);
+          return route.fulfill(nativeApproved
+            ? { headers: cors, json: { confirmation_token: "mock-one-use-ticket" } }
+            : { headers: cors, status: 403, json: { error: "Local Windows operator declined." } });
+        case "/desktop/execute":
+          requests.push("execute");
+          expect(request.postDataJSON()).toMatchObject({ action: proposed, confirmation_token: "mock-one-use-ticket" });
+          return route.fulfill({ headers: cors, json: { action: "open_app" } });
+        case "/stop": return route.fulfill({ headers: cors, json: { active: false } });
+        default: return route.abort();
+      }
+    });
+    await page.route("**/api/v1/assistant/voice/speech", route => route.fulfill({ status: 204 }));
+    await page.route("**/api/v1/assistant/desktop/interpret", route => {
+      requests.push("interpret");
+      expect(route.request().postDataJSON().transcript).toBe("Open Notepad");
+      return route.fulfill({ json: { action: proposed } });
+    });
+    await mockVoiceBrowser(page, { transcript: "Open Notepad" });
+    await startRecording(page);
+    await stopRecording(page);
+    await page.getByRole("button", { name: "Send reviewed recording to Prisma" }).click();
+    await expect(page.getByLabel("Prisma transcript or typed message")).toHaveValue("Open Notepad");
+
+    const panel = page.getByRole("region", { name: "Windows desktop control" });
+    const interpret = panel.getByRole("button", { name: "Interpret with Gemini" });
+    const confirm = panel.getByRole("button", { name: "Confirm and execute" });
+    await panel.getByRole("button", { name: "Connect to local companion" }).click();
+    await panel.getByRole("button", { name: "Enable control" }).click();
+    await expect(interpret).toBeDisabled();
+    expect(requests).toEqual([]);
+    await panel.getByRole("button", { name: "I reviewed this transcript" }).click();
+    await expect(interpret).toBeEnabled();
+    expect(requests).toEqual([]);
+    await interpret.click();
+    await expect(confirm).toBeVisible();
+    expect(requests).toEqual(["interpret"]);
+
+    await confirm.click();
+    await expect(panel.getByText("Local Windows operator declined.", { exact: false })).toBeVisible();
+    expect(requests).toEqual(["interpret", "confirm"]);
+    await expect(panel.getByText("completed open_app", { exact: false })).toHaveCount(0);
+
+    nativeApproved = true;
+    await interpret.click();
+    await confirm.click();
+    await expect(panel.getByRole("status")).toContainText("Completed: completed open_app");
+    expect(requests).toEqual(["interpret", "confirm", "interpret", "confirm", "execute"]);
+    await panel.getByRole("button", { name: "Emergency Stop" }).click();
+    await expect(interpret).toBeDisabled();
+    await expect(confirm).toHaveCount(0);
   });
 
   test("mic denial and Prisma errors keep typed fallback available with visible errors", async ({ page }) => {

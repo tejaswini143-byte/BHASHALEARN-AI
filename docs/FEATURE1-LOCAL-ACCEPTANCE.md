@@ -10,15 +10,50 @@
 - Do not send an incorrect transcript to Gemini; do not execute a desktop action without reviewing and confirming its plan.
 - Keep desktop control disabled until the approved execution step; use disposable Notepad/browser windows only.
 
+## Start a disposable Windows test stack
+
+Use a disposable Windows desktop session with a microphone and a fresh checkout of PR #2. From the repository root in PowerShell, with Python 3.13 and Node.js 22 available:
+
+```powershell
+py -3.13 -m venv .venv
+& .\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt -r scripts\requirements-desktop.txt
+Copy-Item backend\.env.example .env
+```
+
+Edit the ignored root `.env` locally. Set `BHASHALEARN_DATABASE_URL=sqlite:///./feature1-acceptance.sqlite3`, generate a fresh `BHASHALEARN_JWT_SECRET_KEY`, and configure valid `GNANI_API_KEY` and `BHASHALEARN_GEMINI_API_KEY` values. Set `BHASHALEARN_GEMINI_MODEL` to the model available to the test account. Use a new SQLite filename for each clean acceptance setup.
+
+In the first PowerShell window:
+
+```powershell
+& .\.venv\Scripts\python.exe -m alembic -c backend\alembic.ini upgrade head
+& .\.venv\Scripts\python.exe -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8027
+```
+
+In a second PowerShell window from the repository root:
+
+```powershell
+Set-Location frontend
+npm ci
+npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
+```
+
+In a third PowerShell window from the repository root:
+
+```powershell
+& .\.venv\Scripts\python.exe scripts\desktop_companion.py
+```
+
+Open `http://127.0.0.1:5173/register` in a fresh browser profile, create a disposable student, then open `http://127.0.0.1:5173/voice`. Create a session with **New learning topic → + Create**. Leave desktop control disabled until the spoken command has been captured, reviewed locally, and correctly transcribed.
+
 ## Diagnostic sequence
 1. Open the isolated Voice Tutor session and select **English**.
 2. Click **Refresh devices** and select the intended microphone, or use System default.
-3. With fresh permission, click **Start microphone recording**; speak `Open Notepad`; click **Stop recording** immediately.
+3. With fresh permission, click **Start microphone recording**, accept the app consent dialog, and allow browser microphone access if prompted. When the recorder shows **Recording**, speak `Open Notepad`; click **Stop recording** immediately.
 4. Play the **local recording preview**. If it contains unrelated speech, silence, distortion, or the wrong input, **Discard** and investigate the device/browser path without contacting Prisma.
 5. If the preview audibly contains the intended phrase, explicitly approve **Send reviewed recording to Prisma**. Record duration, sample rate, RMS, peak, speech-active percentage, provider model, language code, format, latency, and transcript. Do not save raw audio or credentials in reports.
 6. If Prisma is wrong, stop before Gemini. With separate explicit approval for each upload, compare the **same approved recording** under `en-IN/transcribe` and `indic-auto/codemix` through a diagnostic-only path; never silently send to a different provider.
-7. If transcript is correct, review the structured Gemini proposal. With user confirmation, execute only `open_app(notepad)` through the paired loopback Windows companion.
-8. Independently verify a newly opened disposable Notepad is foreground. Stop desktop control immediately afterward.
+7. If the transcript is correct, click **Connect to local companion → Enable control → I reviewed this transcript → Interpret with Gemini**. Verify the plan proposes only opening Notepad. With separate authorization for that action, click **Confirm and execute** and approve the matching native Windows prompt.
+8. Independently verify a newly opened disposable Notepad is foreground. Click **Emergency Stop** immediately afterward. Check that the panel offers **Enable control** and **Interpret with Gemini** is disabled. Report the commit, preview match, Prisma diagnostics and transcript, proposed action, whether both confirmations appeared, independent observation of Notepad, and the Stop result. Share no raw audio, credentials, or unredacted network exports.
 
 ## Acceptance matrix
 - English Notepad open: NOT YET PASSED.
@@ -35,7 +70,7 @@ The `.github/workflows/feature1-regression.yml` workflow runs the backend suite,
 ## Prior incident evidence
 
 - The earlier `Completed: completed open_app` banner could reflect a late response from an earlier request. No matching browser request trace or companion execution record was available to establish whether Windows actually opened an app. The browser rejects stale completions, and the companion now invalidates pending approval and execution when control is stopped, disabled, or re-enabled.
-- The earlier five-second preview establishes that audio reached local review. Its trigger is unknown, and no upload was reported. The current Voice Tutor opens the microphone only through the recording button and a separate consent dialog. Dismissing consent preserves the previous preview, and upload requires its own button.
+- The [earlier test report](FEATURE1-FINAL-TEST-REPORT.md#microphone-and-prisma-evidence) records a 5.5-second unauthorized ambient capture after the browser permission state changed from `prompt`, followed by Prisma HTTP 200 with an empty transcript. Whether the separately reported five-second preview refers to that same capture is unconfirmed. No corresponding event trace establishes what started recording, and provider retention is unknown. The current Voice Tutor opens the microphone only through the recording button and a separate consent dialog. Dismissing consent preserves the previous preview, and upload requires its own button.
 
 ## Known unresolved issues
 - A short spoken command was captured for 30 seconds; audio-energy-based silence detection may not have triggered because ambient activity remained above its threshold. The actual captured audio was not retained.
