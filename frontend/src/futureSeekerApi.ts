@@ -30,3 +30,28 @@ export function describeFutureSeekerError(error: unknown): string {
   if (error instanceof Error && error.message === "Sign in to save this reflection.") return error.message;
   return "Could not save the reflection. Please try again.";
 }
+
+export async function listFutureSeekerReflections(): Promise<SavedFutureSeekerReflection[]> {
+  const token = getToken();
+  if (!token) throw new Error("Sign in to view saved reflections.");
+  const items = await request<unknown>("/future-seeker/reflections", {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!Array.isArray(items) || items.length > 100 ||
+      !items.every(item => item && typeof item === "object" &&
+        typeof item.id === "string" && typeof item.createdAt === "string" &&
+        item.source === "illustrative-simulation")) {
+    throw new Error("Invalid saved reflections response.");
+  }
+  return items as SavedFutureSeekerReflection[];
+}
+
+export async function deleteFutureSeekerReflection(id: string): Promise<void> {
+  const token = getToken();
+  if (!token) throw new Error("Sign in to delete saved reflections.");
+  if (!/^[0-9a-f-]{36}$/i.test(id)) throw new Error("Invalid reflection identifier.");
+  await request<void>(`/future-seeker/reflections/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
