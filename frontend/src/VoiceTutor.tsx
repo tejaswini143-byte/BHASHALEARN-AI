@@ -487,13 +487,12 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
 
   async function toggleRecording() {
     if (recordingActive.current) { await finishRecording(); return; }
-    // Starting a new capture invalidates any previous command transcript and plan.
-    // Never let an old successful transcription masquerade as the new recording.
-    setDraft(""); setPrismaDiagnostics(null);
-    setError(""); setNotice(""); discardPendingCapture(); interruptSpeechForQuestion();
     if (demoMode) { setError("Microphone capture is unavailable in local demo mode. Type a question to continue."); immersiveVoiceBridge.setState("error"); return; }
     if (!selected || busy || transcribing || voiceTurnActive.current || micRequestActive.current) return;
     if (!navigator.mediaDevices?.getUserMedia || typeof AudioContext === "undefined") { setError("Microphone recording is unavailable in this browser. Type your question instead."); immersiveVoiceBridge.setState("error"); return; }
+    // Only a valid new recording attempt may invalidate the prior transcript or local preview.
+    setDraft(""); setPrismaDiagnostics(null);
+    setError(""); setNotice(""); discardPendingCapture(); interruptSpeechForQuestion();
     immersiveVoiceBridge.setState("listening");
     micRequestActive.current = true; voiceTurnActive.current = true; setMicStarting(true);
     try {
