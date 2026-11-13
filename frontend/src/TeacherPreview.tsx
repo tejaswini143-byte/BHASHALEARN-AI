@@ -258,6 +258,7 @@ export function TeacherPreview({ sessionId }: { sessionId?: string } = {}) {
       if (!names.length) {
         disposeLoadedModel(gltf);
         setModelStatus("This GLB has no rigged/skinned character. Choose a licensed rigged human avatar.");
+        event.target.value = "";
         return;
       }
       setModel(gltf);
