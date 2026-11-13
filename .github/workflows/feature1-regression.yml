@@ -1,0 +1,79 @@
+name: Feature 1 regression gates
+
+on:
+  push:
+    branches:
+      - fix/feature1-voice-diagnostics-ci-20261113
+  pull_request:
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - "pocs/poc01_prisma_stt/**"
+      - ".github/workflows/feature1-regression.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: feature1-regression-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend and Feature 2 regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PYTHONPATH: backend
+      DATABASE_URL: "sqlite+pysqlite:///:memory:"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        run: python -m pip install -r backend/requirements.txt
+      - name: Run backend regression suite (no live providers)
+        run: python -m pytest -q backend/tests
+
+  frontend:
+    name: Frontend tests and production build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Run frontend regression suite
+        run: npm test
+      - name: Typecheck and build
+        run: npm run build
+
+  guardrails:
+    name: Safety and repository hygiene
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check whitespace
+        run: git diff --check HEAD^ HEAD
+      - name: Block committed secret and audio artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git ls-files | grep -Ei '(^|/)(\.env($|\.)|.*\.(wav|mp3|flac|ogg|sqlite|sqlite3|db)$)' | grep -vE '(^|/)(\.env\.example|\.env\.sample)$'; then
+            echo "Tracked credentials, audio, or database artifacts detected."
+            exit 1
+          fi
+          echo "No prohibited tracked artifacts detected."
