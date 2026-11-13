@@ -354,6 +354,44 @@ test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
     expect(requests).toEqual(["/desktop/confirm", "/desktop/execute"]);
   });
 
+  test("pointer plans reject duplicate names before requesting native approval", async ({ page }) => {
+    const snapshot = {
+      snapshot_id: "qa", active_window_id: "window", focused_target_id: null, pointer_qa_window: true,
+      targets: [
+        { id: "window", name: "Edge", kind: "window" },
+        { id: "one", name: "Open chapter", kind: "button" },
+        { id: "two", name: "Open chapter", kind: "button" },
+      ],
+    };
+    const actionRequests: string[] = [];
+    await page.route("http://127.0.0.1:18765/**", async route => {
+      const path = new URL(route.request().url()).pathname;
+      const headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type",
+      };
+      if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204, headers });
+      if (path === "/pair") return route.fulfill({ headers, json: { token: "mock-pairing" } });
+      if (path === "/health") return route.fulfill({ headers, json: { active: false } });
+      if (path === "/activate") return route.fulfill({ headers, json: { active: true } });
+      if (path === "/desktop/snapshot") return route.fulfill({ headers, json: snapshot });
+      actionRequests.push(path);
+      return route.abort();
+    });
+    await page.route("**/api/v1/assistant/voice/speech", route => route.fulfill({ status: 204 }));
+    await mockVoiceBrowser(page);
+    await page.getByLabel("Prisma transcript or typed message").fill("Click Open chapter.");
+    const panel = page.getByRole("region", { name: "Windows desktop control" });
+    await panel.getByRole("button", { name: "Connect to local companion" }).click();
+    await panel.getByRole("button", { name: "Enable control" }).click();
+    await panel.getByRole("button", { name: "I reviewed this transcript" }).click();
+    await panel.getByRole("button", { name: "Prepare pointer action" }).click();
+    await expect(panel.getByRole("status", { name: "Clarification needed" })).toContainText("More than one visible button");
+    await expect(panel.getByRole("button", { name: "Confirm and execute" })).toHaveCount(0);
+    expect(actionRequests).toEqual([]);
+  });
+
   test("mic denial and Prisma errors keep typed fallback available with visible errors", async ({ page }) => {
     await mockVoiceBrowser(page, { micDenied: true });
     await startRecording(page);

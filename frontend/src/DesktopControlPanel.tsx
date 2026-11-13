@@ -15,6 +15,7 @@ type Action = {
   url?: string | null;
   shortcut?: string | null;
   target_name?: string | null;
+  direction?: string;
   steps?: Action[] | null;
   clarification?: string | null;
 };
@@ -24,6 +25,7 @@ type DesktopSnapshot = {
   active_window_id: string | null;
   focused_target_id: string | null;
   active_app: string | null;
+  pointer_qa_window?: boolean;
   targets: Array<{ id: string; role: string; name: string; kind: "window" | "button" | "link" | "text" | "search" | "other" }>;
 };
 
@@ -91,6 +93,15 @@ const APPROVED_LINKS = new Map([
   ["chat gpt", "https://chatgpt.com/"],
   ["google", "https://www.google.com/"],
 ]);
+
+function pointerCommand(transcript: string) {
+  const command = transcript.toLowerCase().replace(/[.!?]$/, "").replace(/\s+/g, " ");
+  const direction = command.match(/^move (?:the )?(?:cursor|pointer) (left|right|up|down)$/)?.[1];
+  if (direction) return { action: "move_qa_pointer", direction };
+  const name = command.match(/^click (?:the )?(.+)$/)?.[1];
+  if (name && ["test button", "search", "open chapter"].includes(name)) return { action: "click_qa_control", name };
+  return null;
+}
 
 function planLocalCommand(transcript: string, inQaPage: boolean): Action | null {
   const command = transcript.toLowerCase().replace(/[.!?]$/, "").replace(/\s+/g, " ");
@@ -250,6 +261,7 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
     const qaContext = getDesktopQaContext();
     const token = getToken(); if (!token) { setStatus("Sign in again to interpret a command."); return; }
     const localPlan = planLocalCommand(normalized, Boolean(qaContext));
+    const pointer = pointerCommand(normalized);
     executionGateRef.current.invalidatePlan();
     currentPlanRef.current = null;
     setBusy(true); setAction(null);
@@ -257,13 +269,30 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
     try {
       let targets = qaContext?.targets || [];
       let approved_sites = qaContext?.approved_sites || {};
-      if (!qaContext && !localPlan) {
+      if (pointer || (!qaContext && !localPlan)) {
         const snapshot = await companion("/desktop/snapshot") as DesktopSnapshot;
         desktopSnapshotRef.current = snapshot;
         targets = targetsForCommand(snapshot, normalized);
         approved_sites = {};
       }
       let proposed = localPlan;
+      if (pointer) {
+        const snapshot = desktopSnapshotRef.current!;
+        const activeWindow = snapshot.targets.find(target => target.id === snapshot.active_window_id);
+        const matches = snapshot.targets.filter(target => target.kind === "button"
+          && target.name.normalize("NFC").toLowerCase() === pointer.name);
+        if (!activeWindow || snapshot.pointer_qa_window !== true) {
+          proposed = { action: "clarify", clarification: "Open the disposable desktop QA window and try again." };
+        } else if (pointer.action === "move_qa_pointer") {
+          proposed = { action: pointer.action, direction: pointer.direction };
+        } else if (matches.length === 1) {
+          proposed = { action: pointer.action, target_id: matches[0].id, target_name: matches[0].name };
+        } else {
+          proposed = { action: "clarify", clarification: matches.length
+            ? "More than one visible button has that name. Choose a unique button."
+            : "Name an exact visible button in the disposable desktop QA window." };
+        }
+      }
       if (!proposed) {
         assertExecutionActive(requestEpoch);
         const response = await fetch("/api/v1/assistant/desktop/interpret", {
@@ -295,6 +324,8 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
   }
 
   function describe(step: Action): string {
+    if (step.action === "move_qa_pointer") return `move the cursor ${step.direction} inside the QA window`;
+    if (step.action === "click_qa_control") return `click ${step.target_name} inside the QA window`;
     if (step.action === "sequence") return (step.steps || []).map(describe).join(", then ");
     if (["click_target", "focus_target", "type_into", "search", "move_to_target", "switch_window", "minimize_window", "maximize_window", "close_window"].includes(step.action)) {
       const target = (desktopSnapshotRef.current?.targets || getDesktopQaContext()?.targets || []).find(item => item.id === step.target_id);
@@ -460,7 +491,7 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
     try {
       let summary: string;
       const localPlan = planLocalCommand(normalized, Boolean(currentContext));
-      if (currentContext && !localPlan) {
+      if (currentContext && !localPlan && !pointerCommand(normalized)) {
         summary = await executeStep(approvedAction, executionEpoch);
       } else {
         let executionPayload: { confirmed_close: boolean; action: Action } & Partial<{
@@ -501,12 +532,18 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
           || (localPlan?.action === "open_app" && (response.app_id !== "notepad"
             || typeof response.verified_window !== "string" || !response.verified_window.trim()))
           || (approvedAction.action === "open_named_link" && response.url !== approvedAction.url)
+          || (pointerCommand(normalized) && (!Array.isArray(response.cursor)
+            || response.cursor.length !== 2 || !response.cursor.every(Number.isInteger)))
           || (response.action === "sequence" && (!Array.isArray(response.steps)
             || response.steps.length !== approvedAction.steps?.length
             || response.steps.some((step: { ok?: boolean } | null) => step?.ok !== true)))) {
           throw new Error("The companion did not confirm the approved action result.");
         }
-        summary = approvedAction.action === "open_named_link"
+        summary = approvedAction.action === "click_qa_control"
+          ? `sent a click to ${approvedAction.target_name}`
+          : approvedAction.action === "move_qa_pointer"
+            ? `moved the cursor ${approvedAction.direction} inside the QA window`
+            : approvedAction.action === "open_named_link"
           ? `sent ${approvedAction.url} to the default browser`
           : response.action === "sequence" ? `completed ${response.steps.length} approved desktop steps` : `completed ${response.action}`;
       }
@@ -547,7 +584,7 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
     </div>
     <p>Prisma transcript: {transcript || "Record a command first."}</p>
     {transcript.trim() && !STOP_WORDS.test(transcript.normalize("NFC").trim()) && <button type="button" disabled={!connected || !active || busy || reviewedTranscript === transcript.normalize("NFC").trim()} onClick={() => { executionGateRef.current.invalidatePlan(); currentPlanRef.current = null; setReviewedTranscript(transcript.normalize("NFC").trim()); setAction(null); setStatus("Transcript reviewed. You can prepare the action plan."); }}>I reviewed this transcript</button>}
-    <button type="button" disabled={!connected || !active || !transcript.trim() || busy || (!STOP_WORDS.test(transcript.normalize("NFC").trim()) && reviewedTranscript !== transcript.normalize("NFC").trim())} onClick={() => void interpret()}>{STOP_WORDS.test(transcript.normalize("NFC").trim()) ? "Voice Emergency Stop" : localAction?.action === "open_app" ? "Prepare Notepad action" : localAction ? "Prepare link action" : "Interpret with Gemini"}</button>
+    <button type="button" disabled={!connected || !active || !transcript.trim() || busy || (!STOP_WORDS.test(transcript.normalize("NFC").trim()) && reviewedTranscript !== transcript.normalize("NFC").trim())} onClick={() => void interpret()}>{STOP_WORDS.test(transcript.normalize("NFC").trim()) ? "Voice Emergency Stop" : localAction?.action === "open_app" ? "Prepare Notepad action" : localAction ? "Prepare link action" : pointerCommand(transcript.normalize("NFC").trim()) ? "Prepare pointer action" : "Interpret with Gemini"}</button>
     {action && (clarification
       ? <div role="status" aria-label="Clarification needed"><p>{action.clarification}</p><button type="button" onClick={() => setAction(null)}>Clear clarification</button></div>
       : <div role="group" aria-label="Confirm desktop action"><p>Proposed: <b>{describe(action)}</b>{action.action === "sequence" && <ol>{(action.steps || []).map((step, index) => <li key={index}>{describe(step)}</li>)}</ol>}</p>

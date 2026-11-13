@@ -74,6 +74,24 @@ try the reviewed text “Open the website Example.” The panel should list the
 approved links and offer no execution button. These exact link commands are
 planned locally. No Gemini key is needed.
 
+## Phase 3 cursor and named buttons
+
+In a disposable Chrome or Edge window, open the local
+`/desktop-control-test.html` page and use its embedded Voice Tutor. Keep
+the QA window in the foreground and place the cursor inside it. Use a fresh
+approved recording and Prisma upload for each live command.
+
+- Say “Move the cursor right.” Review the transcript and select **Prepare
+  pointer action**. Approve both prompts and observe the bounded movement.
+- Say “Click Test button.” Verify the exact label in the proposal and native
+  prompt. After both approvals, check that the button changes to **CLICK VERIFIED**.
+- Say “Click Open chapter.” The two matching buttons should produce a
+  clarification without an execution button. Change the window or button after
+  planning to check that stale targets are rejected.
+
+The companion reports that it sent the click. Verify the visible page change
+separately and use **Emergency Stop** when finished.
+
 ## Acceptance matrix
 - English Notepad open: NOT YET PASSED.
 - ChatGPT browser open: NOT YET PASSED via voice.

@@ -70,6 +70,8 @@ def _require_native_execution_approval(action: dict) -> bool:
     action_name = str(action.get("action", "unknown"))[:80]
     app_name = str(action.get("app_id") or action.get("target_name") or "")[:80]
     detail = f"{action_name}: {app_name}" if app_name else action_name
+    if action_name == "move_qa_pointer":
+        detail = f"Move the cursor {str(action.get('direction', ''))[:12]} in the disposable QA window."
     if action_name == "open_named_link":
         detail = f"Open this approved link in your default browser:\n{action['url']}"
     message = ("BHASHALEARN AI requests a Windows desktop action:\n\n"

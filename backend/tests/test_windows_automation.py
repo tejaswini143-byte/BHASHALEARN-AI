@@ -128,3 +128,48 @@ def test_approved_link_reports_browser_dispatch_failure(monkeypatch, browser_err
     with pytest.raises(RuntimeError, match="Check that a default browser is configured"):
         windows_automation.execute_action({"action": "open_named_link", "url": "https://chatgpt.com/"},
                                           type_text=lambda _: None, cancel_check=lambda: None)
+
+
+@pytest.mark.parametrize("outcome", ["move", "click", "duplicate", "changed", "wrong_window", "obscured"])
+def test_qa_pointer_is_bounded_to_the_approved_window(monkeypatch, outcome):
+    bounds = SimpleNamespace(left=100, top=100, right=600, bottom=600)
+    rect = SimpleNamespace(left=200, top=200, right=300, bottom=260)
+    button = SimpleNamespace(
+        element_info=SimpleNamespace(name="Changed" if outcome == "changed" else "Search"),
+        rectangle=lambda: rect, is_visible=lambda: True, is_enabled=lambda: True,
+    )
+    window = SimpleNamespace(
+        rectangle=lambda: bounds, window_text=lambda: "BHASHALEARN Desktop Control QA",
+        descendants=lambda **_: [button, button] if outcome == "duplicate" else [button],
+    )
+    entries = {
+        "window": {"kind": "window", "app_id": "edge", "handle": 42, "wrapper": window},
+        "button": {"kind": "button", "handle": 42, "wrapper": button, "label": "Search",
+                   "rect": [200, 200, 300, 260]},
+    }
+    monkeypatch.setattr(windows_automation, "_cached_target", lambda _, target_id: entries[target_id])
+    monkeypatch.setattr(windows_automation, "_foreground_handle", lambda: 7 if outcome == "wrong_window" else 42)
+    monkeypatch.setattr(windows_automation, "Desktop", lambda **_: SimpleNamespace(
+        from_point=lambda *_: SimpleNamespace(element_info=None) if outcome == "obscured" else button,
+    ))
+    position = SimpleNamespace(x=200, y=200)
+    clicks = []
+    monkeypatch.setattr(windows_automation.pyautogui, "position", lambda: position)
+
+    def move(x, y, **_):
+        position.x, position.y = x, y
+
+    monkeypatch.setattr(windows_automation.pyautogui, "moveTo", move)
+    monkeypatch.setattr(windows_automation.pyautogui, "click", lambda x, y: clicks.append((x, y)))
+    payload = {"action": "move_qa_pointer", "direction": "right"} if outcome == "move" else {
+        "action": "click_qa_control", "target_id": "button", "target_name": "Search",
+    }
+    if outcome in {"move", "click"}:
+        result = windows_automation.execute_action(payload, snapshot_id="snap", active_window_id="window",
+                                                   type_text=lambda _: None, cancel_check=lambda: None)
+        assert result["cursor"] == ([280, 200] if outcome == "move" else [250, 230])
+    else:
+        with pytest.raises(RuntimeError):
+            windows_automation.execute_action(payload, snapshot_id="snap", active_window_id="window",
+                                               type_text=lambda _: None, cancel_check=lambda: None)
+    assert clicks == ([(250, 230)] if outcome == "click" else [])

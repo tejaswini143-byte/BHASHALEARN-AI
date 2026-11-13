@@ -97,6 +97,15 @@ def _control_kind(control_type: str, app_id: str = "") -> str | None:
             "ComboBox": "search", "MenuItem": "button"}.get(control_type)
 
 
+def _is_pointer_qa_window(app_id, wrapper) -> bool:
+    if app_id not in {"chrome", "edge"}:
+        return False
+    try:
+        return wrapper.window_text().startswith("BHASHALEARN Desktop Control QA")
+    except Exception:
+        return False
+
+
 def get_snapshot() -> dict:
     """Return visible window names and a bounded active-window UIA target catalog.
 
@@ -184,6 +193,7 @@ def get_snapshot() -> dict:
             "focused_target_id": focused_target_id,
             "targets": targets,
             "active_app": active_entry["label"] if active_entry else None,
+            "pointer_qa_window": bool(active_entry and _is_pointer_qa_window(active_entry["app_id"], active_entry["wrapper"])),
             "window_count": all_window_count}
 
 
@@ -387,6 +397,60 @@ def execute_action(payload: dict, *, type_text, cancel_check, confirmed_close: b
         if ctypes.windll.user32.IsWindow(target["handle"]):
             raise RuntimeError("The window is still open; it may have an unsaved-work confirmation. Resolve it yourself.")
         return {"ok": True, "action": action, "target": target["label"], "closed": True}
+
+    if action in {"move_qa_pointer", "click_qa_control"}:
+        window = _cached_target(snapshot_id, active_window_id)
+        if (window["kind"] != "window" or _foreground_handle() != window["handle"]
+                or not _is_pointer_qa_window(window["app_id"], window["wrapper"])):
+            raise RuntimeError("Keep the disposable desktop QA window in the foreground.")
+        bounds = window["wrapper"].rectangle()
+        if action == "move_qa_pointer":
+            direction = payload.get("direction")
+            delta = {"left": (-80, 0), "right": (80, 0), "up": (0, -80), "down": (0, 80)}.get(direction) if isinstance(direction, str) else None
+            if delta is None:
+                raise RuntimeError("Choose left, right, up, or down.")
+            start = pyautogui.position()
+            if not (bounds.left <= start.x < bounds.right and bounds.top <= start.y < bounds.bottom):
+                raise RuntimeError("Place the cursor inside the disposable desktop QA window first.")
+            x = max(bounds.left, min(bounds.right - 1, start.x + delta[0]))
+            y = max(bounds.top, min(bounds.bottom - 1, start.y + delta[1]))
+            if (x, y) == (start.x, start.y):
+                raise RuntimeError("The cursor is already at the edge of the QA window.")
+        else:
+            if not target or target["kind"] != "button" or target["handle"] != window["handle"]:
+                raise RuntimeError("Choose a visible button from the disposable desktop QA window.")
+            wrapper = target["wrapper"]
+            rect = wrapper.rectangle()
+            label = str(wrapper.element_info.name or "").strip()
+            if (label.casefold() not in {"test button", "search", "open chapter"}
+                    or not wrapper.is_visible() or not wrapper.is_enabled()
+                    or label != target["label"] or label != payload.get("target_name")
+                    or [rect.left, rect.top, rect.right, rect.bottom] != target["rect"]):
+                raise RuntimeError("The approved button changed. Prepare the action again.")
+            matches = [button for button in window["wrapper"].descendants(control_type="Button")
+                       if button.is_visible()
+                       and str(button.element_info.name or "").strip().casefold() == label.casefold()]
+            if len(matches) != 1 or matches[0].element_info != wrapper.element_info:
+                raise RuntimeError("The approved button is missing or its name is no longer unique.")
+            x, y = (rect.left + rect.right) // 2, (rect.top + rect.bottom) // 2
+
+        if not (bounds.left <= x < bounds.right and bounds.top <= y < bounds.bottom):
+            raise RuntimeError("The approved target is outside the disposable QA window.")
+        cancel_check()
+        if _foreground_handle() != window["handle"]:
+            raise RuntimeError("The desktop QA window lost focus.")
+        pyautogui.moveTo(x, y, duration=0.15)
+        actual = pyautogui.position()
+        if (actual.x, actual.y) != (x, y):
+            raise RuntimeError("Windows did not move the cursor to the approved position.")
+        if action == "click_qa_control":
+            cancel_check()
+            hit = Desktop(backend="uia").from_point(x, y)
+            if _foreground_handle() != window["handle"] or hit.element_info != wrapper.element_info:
+                raise RuntimeError("The approved button is no longer under the cursor.")
+            cancel_check()
+            pyautogui.click(x, y)
+        return {"ok": True, "action": action, "cursor": [x, y]}
 
     if action in {"click_target", "move_to_target", "focus_target", "type_into", "search"}:
         if not target or target["kind"] == "window":
