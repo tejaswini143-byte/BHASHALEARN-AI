@@ -35,3 +35,10 @@
 /* Phase 1: disclose the absent avatar without covering the interactive lesson board. */
 .ic-avatar-notice { position: absolute; z-index: 3; bottom: 1rem; left: 1rem; max-width: min(32rem, calc(100% - 2rem)); padding: .65rem .85rem; border: 1px solid rgba(150, 200, 255, .38); border-radius: .6rem; background: rgba(5, 11, 27, .9); color: #e4efff; font-size: .85rem; line-height: 1.45; pointer-events: none; }
 @media (max-width: 720px) { .ic-avatar-notice { position: relative; left: auto; bottom: auto; margin: .5rem 1rem; max-width: none; } }
+
+/* Phase 2: avatar import controls must remain clickable above the 3D canvas. */
+.ic-avatar-notice { pointer-events: auto; display: grid; gap: .45rem; }
+.ic-avatar-notice label { display: grid; gap: .35rem; font-weight: 600; }
+.ic-avatar-notice input[type="file"] { max-width: 100%; font: inherit; font-weight: 400; }
+.ic-avatar-notice button { justify-self: start; cursor: pointer; border-radius: .4rem; padding: .35rem .65rem; }
+.ic-avatar-notice [role="alert"] { color: #ffd0c9; }
