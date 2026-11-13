@@ -42,3 +42,13 @@
 .ic-avatar-notice input[type="file"] { max-width: 100%; font: inherit; font-weight: 400; }
 .ic-avatar-notice button { justify-self: start; cursor: pointer; border-radius: .4rem; padding: .35rem .65rem; }
 .ic-avatar-notice [role="alert"] { color: #ffd0c9; }
+
+/* Phase 4: accessible lesson checks within the HUD. */
+.ic-exercise { display: grid; gap: .55rem; margin-top: 1rem; padding: .85rem; border: 1px solid rgba(155,203,255,.28); border-radius: .75rem; background: rgba(5,16,37,.65); }
+.ic-exercise h2 { font-size: 1rem; margin: 0; }
+.ic-exercise p { margin: 0; }
+.ic-exercise fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: .35rem; min-width: 0; }
+.ic-exercise legend { margin-bottom: .35rem; }
+.ic-exercise label { display: flex; align-items: center; gap: .5rem; cursor: pointer; }
+.ic-exercise button { justify-self: start; padding: .45rem .85rem; cursor: pointer; }
+.ic-exercise button:disabled { opacity: .5; cursor: not-allowed; }
