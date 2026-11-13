@@ -486,6 +486,9 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
 
   async function toggleRecording() {
     if (recordingActive.current) { await finishRecording(); return; }
+    // Starting a new capture invalidates any previous command transcript and plan.
+    // Never let an old successful transcription masquerade as the new recording.
+    setDraft(""); setPrismaDiagnostics(null);
     setError(""); setNotice(""); discardPendingCapture(); interruptSpeechForQuestion();
     if (demoMode) { setError("Microphone capture is unavailable in local demo mode. Type a question to continue."); immersiveVoiceBridge.setState("error"); return; }
     if (!selected || busy || transcribing || voiceTurnActive.current || micRequestActive.current) return;
