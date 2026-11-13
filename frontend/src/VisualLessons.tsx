@@ -114,10 +114,10 @@ function LessonWorkspace({ student }: { student: Student }) {
   }, []);
   const [language, setLanguage] = useState<"en" | "te">("en");
   const immersiveUrl = `/immersive?lesson=${encodeURIComponent(controls.lessonId)}`;
-  const voiceUrl = `/voice?topic=${encodeURIComponent(lesson?.title[language] ?? "Visual lesson")}`;
   const [reduced, setReduced] = useState(() => typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   const [replayKey, setReplayKey] = useState(0);
   const lesson = catalog.find(item => item.id === controls.lessonId);
+  const voiceUrl = `/voice?topic=${encodeURIComponent(lesson?.title[language] ?? "Visual lesson")}`;
   const step = lesson && controls.step >= 0 ? lesson.steps[controls.step] : null;
   const selectedPlanet = solarPlanets.find(planet => planet.id === controls.selectedPlanet) ?? solarPlanets[2];
   const measurements = shapeMeasurements(controls.shape, controls.size);
