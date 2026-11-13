@@ -39,3 +39,10 @@ test("Windows control remains gated by separate transcript review, Gemini plan a
   assert.match(source, /Interpret with Gemini/);
   assert.match(source, /Confirm and execute/);
 });
+
+test("microphone audio processing cannot auto-stop on a fixed RMS threshold", () => {
+  const capture = source.slice(source.indexOf("processor.onaudioprocess ="), source.indexOf("source.connect(processor)"));
+  assert.doesNotMatch(capture, /void finishRecording\(\)/);
+  assert.doesNotMatch(capture, /await transcribeWav\(/);
+  assert.match(source, /if \(elapsed >= 30\)/);
+});
