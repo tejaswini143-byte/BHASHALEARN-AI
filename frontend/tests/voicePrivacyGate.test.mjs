@@ -57,3 +57,19 @@ test("pending microphone recording pins the session and language until review", 
   assert.match(source, /<select value=\{language\}[^>]*Boolean\(pendingCapture\)/);
   assert.match(source, /Send or discard the reviewed recording before changing its language/);
 });
+
+
+test("unavailable recording does not discard an existing reviewed capture", () => {
+  const start = source.slice(source.indexOf("async function toggleRecording()"), source.indexOf("function generateLocalDemo("));
+  const guards = start.indexOf("if (!selected || busy || transcribing || voiceTurnActive.current || micRequestActive.current) return;");
+  const discard = start.indexOf("discardPendingCapture();");
+  assert.ok(guards >= 0 && discard > guards, "Invalid recording attempts must preserve reviewed audio");
+  assert.ok(start.indexOf("setDraft(\"\");") > guards, "Invalid recording attempts must preserve the previous transcript");
+});
+
+test("microphone activation is not triggered by page effects", () => {
+  const capture = source.slice(source.indexOf("async function toggleRecording()"), source.indexOf("function generateLocalDemo("));
+  assert.match(capture, /navigator\\.mediaDevices\\.getUserMedia/);
+  const outsideCapture = source.replace(capture, "");
+  assert.doesNotMatch(outsideCapture, /navigator\\.mediaDevices\\.getUserMedia\\(/);
+});
