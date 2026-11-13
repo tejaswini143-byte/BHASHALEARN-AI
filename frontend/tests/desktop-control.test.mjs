@@ -19,6 +19,7 @@ test("desktop commands use the approved QA page and semantic targets only", asyn
   assert.match(panel, /companion\("\/desktop\/snapshot"\)/);
   assert.match(panel, /snapshot\.active_window_id/);
   assert.match(panel, /Confirm and execute/);
+  assert.match(panel, /http:\/\/127\.0\.0\.1:18771/);
   assert.match(panel, /currentSnapshot\.active_window_id !== snapshot\.active_window_id/);
   assert.match(panel, /currentSnapshot\.focused_target_id !== snapshot\.focused_target_id/);
   assert.match(panel, /Emergency Stop/);

@@ -93,7 +93,7 @@ function bindNamedClickTargets(action: Action, transcript: string, targets: Arra
 }
 
 const requestedBase = import.meta.env.VITE_DESKTOP_COMPANION_URL;
-const allowedCompanionBases = new Set(["http://127.0.0.1:18765", "http://127.0.0.1:18766", "http://127.0.0.1:18770"]);
+const allowedCompanionBases = new Set(["http://127.0.0.1:18765", "http://127.0.0.1:18766", "http://127.0.0.1:18770", "http://127.0.0.1:18771"]);
 const base = requestedBase && allowedCompanionBases.has(requestedBase) ? requestedBase : "http://127.0.0.1:18765";
 const APPROVED_LINKS = new Map([
   ["youtube", "https://www.youtube.com/"],
