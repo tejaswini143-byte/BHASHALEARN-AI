@@ -98,6 +98,7 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
   const [reviewedTranscript, setReviewedTranscript] = useState("");
   const [closeConfirmed, setCloseConfirmed] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const speechRequestRef = useRef<AbortController | null>(null);
   const executionGateRef = useRef(createDesktopExecutionGate());
   const activeRef = useRef(false);
   const nextPlanIdRef = useRef(0);
@@ -106,7 +107,17 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
   const desktopSnapshotRef = useRef<DesktopSnapshot | null>(null);
   const languageCode = language === "english" ? "en" : language === "telugu" ? "te" : "mixed";
 
-  useEffect(() => () => executionGateRef.current.disable(), []);
+  function cancelSpeech() {
+    speechRequestRef.current?.abort();
+    speechRequestRef.current = null;
+    audioRef.current?.pause();
+    audioRef.current?.removeAttribute("src");
+  }
+
+  useEffect(() => () => {
+    executionGateRef.current.disable();
+    speechRequestRef.current?.abort();
+  }, []);
 
   useEffect(() => {
     executionGateRef.current.invalidatePlan();
@@ -114,7 +125,8 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
     setReviewedTranscript("");
     setAction(null);
     setCloseConfirmed(false);
-  }, [transcript]);
+    cancelSpeech();
+  }, [transcript, language]);
 
   async function companion(path: string, body?: object, authToken = pairing) {
     const response = await fetch(base + path, { method: path === "/health" || path === "/desktop/snapshot" ? "GET" : "POST", headers: { Authorization: `Bearer ${authToken}`, ...(body ? { "Content-Type": "application/json" } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
@@ -125,13 +137,20 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
 
   async function speak(text: string) {
     const token = getToken(); if (!token) return;
+    cancelSpeech();
+    const controller = new AbortController();
+    speechRequestRef.current = controller;
     try {
-      const response = await fetch("/api/v1/assistant/voice/speech", { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ text, language: languageCode }) });
+      const response = await fetch("/api/v1/assistant/voice/speech", { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ text, language: languageCode }), signal: controller.signal });
       if (!response.ok || !response.headers.get("content-type")?.toLowerCase().startsWith("audio/wav")) return;
-      const url = URL.createObjectURL(await response.blob());
-      if (audioRef.current) { audioRef.current.src = url; await audioRef.current.play().catch(() => setStatus("Timbre audio is ready; press Play to hear it.")); }
+      const blob = await response.blob();
+      if (controller.signal.aborted || !audioRef.current) return;
+      const url = URL.createObjectURL(blob);
       window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
-    } catch { /* Keep the recognized action visible if speech is unavailable. */ }
+      audioRef.current.src = url;
+      await audioRef.current.play();
+    } catch { /* The audio controls allow retry without changing the action result. */ }
+    finally { if (speechRequestRef.current === controller) speechRequestRef.current = null; }
   }
 
   async function connect() {
@@ -154,6 +173,7 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
   async function toggle() {
     setBusy(true);
     if (activeRef.current) {
+      cancelSpeech();
       activeRef.current = false;
       executionGateRef.current.disable();
       currentPlanRef.current = null;
@@ -409,7 +429,13 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
         assertExecutionActive(executionEpoch);
         const response = await companion("/desktop/execute", { ...executionPayload, confirmation_token: confirmation.confirmation_token });
         assertExecutionActive(executionEpoch);
-        summary = response.action === "sequence" ? `completed ${response.steps?.length || 0} approved desktop steps` : `completed ${response.action || approvedAction.action}`;
+        if (response.ok !== true || response.action !== approvedAction.action
+          || (response.action === "sequence" && (!Array.isArray(response.steps)
+            || response.steps.length !== approvedAction.steps?.length
+            || response.steps.some((step: { ok?: boolean } | null) => step?.ok !== true)))) {
+          throw new Error("The companion did not confirm the approved action result.");
+        }
+        summary = response.action === "sequence" ? `completed ${response.steps.length} approved desktop steps` : `completed ${response.action}`;
       }
       // An in-flight request may finish after Emergency Stop or a changed transcript.
       // Never display a stale success as a newly approved execution.
@@ -423,6 +449,7 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
   }
 
   async function stop() {
+    cancelSpeech();
     executionGateRef.current.disable();
     activeRef.current = false;
     currentPlanRef.current = null;

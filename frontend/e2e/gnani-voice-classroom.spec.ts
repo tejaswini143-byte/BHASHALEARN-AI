@@ -185,6 +185,7 @@ test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
       "Access-Control-Allow-Headers": "Authorization, Content-Type",
     };
     let nativeApproved = false;
+    let verifyExecution = false;
     await page.route(`${origin}/**`, async route => {
       const request = route.request();
       if (request.method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
@@ -203,7 +204,7 @@ test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
         case "/desktop/execute":
           requests.push("execute");
           expect(request.postDataJSON()).toMatchObject({ action: proposed, confirmation_token: "mock-one-use-ticket" });
-          return route.fulfill({ headers: cors, json: { action: "open_app" } });
+          return route.fulfill({ headers: cors, json: verifyExecution ? { ok: true, action: "open_app" } : {} });
         case "/stop": return route.fulfill({ headers: cors, json: { active: false } });
         default: return route.abort();
       }
@@ -242,8 +243,13 @@ test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
     nativeApproved = true;
     await interpret.click();
     await confirm.click();
+    await expect(panel.getByRole("status")).toContainText("The companion did not confirm the approved action result.");
+    await expect(panel.getByText("completed open_app", { exact: false })).toHaveCount(0);
+    verifyExecution = true;
+    await interpret.click();
+    await confirm.click();
     await expect(panel.getByRole("status")).toContainText("Completed: completed open_app");
-    expect(requests).toEqual(["interpret", "confirm", "interpret", "confirm", "execute"]);
+    expect(requests).toEqual(["interpret", "confirm", "interpret", "confirm", "execute", "interpret", "confirm", "execute"]);
     await panel.getByRole("button", { name: "Emergency Stop" }).click();
     await expect(interpret).toBeDisabled();
     await expect(confirm).toHaveCount(0);
