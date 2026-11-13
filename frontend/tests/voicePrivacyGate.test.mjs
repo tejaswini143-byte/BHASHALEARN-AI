@@ -51,3 +51,9 @@ test("a new microphone recording invalidates the previous command transcript", (
   const start = source.slice(source.indexOf("async function toggleRecording()"), source.indexOf("function generateLocalDemo("));
   assert.match(start, /setDraft\(""\)/);
 });
+
+test("pending microphone recording pins the session and language until review", () => {
+  assert.match(source, /aria-label="Voice learning session"[^>]*Boolean\(pendingCapture\)/);
+  assert.match(source, /<select value=\{language\}[^>]*Boolean\(pendingCapture\)/);
+  assert.match(source, /Send or discard the reviewed recording before changing its language/);
+});
