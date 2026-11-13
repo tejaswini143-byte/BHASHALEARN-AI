@@ -25,6 +25,7 @@ from .api.knowledge import router as knowledge_router
 from .api.research import router as research_router
 from .api.career import router as career_router
 from .api.visual_lessons import router as visual_lessons_router
+from .api.future_seeker import router as future_seeker_router
 from .config import Settings, get_settings
 from .db.session import get_engine, get_session_factory
 from .services.assistant_worker import run_due_jobs
@@ -85,6 +86,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(knowledge_router, prefix=config.api_prefix)
     app.include_router(research_router, prefix=config.api_prefix)
     app.include_router(career_router, prefix=config.api_prefix)
+    app.include_router(future_seeker_router, prefix="/api/v1")
     app.include_router(visual_lessons_router, prefix=config.api_prefix)
 
     @app.get("/health", tags=["health"])
