@@ -493,6 +493,9 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
     // Only a valid new recording attempt may invalidate the prior transcript or local preview.
     setDraft(""); setPrismaDiagnostics(null);
     setError(""); setNotice(""); discardPendingCapture(); interruptSpeechForQuestion();
+    // Require a second explicit browser decision before any microphone device is opened.
+    // A stray click on the large recording orb must not immediately capture audio.
+    if (!window.confirm("BHASHALEARN AI will start recording your microphone locally. Start recording?")) return;
     immersiveVoiceBridge.setState("listening");
     micRequestActive.current = true; voiceTurnActive.current = true; setMicStarting(true);
     try {
