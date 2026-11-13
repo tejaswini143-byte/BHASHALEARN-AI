@@ -3,7 +3,8 @@ import { Canvas, useThree } from "@react-three/fiber";
 import { OrbitControls, Stars } from "@react-three/drei";
 import { Link, useNavigate } from "react-router-dom";
 import { ApiError, clearToken, getCurrentStudent, getToken, type Student } from "./auth";
-import { ImmersiveTeacher } from "./TeacherPreview";
+import { ImmersiveTeacher, type LoadedModel } from "./TeacherPreview";
+import { disposeAvatar, loadLocalAvatar } from "./avatarAsset";
 import { VoiceTutor } from "./VoiceTutor";
 import { immersiveVoiceBridge } from "./immersiveVoiceBridge";
 import { playbackReducer, sampleLessons } from "./lessonEngine";
@@ -78,6 +79,9 @@ function ImmersiveExperience({ student, offlineDemo }: { student: Student; offli
   const [preset, setPreset] = useState<CameraPreset>("overview");
   const [reduced, setReduced] = useState(() => window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   const [voiceOpen, setVoiceOpen] = useState(false);
+  const [avatar, setAvatar] = useState<LoadedModel | null>(null);
+  const [avatarError, setAvatarError] = useState("");
+  const [avatarBusy, setAvatarBusy] = useState(false);
   const voiceState = useSyncExternalStore(immersiveVoiceBridge.subscribe, immersiveVoiceBridge.getState, immersiveVoiceBridge.getState);
   const lesson = sampleLessons[lessonIndex];
   const cameraCycle: CameraPreset[] = ["overview", "teacher", "lesson"];
@@ -103,6 +107,19 @@ function ImmersiveExperience({ student, offlineDemo }: { student: Student; offli
     window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey);
   }, [advance]);
 
+  async function onAvatarFile(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setAvatarError("");
+    setAvatarBusy(true);
+    try { setAvatar(await loadLocalAvatar(file)); }
+    catch (cause) { setAvatarError(cause instanceof Error ? cause.message : "Unable to load this avatar."); }
+    finally { setAvatarBusy(false); }
+  }
+
+  useEffect(() => () => { if (avatar) disposeAvatar(avatar); }, [avatar]);
+
   async function fullscreen() {
     const root = document.querySelector<HTMLElement>(".ic-experience");
     try { if (document.fullscreenElement) await document.exitFullscreen(); else await root?.requestFullscreen?.(); } catch { /* Keep the responsive in-page layout if fullscreen is denied. */ }
@@ -111,12 +128,12 @@ function ImmersiveExperience({ student, offlineDemo }: { student: Student; offli
   const activeStep = playback.step >= 0 ? lesson.steps[playback.step] : null;
   return <main className="ic-experience" aria-label="Immersive classroom">
     <div className="ic-scene"><SceneBoundary><Canvas aria-label="Decorative immersive 3D classroom" shadows dpr={[1, 1.5]} camera={{ position: cameraPresets.overview.position, fov: 39 }} gl={{ antialias: true, alpha: false, powerPreference: "low-power" }} frameloop={reduced ? "demand" : "always"} fallback={<WebGLFallback/>}>
-      <CameraDirector preset={preset}/><VoiceFrameScheduler reduced={reduced}/><ImmersiveRoom reduced={reduced}/><ImmersiveTeacher state={activeStep ? "explain" : "idle"} reduced={reduced} voiceState={voiceState}/>
+      <CameraDirector preset={preset}/><VoiceFrameScheduler reduced={reduced}/><ImmersiveRoom reduced={reduced}/><ImmersiveTeacher state={activeStep ? "explain" : "idle"} reduced={reduced} voiceState={voiceState} model={avatar}/>
       <OrbitControls makeDefault target={cameraPresets[preset].target} minDistance={5.5} maxDistance={14} minPolarAngle={0.55} maxPolarAngle={1.45} enablePan={false}/>
     </Canvas></SceneBoundary></div>
     <header className="ic-topbar"><Link to="/dashboard" className="ic-brand" aria-label="BHASHALEARN AI dashboard"><span>✦</span> BHASHA<span className="ic-brand-accent">LEARN</span><small> AI</small></Link><div className="ic-student"><i aria-hidden="true"/>{student.display_name || "Student"}{offlineDemo && <span className="ic-offline-status">LOCAL DEMO - BACKEND UNAVAILABLE</span>}<span>·</span><span>IMMERSIVE CLASS</span></div><Link to="/dashboard" className="ic-exit">Exit classroom <span aria-hidden="true">↗</span></Link></header>
     <div className="ic-scene-label"><i aria-hidden="true"/> LIVE 3D LEARNING SPACE</div>
-    <p className="ic-avatar-notice" role="status">3D teacher avatar not loaded. Lesson board and voice controls remain available; a licensed rigged character is required for teacher animation.</p>
+    <div className="ic-avatar-notice" role="status"><label>3D teacher avatar <input type="file" accept=".glb,model/gltf-binary" aria-label="Upload rigged GLB teacher" disabled={avatarBusy} onChange={event => void onAvatarFile(event)}/></label><span>{avatarBusy ? "Loading local avatar…" : avatar ? "Rigged teacher loaded locally" : "3D teacher avatar not loaded. Lesson board and voice controls remain available; a licensed rigged character is required for teacher animation."}</span>{avatarError && <span role="alert">{avatarError}</span>}{avatar && <button type="button" onClick={() => setAvatar(null)}>Remove teacher</button>}</div>
     <aside className="ic-board" aria-label="Interactive lesson board" aria-live="polite">
       <span className="ic-board-kicker">LESSON BOARD · {lesson.subject}</span>
       <h2>{activeStep?.title || lesson.title}</h2>
