@@ -253,10 +253,15 @@ export function TeacherPreview({ sessionId }: { sessionId?: string } = {}) {
     try {
       const bytes = await file.arrayBuffer();
       const gltf = await new Promise<LoadedModel>((resolve, reject) => new GLTFLoader().parse(bytes, "", result => resolve({ scene: result.scene, clips: result.animations }), reject));
-      setModel(gltf);
       const names: string[] = [];
       gltf.scene.traverse(node => { if ((node as THREE.SkinnedMesh).isSkinnedMesh) names.push("skinned mesh"); });
-      setModelStatus(`${file.name} · ${names.length ? "skinned character" : "static model"} · ${gltf.clips.length} animation clips`);
+      if (!names.length) {
+        disposeLoadedModel(gltf);
+        setModelStatus("This GLB has no rigged/skinned character. Choose a licensed rigged human avatar.");
+        return;
+      }
+      setModel(gltf);
+      setModelStatus(`${file.name} · skinned character · ${gltf.clips.length} animation clips`);
     } catch { setModelStatus("Could not read that GLB. The human avatar remains unavailable."); }
     event.target.value = "";
   };
