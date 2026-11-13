@@ -37,6 +37,8 @@ def test_rejects_unknown_fields_and_missing_telugu():
 def test_routes_require_authentication():
     from fastapi.testclient import TestClient
     from backend.app.main import create_app
-    client = TestClient(create_app())
-    assert client.get("/api/visual-lessons").status_code in {401, 403}
-    assert client.get("/api/visual-lessons/geometry").status_code in {401, 403}
+    from backend.app.config import Settings
+    settings = Settings(api_prefix="/api/v1", local_scheduler_enabled=False)
+    with TestClient(create_app(settings)) as client:
+        assert client.get(f"{settings.api_prefix}/visual-lessons").status_code in {401, 403}
+        assert client.get(f"{settings.api_prefix}/visual-lessons/geometry").status_code in {401, 403}
