@@ -184,18 +184,20 @@ def test_qa_pointer_is_bounded_to_the_approved_window(monkeypatch, outcome):
     assert clicks == ([(250, 230)] if outcome == "click" else [])
 
 
-@pytest.mark.parametrize("outcome", ["success", "duplicate", "disabled", "password", "readonly", "switched", "mismatch", "stopped"])
+@pytest.mark.parametrize("outcome", ["success", "duplicate", "disabled", "password", "readonly", "switched", "mismatch", "stopped", "unavailable", "write_error"])
 def test_qa_dictation_writes_only_the_approved_field(monkeypatch, outcome):
     writes = []
     field_value = SimpleNamespace(CurrentIsReadOnly=outcome == "readonly", CurrentValue="before")
     def set_value(value):
         writes.append(value)
+        if outcome == "write_error":
+            raise OSError("UI Automation provider disconnected")
         if outcome != "mismatch":
             field_value.CurrentValue = value
     field_value.SetValue = set_value
     info = SimpleNamespace(name="Permitted text field",
                            element=SimpleNamespace(CurrentIsPassword=outcome == "password"))
-    field = SimpleNamespace(element_info=info, iface_value=field_value,
+    field = SimpleNamespace(element_info=info, iface_value=None if outcome == "unavailable" else field_value,
                             is_visible=lambda: True, is_enabled=lambda: outcome != "disabled")
     window = SimpleNamespace(window_text=lambda: "BHASHALEARN Desktop Control QA",
                              descendants=lambda **_: [field, field] if outcome == "duplicate" else [field])
@@ -224,4 +226,4 @@ def test_qa_dictation_writes_only_the_approved_field(monkeypatch, outcome):
     else:
         with pytest.raises(RuntimeError):
             execute()
-    assert writes == ([value] if outcome in {"success", "mismatch"} else [])
+    assert writes == ([value] if outcome in {"success", "mismatch", "write_error"} else [])

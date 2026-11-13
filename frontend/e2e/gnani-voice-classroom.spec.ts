@@ -407,10 +407,11 @@ test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
     const text = "Hello from BHASHALEARN";
     const action = { action: "type_qa_text", target_id: "field", target_name: "Permitted text field", text };
     const snapshot = {
-      snapshot_id: "qa", active_window_id: "window", focused_target_id: null, pointer_qa_window: true,
+      snapshot_id: "qa", active_window_id: "window", focused_target_id: null as string | null, pointer_qa_window: true,
       targets: [{ id: "window", name: "Edge", kind: "window" }, { id: "field", name: action.target_name, kind: "text" }],
     };
     const requests: string[] = [];
+    let allowNativeApproval = false;
     await page.route(`${origin}/**`, async route => {
       const path = new URL(route.request().url()).pathname;
       const headers = {
@@ -425,7 +426,9 @@ test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
       requests.push(path);
       if (path === "/desktop/confirm") {
         expect(route.request().postDataJSON().action).toEqual(action);
-        return route.fulfill({ headers, json: { confirmation_token: "mock-text-ticket" } });
+        return allowNativeApproval
+          ? route.fulfill({ headers, json: { confirmation_token: "mock-text-ticket" } })
+          : route.fulfill({ headers, status: 403, json: { error: "Local Windows operator declined." } });
       }
       if (path === "/desktop/execute") {
         expect(route.request().postDataJSON()).toMatchObject({ action, confirmation_token: "mock-text-ticket" });
@@ -462,9 +465,31 @@ test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
     await panel.getByRole("button", { name: "Prepare text entry" }).click();
     await expect(panel.getByText(`replace the value in Permitted text field with "${text}"`)).toBeVisible();
     expect(requests).toEqual([]);
-    await panel.getByRole("button", { name: "Confirm and execute" }).click();
+    const confirm = panel.getByRole("button", { name: "Confirm and execute" });
+    snapshot.targets[1].id = "replacement";
+    await confirm.click();
+    await expect(panel.getByRole("status")).toContainText("The approved text field changed");
+    expect(requests).toEqual([]);
+    snapshot.targets[1].id = "field";
+
+    const prepare = panel.getByRole("button", { name: "Prepare text entry" });
+    await prepare.click();
+    snapshot.focused_target_id = "approval-button";
+    await confirm.click();
+    await expect(panel.getByRole("status")).toContainText("Local Windows operator declined.");
+    expect(requests.splice(0)).toEqual(["/desktop/confirm"]);
+
+    allowNativeApproval = true;
+    await prepare.click();
+    await confirm.click();
     await expect(panel.getByRole("status")).toContainText(`entered ${text.length} characters in Permitted text field`);
-    expect(requests).toEqual(["/desktop/confirm", "/desktop/execute"]);
+    expect(requests.splice(0)).toEqual(["/desktop/confirm", "/desktop/execute"]);
+    await frame.getByLabel("Prisma transcript or typed message").fill("Type");
+    await panel.getByRole("button", { name: "I reviewed this transcript" }).click();
+    await prepare.click();
+    await expect(panel.getByRole("status", { name: "Clarification needed" })).toContainText("Use 1–120 printable characters");
+    await expect(confirm).toHaveCount(0);
+    expect(requests).toEqual([]);
   });
 
   test("mic denial and Prisma errors keep typed fallback available with visible errors", async ({ page }) => {

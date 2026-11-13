@@ -262,7 +262,8 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
     const token = getToken(); if (!token) { setStatus("Sign in again to interpret a command."); return; }
     const localPlan = planLocalCommand(normalized, Boolean(qaContext));
     const pointer = pointerCommand(normalized);
-    const dictated = qaContext ? transcript.trim().match(/^type +(.+)$/is)?.[1] : undefined;
+    const dictation = qaContext ? /^type(?:\s+|$)([\s\S]*)$/i.exec(transcript.trim()) : null;
+    const dictated = dictation?.[1] ?? "";
     executionGateRef.current.invalidatePlan();
     currentPlanRef.current = null;
     setBusy(true); setAction(null);
@@ -270,18 +271,18 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
     try {
       let targets = qaContext?.targets || [];
       let approved_sites = qaContext?.approved_sites || {};
-      if (pointer || dictated !== undefined || (!qaContext && !localPlan)) {
+      if (pointer || dictation !== null || (!qaContext && !localPlan)) {
         const snapshot = await companion("/desktop/snapshot") as DesktopSnapshot;
         desktopSnapshotRef.current = snapshot;
         targets = targetsForCommand(snapshot, normalized);
         approved_sites = {};
       }
       let proposed = localPlan;
-      if (dictated !== undefined) {
+      if (dictation !== null) {
         const snapshot = desktopSnapshotRef.current!;
         const fields = snapshot.targets.filter(target => target.kind === "text" && target.name === "Permitted text field");
         proposed = snapshot.pointer_qa_window === true && fields.length === 1
-          && [...dictated].length <= 120 && !/[\p{C}\p{Zl}\p{Zp}]/u.test(dictated)
+          && dictated.length > 0 && [...dictated].length <= 120 && !/[\p{C}\p{Zl}\p{Zp}]/u.test(dictated)
           ? { action: "type_qa_text", target_id: fields[0].id, target_name: fields[0].name, text: dictated }
           : { action: "clarify", clarification: "Use 1–120 printable characters and keep the QA window with one Permitted text field active." };
       }
@@ -515,7 +516,14 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
           if ((pointerCommand(normalized) || approvedAction.action === "type_qa_text") && currentSnapshot.pointer_qa_window !== true) {
             throw new Error("The disposable desktop QA window is no longer active. Prepare the action again.");
           }
-          if (needsBoundTargets && (currentSnapshot.active_window_id !== snapshot.active_window_id
+          if (approvedAction.action === "type_qa_text") {
+            const fields = currentSnapshot.targets.filter(target => target.kind === "text" && target.name === approvedAction.target_name);
+            if (currentSnapshot.active_window_id !== snapshot.active_window_id
+              || fields.length !== 1 || fields[0].id !== approvedAction.target_id) {
+              throw new Error("The approved text field changed. Prepare the action again.");
+            }
+          }
+          if (needsBoundTargets && approvedAction.action !== "type_qa_text" && (currentSnapshot.active_window_id !== snapshot.active_window_id
             || currentSnapshot.focused_target_id !== snapshot.focused_target_id
             || JSON.stringify(currentSnapshot.targets) !== JSON.stringify(snapshot.targets))) {
             throw new Error("The active window or its UI Automation targets changed after planning. Reinterpret the command.");
@@ -605,7 +613,7 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
     </div>
     <p>Prisma transcript: {transcript || "Record a command first."}</p>
     {transcript.trim() && !STOP_WORDS.test(transcript.normalize("NFC").trim()) && <button type="button" disabled={!connected || !active || busy || reviewedTranscript === transcript.normalize("NFC").trim()} onClick={() => { executionGateRef.current.invalidatePlan(); currentPlanRef.current = null; setReviewedTranscript(transcript.normalize("NFC").trim()); setAction(null); setStatus("Transcript reviewed. You can prepare the action plan."); }}>I reviewed this transcript</button>}
-    <button type="button" disabled={!connected || !active || !transcript.trim() || busy || (!STOP_WORDS.test(transcript.normalize("NFC").trim()) && reviewedTranscript !== transcript.normalize("NFC").trim())} onClick={() => void interpret()}>{STOP_WORDS.test(transcript.normalize("NFC").trim()) ? "Voice Emergency Stop" : localAction?.action === "open_app" ? "Prepare Notepad action" : localAction ? "Prepare link action" : pointerCommand(transcript.normalize("NFC").trim()) ? "Prepare pointer action" : /^type\s/i.test(transcript.trim()) && getDesktopQaContext() ? "Prepare text entry" : "Interpret with Gemini"}</button>
+    <button type="button" disabled={!connected || !active || !transcript.trim() || busy || (!STOP_WORDS.test(transcript.normalize("NFC").trim()) && reviewedTranscript !== transcript.normalize("NFC").trim())} onClick={() => void interpret()}>{STOP_WORDS.test(transcript.normalize("NFC").trim()) ? "Voice Emergency Stop" : localAction?.action === "open_app" ? "Prepare Notepad action" : localAction ? "Prepare link action" : pointerCommand(transcript.normalize("NFC").trim()) ? "Prepare pointer action" : /^type(?:\s|$)/i.test(transcript.trim()) && getDesktopQaContext() ? "Prepare text entry" : "Interpret with Gemini"}</button>
     {action && (clarification
       ? <div role="status" aria-label="Clarification needed"><p>{action.clarification}</p><button type="button" onClick={() => setAction(null)}>Clear clarification</button></div>
       : <div role="group" aria-label="Confirm desktop action"><p>Proposed: <b>{describe(action)}</b>{action.action === "sequence" && <ol>{(action.steps || []).map((step, index) => <li key={index}>{describe(step)}</li>)}</ol>}</p>

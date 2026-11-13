@@ -418,15 +418,24 @@ def execute_action(payload: dict, *, type_text, cancel_check, confirmed_close: b
         if (not wrapper.is_visible() or not wrapper.is_enabled()
                 or wrapper.element_info.element.CurrentIsPassword):
             raise RuntimeError("The approved field is no longer editable.")
-        field_value = wrapper.iface_value
-        if field_value.CurrentIsReadOnly:
+        # Use the freshly resolved control after confirming its identity.
+        try:
+            field_value = fields[0].iface_value
+            readonly = field_value.CurrentIsReadOnly
+        except Exception:
+            raise RuntimeError("Windows could not access the approved field for text entry. Prepare the action again.") from None
+        if readonly:
             raise RuntimeError("The approved field is read-only.")
         cancel_check()
         if (_foreground_handle() != window["handle"]
                 or not _is_pointer_qa_window(window["app_id"], window["wrapper"])):
             raise RuntimeError("The disposable desktop QA window changed before text entry.")
-        field_value.SetValue(value)
-        if field_value.CurrentValue != value:
+        try:
+            field_value.SetValue(value)
+            observed = field_value.CurrentValue
+        except Exception:
+            raise RuntimeError("Windows could not confirm the write. Inspect the approved field before retrying.") from None
+        if observed != value:
             raise RuntimeError("Windows did not verify the field value. Inspect the field before retrying.")
         return {"ok": True, "action": action, "target": label, "typed_characters": len(value)}
 

@@ -104,6 +104,9 @@ both approvals, check that this field contains the reviewed text.
 This action replaces the value in the named demo field through Windows UI
 Automation. It does not send global keystrokes or submit a form. Switch tabs
 or disable the field after planning to verify that the operation is blocked.
+Try saying just “Type” to verify that the panel asks for text without offering
+execution. Moving keyboard focus within the same QA window is expected when
+clicking approval controls. The write remains bound to the original named field.
 If Windows cannot verify the field value, inspect it before approving a retry.
 
 ## Acceptance matrix
