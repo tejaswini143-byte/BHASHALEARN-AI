@@ -13,7 +13,7 @@ Status: In progress. This document records an inspected code baseline, not a rel
 
 ## Phase 1 change
 
-Viseme timelines now reject overlapping intervals and unsafe integer end times; focused regression cases cover invalid overlap, unsafe bounds and adjacent valid intervals. Existing audio/teacher APIs were not replaced.
+Viseme and phoneme timelines now reject overlapping intervals and unsafe integer end times. Invalid begin() inputs are validated before changing the active avatar playback generation; unsupported language values are rejected. Regression tests cover invalid overlap, valid adjacent frames, preservation of active playback on bad input, and interruption silencing. Existing audio/teacher APIs were not replaced.
 
 ## Acceptance gates still open
 
@@ -24,3 +24,7 @@ Viseme timelines now reject overlapping intervals and unsafe integer end times; 
 5. Verify licensed, rigged model asset before claiming realistic human animation.
 
 Do not mark Phase 1 complete until focused tests and build pass. Do not merge this branch into main without review.
+
+## Execution environment note (2026-11-13)
+
+The GitHub-connected branch was updated and read back, but the isolated execution container could not clone GitHub because DNS resolution of github.com failed. Therefore the current commit has **not** passed a fresh npm test/build or live browser test in this environment. Historical release-candidate tests do not certify these new changes. Phase 1 remains blocked on a runnable checkout/CI result; do not claim it complete.
