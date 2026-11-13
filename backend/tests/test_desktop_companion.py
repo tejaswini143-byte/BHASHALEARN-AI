@@ -20,6 +20,8 @@ def companion_server(monkeypatch):
     monkeypatch.setattr(companion, "last_at", 0.0)
     monkeypatch.setattr(companion, "desktop_stop", Event())
     monkeypatch.setattr(companion, "pending_execution_confirmations", {})
+    # Unit tests simulate a human approving the native Windows prompt.
+    monkeypatch.setattr(companion, "_require_native_execution_approval", lambda action: True)
     monkeypatch.setattr(companion, "active_qa_bounds", lambda: (120, 80, 640, 480))
     server = ThreadingHTTPServer(("127.0.0.1", 0), companion.Handler)
     thread = Thread(target=server.serve_forever, daemon=True)
@@ -419,3 +421,36 @@ def test_foreground_window_must_match_disposable_page(monkeypatch):
     monkeypatch.setattr(companion.pygetwindow, "getActiveWindow", lambda: Window())
     with pytest.raises(RuntimeError, match="QA page to the foreground"):
         companion.active_qa_bounds()
+
+
+def test_native_operator_denial_never_mints_execution_ticket(companion_server, monkeypatch):
+    calls = []
+    monkeypatch.setattr(companion, "_require_native_execution_approval", lambda action: False)
+    monkeypatch.setattr(companion.windows_automation, "execute_action", lambda action, **kwargs: calls.append(action))
+    companion.active = True
+    companion.stopped = False
+    companion.desktop_stop.clear()
+    origin = "http://127.0.0.1:15199"
+    payload = {"snapshot_id": "snap", "action": {"action": "open_app", "app_id": "notepad"}}
+    status, result = request(companion_server, "/desktop/confirm", payload, origin=origin)
+    assert status == 403
+    assert "did not approve" in result["error"]
+    assert companion.pending_execution_confirmations == {}
+    status, _ = request(companion_server, "/desktop/execute", payload, origin=origin)
+    assert status == 409 and calls == []
+
+
+def test_emergency_stop_during_native_approval_blocks_ticket(companion_server, monkeypatch):
+    def stop_during_approval(action):
+        companion.active = False
+        companion.stopped = True
+        companion.desktop_stop.set()
+        return True
+    monkeypatch.setattr(companion, "_require_native_execution_approval", stop_during_approval)
+    companion.active = True
+    companion.stopped = False
+    companion.desktop_stop.clear()
+    payload = {"snapshot_id": "snap", "action": {"action": "open_app", "app_id": "notepad"}}
+    status, _ = request(companion_server, "/desktop/confirm", payload, origin="http://127.0.0.1:15199")
+    assert status == 423
+    assert companion.pending_execution_confirmations == {}
