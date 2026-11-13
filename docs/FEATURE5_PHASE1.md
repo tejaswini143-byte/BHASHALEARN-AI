@@ -28,3 +28,16 @@ Do not mark Phase 1 complete until focused tests and build pass. Do not merge th
 ## Execution environment note (2026-11-13)
 
 The GitHub-connected branch was updated and read back, but the isolated execution container could not clone GitHub because DNS resolution of github.com failed. Therefore the current commit has **not** passed a fresh npm test/build or live browser test in this environment. Historical release-candidate tests do not certify these new changes. Phase 1 remains blocked on a runnable checkout/CI result; do not claim it complete.
+
+## Manual-tester findings and fixes
+
+- **Blank teacher in immersive classroom:** `ImmersiveTeacher` currently receives `model={null}` and renders no avatar. The page now explicitly discloses that no 3D teacher is loaded, instead of implying the character is visible. This is a truthful interim accessibility fix, not a working immersive 3D avatar.
+- **Static GLB misrepresented as a human teacher:** the preview previously accepted non-skinned models. It now rejects non-rigged GLB files with a readable explanation and allows the learner to reselect a file.
+- **Speech timing corruption:** overlapping viseme/phoneme cues and invalid language inputs are rejected before replacing the active playback session.
+- **Dependency/test environment:** `react` and `typescript` are already declared in package.json and package-lock.json. The reported Windows failures are module-resolution/install failures, not proof of 18 application regressions. A clean-install GitHub Actions workflow was added at `.github/workflows/feature5-phase1.yml` using Node 22; no passing run has yet been observed.
+
+## Still required for completion
+
+1. Verify the CI workflow is enabled and finishes green, or provide the actual `npm ci` failure output from the Windows checkout.
+2. Run browser/manual acceptance for avatar import (valid rigged, static, corrupt, oversized), keyboard/fullscreen, voice interruption, WebGL disabled, mobile and reduced motion.
+3. Supply and validate a rights-cleared rigged avatar asset; the immersive scene still has no connected human model.
