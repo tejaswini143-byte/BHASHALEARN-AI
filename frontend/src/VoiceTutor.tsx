@@ -430,13 +430,13 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
   async function submitPendingCapture() {
     if (!pendingCapture || recording || transcribing) return;
     const blob = pendingCapture;
-    discardPendingCapture();
-    await transcribeWav(blob);
+    const recognized = await transcribeWav(blob);
+    if (recognized) discardPendingCapture();
   }
 
-  async function transcribeWav(blob: Blob) {
+  async function transcribeWav(blob: Blob): Promise<boolean> {
     const sessionId = selected;
-    if (!sessionId) return;
+    if (!sessionId) return false;
     transcriptionRequestRef.current?.abort();
     const controller = new AbortController();
     transcriptionRequestRef.current = controller;
@@ -446,7 +446,7 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
       const response = await fetch(`/api/v1/voice/sessions/${encodeURIComponent(sessionId)}/transcribe`, { method: "POST", headers: { ...headers(), "X-Request-ID": crypto.randomUUID() }, body: form, signal: controller.signal });
       const body = await response.json().catch(() => null) as ({ transcript?: unknown; detail?: unknown } & Partial<PrismaDiagnostics>) | null;
       if (!response.ok) throw new ApiError(response.status, typeof body?.detail === "string" ? body.detail : "Speech transcription failed. You can type your question instead.");
-      if (selectedRef.current !== sessionId) return;
+      if (selectedRef.current !== sessionId) return false;
       if (body?.provider_status === "success" && typeof body.provider_latency_ms === "number" && Number.isFinite(body.provider_latency_ms) && typeof body.provider_model === "string" && typeof body.provider_language_code === "string" && typeof body.provider_format === "string" && typeof body.audio_sample_rate_hz === "number" && typeof body.audio_channels === "number" && typeof body.audio_bits_per_sample === "number") {
         setPrismaDiagnostics({
           provider_status: body.provider_status, provider_latency_ms: body.provider_latency_ms,
@@ -458,7 +458,8 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
       if (typeof body?.transcript !== "string" || !body.transcript.trim()) throw new Error("Prisma did not recognize speech. Try again or type your question.");
       setDraft(body.transcript); setNotice("Transcript ready. Review or correct it, then send it to your tutor.");
       if (!demoMode) void saveVoiceState({ voice_transcript: body.transcript, playback_state: resumePrompt ? "interrupted" : "idle" }, sessionId);
-    } catch (cause) { if (!controller.signal.aborted) handleError(cause); }
+      return true;
+    } catch (cause) { if (!controller.signal.aborted) handleError(cause); return false; }
     finally { if (transcriptionRequestRef.current === controller) transcriptionRequestRef.current = null; setTranscribing(false); }
   }
 
@@ -663,6 +664,7 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
         <div className={recording ? "vt-orb-area vt-recording" : "vt-orb-area"}><div className="vt-orb-ring"/><div className="vt-orb-ring vt-ring-two"/><button className="vt-orb" disabled={!selected || busy || transcribing || micStarting} onClick={() => void toggleRecording()} aria-label={recording ? "Stop recording" : "Start microphone recording"} aria-pressed={recording}><svg viewBox="0 0 24 24" width="45" height="45" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><rect x="9" y="2" width="6" height="13" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5m-4 0h8"/></svg></button></div>
         <div className="vt-notice" aria-label="Microphone diagnostics"><label>Microphone input <select value={microphoneDeviceId} disabled={recording || micStarting || transcribing} onChange={event => setMicrophoneDeviceId(event.target.value)}><option value="">System default</option>{microphoneDevices.map(device => <option key={device.deviceId} value={device.deviceId}>{device.label || `Microphone ${device.deviceId.slice(0, 8)}`}</option>)}</select></label> <button type="button" onClick={() => void refreshMicrophoneDevices()} disabled={recording || micStarting}>Refresh devices</button></div>
         {pendingCapture && capturePreviewUrl && <div className="vt-notice" aria-label="Local recording review"><p>Local recording only — nothing sent to Prisma yet. Play it to check the microphone source, then choose what to do.</p><audio controls src={capturePreviewUrl} preload="metadata" aria-label="Play back captured microphone audio locally"/><div><button type="button" disabled={transcribing} onClick={() => void submitPendingCapture()}>Send reviewed recording to Prisma</button> <button type="button" disabled={transcribing} onClick={discardPendingCapture}>Discard recording</button></div></div>}
+        {draft.trim() && !recording && !transcribing && <p className="vt-notice" role="status">Next: check the Prisma transcript below. To control Windows, connect and explicitly enable the desktop companion, click “I reviewed this transcript,” then “Interpret with Gemini,” review its proposed action, and click “Confirm and execute.” “Send to tutor” is for learning chat, not desktop control.</p>}
         <div className={recording ? "vt-wave vt-wave-active" : "vt-wave"} aria-hidden="true">{Array.from({length: 35}, (_, index) => <i key={index} style={{ height: `${12 + Math.abs(Math.sin(index * 1.43)) * 38}px`, animationDelay: `${index * 37}ms` }}/>)}</div>
         <div className="vt-status" role="status">{micStarting ? "Requesting microphone permission…" : recording ? `Recording… ${recordingSeconds}s / 30s — tap the orb to stop` : transcribing ? "Transcribing with Gnani Prisma…" : speaking ? "Tutor audio is playing…" : speechLoading ? "Generating tutor audio with Gnani Timbre…" : busy ? "Gemini tutor is thinking…" : selected ? "Tap the orb to record a question" : "Choose a learning session first"}</div>
         {captureMetrics && <p className="vt-notice" role="status" aria-label="Last microphone capture quality">Last capture: {captureMetrics.durationSeconds.toFixed(1)} s · source {captureMetrics.sampleRateHz.toLocaleString()} Hz · output WAV 16 kHz mono PCM 16-bit · RMS {captureMetrics.rmsDbfs.toFixed(1)} dBFS · peak {captureMetrics.peakDbfs.toFixed(1)} dBFS · speech-level frames {captureMetrics.speechFramePercent.toFixed(1)}% · clipped {captureMetrics.clippedPercent.toFixed(2)}%. {captureMetrics.rmsDbfs < -42 ? "Input is quiet; check the selected Windows microphone and input level." : ""}</p>}
