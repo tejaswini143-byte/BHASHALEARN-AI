@@ -52,6 +52,7 @@ export class ImmersiveVoiceBridge {
   clear(): void {
     // Preserve the generation watermark so a late frame from an interrupted
     // playback cannot reactivate the avatar after a clear/unmount.
+    this.latestGeneration += 1;
     this.frame = { ...silentFrame, generation: this.latestGeneration };
     this.frameListeners.forEach(listener => listener());
     if (this.state !== "idle") {
