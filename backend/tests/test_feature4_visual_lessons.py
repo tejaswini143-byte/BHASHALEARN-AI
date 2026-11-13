@@ -38,7 +38,21 @@ def test_routes_require_authentication():
     from fastapi.testclient import TestClient
     from backend.app.main import create_app
     from backend.app.config import Settings
+    from backend.app.db.session import get_db
+
     settings = Settings(api_prefix="/api/v1", local_scheduler_enabled=False)
-    with TestClient(create_app(settings)) as client:
-        assert client.get(f"{settings.api_prefix}/visual-lessons").status_code in {401, 403}
-        assert client.get(f"{settings.api_prefix}/visual-lessons/geometry").status_code in {401, 403}
+    app = create_app(settings)
+
+    def no_database_needed():
+        # An anonymous request must fail before any database query.
+        yield None
+
+    app.dependency_overrides[get_db] = no_database_needed
+    try:
+        with TestClient(app) as client:
+            for path in ("/visual-lessons", "/visual-lessons/geometry"):
+                response = client.get(f"{settings.api_prefix}{path}")
+                assert response.status_code == 401
+                assert response.json()["detail"] == "Missing bearer token"
+    finally:
+        app.dependency_overrides.clear()
