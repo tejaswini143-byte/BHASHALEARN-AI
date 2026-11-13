@@ -36,7 +36,7 @@ test("failed Prisma transcription retains the reviewed audio for retry or discar
 
 test("Windows control remains gated by separate transcript review, Gemini plan and action confirmation", () => {
   assert.match(source, /I reviewed this transcript/);
-  assert.match(source, /Interpret with Gemini/);
+  assert.match(source, /then prepare an action, review the proposal/);
   assert.match(source, /Confirm and execute/);
 });
 
