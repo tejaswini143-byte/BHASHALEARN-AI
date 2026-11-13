@@ -1,4 +1,4 @@
-import { Component, useCallback, useEffect, useState, useSyncExternalStore, type ErrorInfo, type ReactNode } from "react";
+import { Component, useCallback, useEffect, useState, useSyncExternalStore, type ChangeEvent, type ErrorInfo, type ReactNode } from "react";
 import { Canvas, useThree } from "@react-three/fiber";
 import { OrbitControls, Stars } from "@react-three/drei";
 import { Link, useNavigate } from "react-router-dom";
@@ -107,7 +107,7 @@ function ImmersiveExperience({ student, offlineDemo }: { student: Student; offli
     window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey);
   }, [advance]);
 
-  async function onAvatarFile(event: React.ChangeEvent<HTMLInputElement>) {
+  async function onAvatarFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
