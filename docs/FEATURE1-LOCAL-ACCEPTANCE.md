@@ -92,6 +92,20 @@ approved recording and Prisma upload for each live command.
 The companion reports that it sent the click. Verify the visible page change
 separately and use **Emergency Stop** when finished.
 
+## Phase 4 dictated text
+
+Use the embedded Voice Tutor on the disposable `/desktop-control-test.html`
+page, with the QA browser window in the foreground. Record “Type Hello from
+BHASHALEARN” and review the local clip before approving Prisma upload.
+Review the transcript and select **Prepare text entry**. Verify the proposal
+and native prompt show the exact text and **Permitted text field**. After
+both approvals, check that this field contains the reviewed text.
+
+This action replaces the value in the named demo field through Windows UI
+Automation. It does not send global keystrokes or submit a form. Switch tabs
+or disable the field after planning to verify that the operation is blocked.
+If Windows cannot verify the field value, inspect it before approving a retry.
+
 ## Acceptance matrix
 - English Notepad open: NOT YET PASSED.
 - ChatGPT browser open: NOT YET PASSED via voice.

@@ -182,3 +182,46 @@ def test_qa_pointer_is_bounded_to_the_approved_window(monkeypatch, outcome):
             windows_automation.execute_action(payload, snapshot_id="snap", active_window_id="window",
                                                type_text=lambda _: None, cancel_check=lambda: None)
     assert clicks == ([(250, 230)] if outcome == "click" else [])
+
+
+@pytest.mark.parametrize("outcome", ["success", "duplicate", "disabled", "password", "readonly", "switched", "mismatch", "stopped"])
+def test_qa_dictation_writes_only_the_approved_field(monkeypatch, outcome):
+    writes = []
+    field_value = SimpleNamespace(CurrentIsReadOnly=outcome == "readonly", CurrentValue="before")
+    def set_value(value):
+        writes.append(value)
+        if outcome != "mismatch":
+            field_value.CurrentValue = value
+    field_value.SetValue = set_value
+    info = SimpleNamespace(name="Permitted text field",
+                           element=SimpleNamespace(CurrentIsPassword=outcome == "password"))
+    field = SimpleNamespace(element_info=info, iface_value=field_value,
+                            is_visible=lambda: True, is_enabled=lambda: outcome != "disabled")
+    window = SimpleNamespace(window_text=lambda: "BHASHALEARN Desktop Control QA",
+                             descendants=lambda **_: [field, field] if outcome == "duplicate" else [field])
+    entries = {
+        "window": {"kind": "window", "app_id": "edge", "handle": 42, "wrapper": window},
+        "field": {"kind": "text", "handle": 42, "wrapper": field, "label": "Permitted text field"},
+    }
+    monkeypatch.setattr(windows_automation, "_cached_target", lambda _, target: entries[target])
+    foreground = iter([42, 9] if outcome == "switched" else [42, 42])
+    monkeypatch.setattr(windows_automation, "_foreground_handle", lambda: next(foreground))
+    value = "Hello, నమస్కారం!"
+    payload = {"action": "type_qa_text", "target_id": "field", "target_name": "Permitted text field", "text": value}
+    checks = 0
+    def check_stop():
+        nonlocal checks
+        checks += 1
+        if outcome == "stopped" and checks > 1:
+            raise RuntimeError("Emergency Stop")
+    def execute():
+        return windows_automation.execute_action(payload, snapshot_id="snap", active_window_id="window",
+                                                 type_text=lambda _: pytest.fail("Global typing must not be used"),
+                                                 cancel_check=check_stop)
+    if outcome == "success":
+        assert execute()["typed_characters"] == len(value)
+        assert field_value.CurrentValue == value
+    else:
+        with pytest.raises(RuntimeError):
+            execute()
+    assert writes == ([value] if outcome in {"success", "mismatch"} else [])

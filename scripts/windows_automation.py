@@ -398,6 +398,38 @@ def execute_action(payload: dict, *, type_text, cancel_check, confirmed_close: b
             raise RuntimeError("The window is still open; it may have an unsaved-work confirmation. Resolve it yourself.")
         return {"ok": True, "action": action, "target": target["label"], "closed": True}
 
+    if action == "type_qa_text":
+        value = payload.get("text")
+        if not isinstance(value, str) or not 1 <= len(value) <= 120 or not value.isprintable():
+            raise RuntimeError("Text entry must be 1–120 printable characters.")
+        window = _cached_target(snapshot_id, active_window_id)
+        if (window["kind"] != "window" or _foreground_handle() != window["handle"]
+                or not _is_pointer_qa_window(window["app_id"], window["wrapper"])):
+            raise RuntimeError("Keep the disposable desktop QA window in the foreground.")
+        label = "Permitted text field"
+        if (not target or target["kind"] != "text" or target["handle"] != window["handle"]
+                or target["label"] != label or payload.get("target_name") != label):
+            raise RuntimeError("Choose the Permitted text field in the disposable QA window.")
+        wrapper = target["wrapper"]
+        fields = [field for field in window["wrapper"].descendants(control_type="Edit")
+                  if field.is_visible() and str(field.element_info.name or "").strip() == label]
+        if len(fields) != 1 or fields[0].element_info != wrapper.element_info:
+            raise RuntimeError("The approved field is missing or its name is no longer unique.")
+        if (not wrapper.is_visible() or not wrapper.is_enabled()
+                or wrapper.element_info.element.CurrentIsPassword):
+            raise RuntimeError("The approved field is no longer editable.")
+        field_value = wrapper.iface_value
+        if field_value.CurrentIsReadOnly:
+            raise RuntimeError("The approved field is read-only.")
+        cancel_check()
+        if (_foreground_handle() != window["handle"]
+                or not _is_pointer_qa_window(window["app_id"], window["wrapper"])):
+            raise RuntimeError("The disposable desktop QA window changed before text entry.")
+        field_value.SetValue(value)
+        if field_value.CurrentValue != value:
+            raise RuntimeError("Windows did not verify the field value. Inspect the field before retrying.")
+        return {"ok": True, "action": action, "target": label, "typed_characters": len(value)}
+
     if action in {"move_qa_pointer", "click_qa_control"}:
         window = _cached_target(snapshot_id, active_window_id)
         if (window["kind"] != "window" or _foreground_handle() != window["handle"]

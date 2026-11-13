@@ -109,7 +109,7 @@ async function mockVoiceBrowser(page: Page, options: { micDenied?: boolean; sttS
     const request = route.request();
     const body = await request.postDataBuffer();
     const raw = body?.toString("latin1") ?? "";
-    await page.evaluate(({ contentType, size, hasWaveHeader }) => {
+    await request.frame().evaluate(({ contentType, size, hasWaveHeader }) => {
       const voiceTest = (window as Window & { voiceTest: { recordedFormat?: string; recordedSize?: number; isPcmWav?: boolean } }).voiceTest;
       voiceTest.recordedFormat = contentType; voiceTest.recordedSize = size; voiceTest.isPcmWav = hasWaveHeader;
     }, { contentType: request.headers()["content-type"], size: body?.byteLength ?? 0, hasWaveHeader: raw.includes("RIFF") && raw.includes("WAVE") && raw.includes("fmt ") });
@@ -400,6 +400,71 @@ test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
     await confirm.click();
     await expect(panel.getByRole("status")).toContainText("QA window is no longer active");
     expect(actionRequests).toEqual([]);
+  });
+
+  test("dictated text stays local and requires a verified write to the named QA field", async ({ page }) => {
+    const origin = "http://127.0.0.1:18765";
+    const text = "Hello from BHASHALEARN";
+    const action = { action: "type_qa_text", target_id: "field", target_name: "Permitted text field", text };
+    const snapshot = {
+      snapshot_id: "qa", active_window_id: "window", focused_target_id: null, pointer_qa_window: true,
+      targets: [{ id: "window", name: "Edge", kind: "window" }, { id: "field", name: action.target_name, kind: "text" }],
+    };
+    const requests: string[] = [];
+    await page.route(`${origin}/**`, async route => {
+      const path = new URL(route.request().url()).pathname;
+      const headers = {
+        "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type",
+      };
+      if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204, headers });
+      if (path === "/pair") return route.fulfill({ headers, json: { token: "mock-pairing" } });
+      if (path === "/health") return route.fulfill({ headers, json: { active: false } });
+      if (path === "/activate") return route.fulfill({ headers, json: { active: true } });
+      if (path === "/desktop/snapshot") return route.fulfill({ headers, json: snapshot });
+      requests.push(path);
+      if (path === "/desktop/confirm") {
+        expect(route.request().postDataJSON().action).toEqual(action);
+        return route.fulfill({ headers, json: { confirmation_token: "mock-text-ticket" } });
+      }
+      if (path === "/desktop/execute") {
+        expect(route.request().postDataJSON()).toMatchObject({ action, confirmation_token: "mock-text-ticket" });
+        return route.fulfill({ headers, json: { ok: true, action: action.action, target: action.target_name, typed_characters: text.length } });
+      }
+      return route.abort();
+    });
+    await page.route("**/api/v1/assistant/voice/speech", route => {
+      expect(route.request().postDataJSON().text).not.toContain(text);
+      return route.fulfill({ status: 204 });
+    });
+    await page.route("**/api/v1/assistant/desktop/interpret", route => {
+      requests.push("gemini");
+      return route.abort();
+    });
+    await mockVoiceBrowser(page, { transcript: `Type ${text}` });
+    await page.route("**/desktop-control-test.html", route => route.fulfill({
+      contentType: "text/html",
+      body: '<title>BHASHALEARN Desktop Control QA</title><iframe title="Voice Tutor" src="/voice" width="1200" height="900"></iframe>',
+    }));
+    await page.goto("/desktop-control-test.html");
+    const frame = page.frameLocator('iframe[title="Voice Tutor"]');
+    await Promise.all([
+      page.waitForEvent("dialog").then(dialog => dialog.accept()),
+      frame.getByRole("button", { name: "Start microphone recording" }).dispatchEvent("click"),
+    ]);
+    await frame.getByRole("button", { name: "Stop recording" }).dispatchEvent("click");
+    await frame.getByRole("button", { name: "Send reviewed recording to Prisma" }).click();
+    await expect(frame.getByLabel("Prisma transcript or typed message")).toHaveValue(`Type ${text}`);
+    const panel = frame.getByRole("region", { name: "Windows desktop control" });
+    await panel.getByRole("button", { name: "Connect to local companion" }).click();
+    await panel.getByRole("button", { name: "Enable control" }).click();
+    await panel.getByRole("button", { name: "I reviewed this transcript" }).click();
+    await panel.getByRole("button", { name: "Prepare text entry" }).click();
+    await expect(panel.getByText(`replace the value in Permitted text field with "${text}"`)).toBeVisible();
+    expect(requests).toEqual([]);
+    await panel.getByRole("button", { name: "Confirm and execute" }).click();
+    await expect(panel.getByRole("status")).toContainText(`entered ${text.length} characters in Permitted text field`);
+    expect(requests).toEqual(["/desktop/confirm", "/desktop/execute"]);
   });
 
   test("mic denial and Prisma errors keep typed fallback available with visible errors", async ({ page }) => {
