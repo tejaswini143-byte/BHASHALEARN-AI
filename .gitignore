@@ -11,6 +11,9 @@ __pycache__/
 *.wav
 *.mp3
 *.m4a
+*.sqlite
+*.sqlite3
+*.db
 .DS_Store
 backend_be02_test.db
 backend/.pytest-adv02-*/

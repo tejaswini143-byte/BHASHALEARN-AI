@@ -9,9 +9,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend.app.api.auth import current_student
-from backend.app.db.models import CareerGoal, CareerLessonCompletion, CareerMilestoneCompletion, CareerStudyWeek, Course, Lesson, LearningProgress, Student, StudentSkillProfile
+from backend.app.db.models import (CareerGoal, CareerLessonCompletion, CareerMilestoneCompletion,
+    CareerRoadmapVersion, CareerSavedResource, CareerStudyWeek, Course, Lesson, LearningAssessmentAttempt,
+    LearningProgress, Student, StudentSkillProfile)
 from backend.app.db.session import get_db
-from backend.app.services.career_roadmap import CAREERS, LANGUAGES, LEVELS, SKILLS, CatalogItem, build_plan, skill_gaps
+from backend.app.services.career_roadmap import CAREERS, CAREER_TELUGU, LANGUAGES, LEVELS, SKILLS, CatalogItem, build_plan, skill_gaps
+from backend.app.services.career_ai import analyze_skill_gaps
 
 router = APIRouter(prefix="/career", tags=["career roadmap"])
 
@@ -19,17 +22,42 @@ router = APIRouter(prefix="/career", tags=["career roadmap"])
 class GoalCreate(BaseModel):
     career_key: str = Field(min_length=1, max_length=64)
     education_level: str = Field(min_length=1, max_length=32)
+    field_of_study: str | None = Field(default=None, max_length=120)
     interests: list[str] = Field(default_factory=list, max_length=12)
     weekly_minutes: int = Field(ge=30, le=2400)
+    daily_minutes: int = Field(default=120, ge=15, le=480)
+    study_days_per_week: int = Field(default=5, ge=1, le=7)
+    learning_format: str = "mixed"
+    timeframe_weeks: int | None = Field(default=None, ge=1, le=260)
+    constraints: list[str] = Field(default_factory=list, max_length=12)
     preferred_language: str = "mixed"
     target_date: date | None = None
     custom_goal: str | None = Field(default=None, max_length=160)
+    confirm_major_change: bool = False
 
     @field_validator("interests")
     @classmethod
     def clean_interests(cls, values: list[str]) -> list[str]:
         cleaned = list(dict.fromkeys(value.strip()[:80] for value in values if value.strip()))
         return cleaned
+
+    @field_validator("constraints")
+    @classmethod
+    def clean_constraints(cls, values: list[str]) -> list[str]:
+        return list(dict.fromkeys(value.strip()[:160] for value in values if value.strip()))
+
+    @field_validator("field_of_study")
+    @classmethod
+    def clean_field_of_study(cls, value: str | None) -> str | None:
+        return value.strip()[:120] or None if value is not None else None
+
+    @field_validator("learning_format")
+    @classmethod
+    def valid_learning_format(cls, value: str) -> str:
+        value = value.strip().lower()
+        if value not in {"video", "reading", "practice", "mixed"}:
+            raise ValueError("Learning format must be video, reading, practice, or mixed")
+        return value
 
     @field_validator("career_key")
     @classmethod
@@ -61,6 +89,8 @@ class GoalCreate(BaseModel):
             raise ValueError("Describe your custom learning goal")
         if self.custom_goal is not None:
             self.custom_goal = self.custom_goal.strip()[:160] or None
+        if self.weekly_minutes > self.daily_minutes * self.study_days_per_week:
+            raise ValueError("Weekly study time must fit the selected daily minutes and study days")
         return self
 
 
@@ -81,6 +111,10 @@ class SkillInput(BaseModel):
         if value not in {"unknown", "beginner", "intermediate", "advanced"}:
             raise ValueError("Proficiency must be unknown, beginner, intermediate, or advanced")
         return value
+
+
+class SaveResourceInput(BaseModel):
+    resource_url: str = Field(min_length=1, max_length=2048)
 
 
 class StudyWeekUpdate(BaseModel):
@@ -105,10 +139,48 @@ def _owned_goal(goal_id: str, student: Student, db: Session) -> CareerGoal:
 
 def _goal_json(goal: CareerGoal) -> dict:
     return {"id": goal.id, "career_key": goal.career_key, "career_title": goal.custom_goal or CAREERS[goal.career_key]["title"],
+            "career_title_te": CAREER_TELUGU.get(goal.career_key, "అభ్యాస లక్ష్యం"),
             "custom_goal": goal.custom_goal,
-            "education_level": goal.education_level, "interests": json.loads(goal.interests_json),
-            "weekly_minutes": goal.weekly_minutes, "preferred_language": goal.preferred_language,
+            "education_level": goal.education_level, "field_of_study": goal.field_of_study,
+            "interests": json.loads(goal.interests_json), "constraints": json.loads(goal.constraints_json or "[]"),
+            "weekly_minutes": goal.weekly_minutes, "daily_minutes": goal.daily_minutes,
+            "study_days_per_week": goal.study_days_per_week, "learning_format": goal.learning_format,
+            "timeframe_weeks": goal.timeframe_weeks, "preferred_language": goal.preferred_language,
             "target_date": goal.target_date, "active": goal.active}
+
+
+def _next_version(goal: CareerGoal, db: Session) -> int:
+    latest = db.scalars(select(CareerRoadmapVersion).where(
+        CareerRoadmapVersion.student_id == goal.student_id,
+        CareerRoadmapVersion.goal_id == goal.id,
+    )).all()
+    return max((row.version_number for row in latest), default=0) + 1
+
+
+def _archive_current_roadmap(goal: CareerGoal, db: Session, reason: str) -> None:
+    if not goal.roadmap_json:
+        return
+    rows = db.scalars(select(CareerRoadmapVersion).where(
+        CareerRoadmapVersion.student_id == goal.student_id,
+        CareerRoadmapVersion.goal_id == goal.id,
+    )).all()
+    if any(row.roadmap_json == goal.roadmap_json for row in rows):
+        return
+    archived = json.loads(goal.roadmap_json)
+    version = _next_version(goal, db)
+    archived["version_number"] = version
+    db.add(CareerRoadmapVersion(student_id=goal.student_id, goal_id=goal.id,
+        version_number=version, roadmap_json=json.dumps(archived, ensure_ascii=False), change_reason=reason))
+
+
+def _store_new_roadmap(goal: CareerGoal, roadmap: dict, db: Session, reason: str) -> dict:
+    version = _next_version(goal, db)
+    roadmap["version_number"] = version
+    serialized = json.dumps(roadmap, ensure_ascii=False)
+    db.add(CareerRoadmapVersion(student_id=goal.student_id, goal_id=goal.id,
+        version_number=version, roadmap_json=serialized, change_reason=reason))
+    goal.roadmap_json = serialized
+    return roadmap
 
 
 def _profile(student_id: str, db: Session) -> list[dict]:
@@ -182,10 +254,18 @@ def _build(goal: CareerGoal, student_id: str, db: Session) -> dict:
     missed = bool(previous_log and previous_log.studied_minutes < previous_log.target_minutes)
     adjusted_minutes = (min(goal.weekly_minutes, max(30, previous_log.studied_minutes))
                         if missed and previous_log else goal.weekly_minutes)
-    plan["weekly_plan"] = [{"day": day, "minutes": adjusted_minutes // 5 + (1 if i < adjusted_minutes % 5 else 0),
+    study_days = max(1, min(7, goal.study_days_per_week))
+    daily_limit = max(15, min(480, goal.daily_minutes))
+    scheduled = min(adjusted_minutes, study_days * daily_limit)
+    days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][:study_days]
+    plan["weekly_plan"] = [{"day": day, "minutes": scheduled // study_days + (1 if i < scheduled % study_days else 0),
                             "activity": "Use a shorter focused block and review the last unfinished skill." if missed
                             else "Learn and practise the next roadmap skill."}
-                           for i, day in enumerate(["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"])]
+                           for i, day in enumerate(days)]
+    plan["scheduled_weekly_minutes"] = scheduled
+    plan["estimated_weeks"] = max(1, (sum(item["estimated_hours"] for item in plan["phases"]) * 60 + max(1, scheduled) - 1) // max(1, scheduled))
+    plan["target_timeframe_weeks"] = goal.timeframe_weeks
+    plan["timeframe_feasibility"] = ("within_target" if not goal.timeframe_weeks or plan["estimated_weeks"] <= goal.timeframe_weeks else "target_may_be_too_short")
     plan["skill_gaps"] = gaps
     plan["progress"] = {"completed_milestones": len(done), "total_milestones": len(plan["phases"]),
                         "completed_lessons": len(completed_lessons)}
@@ -202,7 +282,9 @@ def _build(goal: CareerGoal, student_id: str, db: Session) -> dict:
 
 @router.get("/directions")
 def directions(student: Student = Depends(current_student)):
-    return {"directions": [{"career_key": key, "title": value["title"], "required_skills": value["skills"]}
+    return {"directions": [{"career_key": key, "title": value["title"],
+                            "title_te": CAREER_TELUGU.get(key, str(value["title"])),
+                            "required_skills": value["skills"]}
                             for key, value in CAREERS.items()],
             "note": "General learning directions; not a real-time employment forecast."}
 
@@ -215,8 +297,13 @@ def list_goals(student: Student = Depends(current_student), db: Session = Depend
 
 @router.post("/goals", status_code=status.HTTP_201_CREATED)
 def create_goal(payload: GoalCreate, student: Student = Depends(current_student), db: Session = Depends(get_db)):
+    db.query(CareerGoal).filter(CareerGoal.student_id == student.id, CareerGoal.active.is_(True)).update({"active": False})
     goal = CareerGoal(student_id=student.id, career_key=payload.career_key, custom_goal=payload.custom_goal, education_level=payload.education_level,
+                      field_of_study=payload.field_of_study,
                       interests_json=json.dumps(payload.interests, ensure_ascii=False), weekly_minutes=payload.weekly_minutes,
+                      daily_minutes=payload.daily_minutes, study_days_per_week=payload.study_days_per_week,
+                      learning_format=payload.learning_format, timeframe_weeks=payload.timeframe_weeks,
+                      constraints_json=json.dumps(payload.constraints, ensure_ascii=False),
                       preferred_language=payload.preferred_language,
                       target_date=payload.target_date.isoformat() if payload.target_date else None)
     db.add(goal)
@@ -228,10 +315,20 @@ def create_goal(payload: GoalCreate, student: Student = Depends(current_student)
 @router.put("/goals/{goal_id}")
 def update_goal(goal_id: str, payload: GoalCreate, student: Student = Depends(current_student), db: Session = Depends(get_db)):
     goal = _owned_goal(goal_id, student, db)
-    for key, value in payload.model_dump().items():
-        setattr(goal, "interests_json" if key == "interests" else key,
-                json.dumps(value, ensure_ascii=False) if key == "interests" else value.isoformat() if key == "target_date" and value else value)
+    major_change = payload.career_key != goal.career_key or payload.custom_goal != goal.custom_goal
+    if major_change and not payload.confirm_major_change:
+        raise HTTPException(status_code=409, detail="Changing career direction creates a new roadmap version; confirm the change and keep the prior version")
+    _archive_current_roadmap(goal, db, "before_goal_update")
+    values = payload.model_dump(exclude={"confirm_major_change"})
+    values["target_date"] = values["target_date"].isoformat() if values["target_date"] else None
+    for key, value in values.items():
+        column = {"interests": "interests_json", "constraints": "constraints_json"}.get(key, key)
+        setattr(goal, column, json.dumps(value, ensure_ascii=False) if key in {"interests", "constraints"} else value)
     goal.roadmap_json = None
+    goal.analysis_json = None
+    goal.active = True
+    db.query(CareerGoal).filter(CareerGoal.student_id == student.id, CareerGoal.id != goal.id,
+                                CareerGoal.active.is_(True)).update({"active": False})
     db.commit()
     return _goal_json(goal)
 
@@ -253,6 +350,7 @@ def update_skills(payload: list[SkillInput], student: Student = Depends(current_
             db.add(StudentSkillProfile(student_id=student.id, skill_key=item.skill_key, proficiency=item.proficiency))
         else:
             profile.proficiency = item.proficiency
+    db.query(CareerGoal).filter(CareerGoal.student_id == student.id).update({"analysis_json": None})
     db.commit()
     return {"profile": _profile(student.id, db), "evidence_type": "self_reported_only"}
 
@@ -261,7 +359,7 @@ def update_skills(payload: list[SkillInput], student: Student = Depends(current_
 def generate_roadmap(goal_id: str, student: Student = Depends(current_student), db: Session = Depends(get_db)):
     goal = _owned_goal(goal_id, student, db)
     result = _build(goal, student.id, db)
-    goal.roadmap_json = json.dumps(result, ensure_ascii=False)
+    _store_new_roadmap(goal, result, db, "generated")
     db.commit()
     return result
 
@@ -289,9 +387,112 @@ def get_roadmap(goal_id: str, student: Student = Depends(current_student), db: S
 def replan(goal_id: str, student: Student = Depends(current_student), db: Session = Depends(get_db)):
     goal = _owned_goal(goal_id, student, db)
     result = _build(goal, student.id, db)
-    goal.roadmap_json = json.dumps(result, ensure_ascii=False)
+    _store_new_roadmap(goal, result, db, "adapted_from_progress")
     db.commit()
     return result
+
+
+@router.get("/goals/{goal_id}/versions")
+def roadmap_versions(goal_id: str, student: Student = Depends(current_student), db: Session = Depends(get_db)):
+    goal = _owned_goal(goal_id, student, db)
+    rows = db.scalars(select(CareerRoadmapVersion).where(
+        CareerRoadmapVersion.student_id == student.id,
+        CareerRoadmapVersion.goal_id == goal.id,
+    ).order_by(CareerRoadmapVersion.version_number.desc()).limit(50)).all()
+    return [{"version_number": row.version_number, "change_reason": row.change_reason,
+             "created_at": row.created_at.isoformat()} for row in rows]
+
+
+@router.get("/goals/{goal_id}/versions/{version_number}")
+def roadmap_version(goal_id: str, version_number: int, student: Student = Depends(current_student), db: Session = Depends(get_db)):
+    goal = _owned_goal(goal_id, student, db)
+    row = db.scalar(select(CareerRoadmapVersion).where(
+        CareerRoadmapVersion.student_id == student.id,
+        CareerRoadmapVersion.goal_id == goal.id,
+        CareerRoadmapVersion.version_number == version_number,
+    ))
+    if row is None:
+        raise HTTPException(status_code=404, detail="Roadmap version not found")
+    return json.loads(row.roadmap_json)
+
+
+@router.get("/goals/{goal_id}/assessments")
+def assessment_history(goal_id: str, student: Student = Depends(current_student), db: Session = Depends(get_db)):
+    _owned_goal(goal_id, student, db)
+    attempts = db.scalars(select(LearningAssessmentAttempt).where(
+        LearningAssessmentAttempt.student_id == student.id,
+        LearningAssessmentAttempt.answered_at.is_not(None),
+    ).order_by(LearningAssessmentAttempt.answered_at.desc()).limit(100)).all()
+    return [{"attempt_id": item.id, "topic": item.topic, "correct": bool(item.is_correct),
+             "score_percent": 100 if item.is_correct else 0, "evidence_type": "server_scored_objective",
+             "completed_at": item.answered_at.isoformat() if item.answered_at else None}
+            for item in attempts]
+
+
+@router.post("/goals/{goal_id}/analysis")
+def analyze_goal(goal_id: str, student: Student = Depends(current_student), db: Session = Depends(get_db)):
+    goal = _owned_goal(goal_id, student, db)
+    gaps = skill_gaps(list(CAREERS[goal.career_key]["skills"]), _profile(student.id, db), _demonstrated(student.id, db))
+    current_plan = json.loads(goal.roadmap_json) if goal.roadmap_json else {}
+    progress = current_plan.get("progress", {})
+    analysis = analyze_skill_gaps(goal=_goal_json(goal), profile=_profile(student.id, db), gaps=gaps,
+                                  progress=progress)
+    goal.analysis_json = json.dumps(analysis, ensure_ascii=False)
+    db.commit()
+    return analysis
+
+
+@router.get("/goals/{goal_id}/analysis")
+def get_goal_analysis(goal_id: str, student: Student = Depends(current_student), db: Session = Depends(get_db)):
+    goal = _owned_goal(goal_id, student, db)
+    return json.loads(goal.analysis_json) if goal.analysis_json else None
+
+
+@router.get("/goals/{goal_id}/saved-resources")
+def saved_resources(goal_id: str, student: Student = Depends(current_student), db: Session = Depends(get_db)):
+    goal = _owned_goal(goal_id, student, db)
+    rows = db.scalars(select(CareerSavedResource).where(
+        CareerSavedResource.student_id == student.id, CareerSavedResource.goal_id == goal.id,
+    ).order_by(CareerSavedResource.created_at.desc())).all()
+    return [{"id": row.id, "resource_url": row.resource_url, "title": row.title,
+             "kind": row.kind, "free": row.free, "created_at": row.created_at.isoformat()} for row in rows]
+
+
+@router.post("/goals/{goal_id}/saved-resources", status_code=status.HTTP_201_CREATED)
+def save_resource(goal_id: str, payload: SaveResourceInput,
+                  student: Student = Depends(current_student), db: Session = Depends(get_db)):
+    goal = _owned_goal(goal_id, student, db)
+    plan = json.loads(goal.roadmap_json) if goal.roadmap_json else _build(goal, student.id, db)
+    resource = next((entry for phase in plan["phases"] for entry in phase["resources"]
+                     if entry["url"] == payload.resource_url), None)
+    if resource is None:
+        raise HTTPException(status_code=404, detail="Resource is not in this roadmap's curated catalog")
+    row = db.scalar(select(CareerSavedResource).where(
+        CareerSavedResource.student_id == student.id, CareerSavedResource.goal_id == goal.id,
+        CareerSavedResource.resource_url == resource["url"],
+    ))
+    if row is None:
+        row = CareerSavedResource(student_id=student.id, goal_id=goal.id, resource_url=resource["url"],
+                                  title=resource["title"], kind=resource["kind"], free=resource["free"])
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+    return {"id": row.id, "resource_url": row.resource_url, "title": row.title,
+            "kind": row.kind, "free": row.free, "created_at": row.created_at.isoformat()}
+
+
+@router.delete("/goals/{goal_id}/saved-resources/{resource_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_saved_resource(goal_id: str, resource_id: str,
+                          student: Student = Depends(current_student), db: Session = Depends(get_db)):
+    goal = _owned_goal(goal_id, student, db)
+    row = db.scalar(select(CareerSavedResource).where(
+        CareerSavedResource.student_id == student.id, CareerSavedResource.goal_id == goal.id,
+        CareerSavedResource.id == resource_id,
+    ))
+    if row is None:
+        raise HTTPException(status_code=404, detail="Saved resource not found")
+    db.delete(row)
+    db.commit()
 
 
 @router.put("/goals/{goal_id}/weekly-progress")
