@@ -351,7 +351,12 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
         setStatus("Review the proposed action before confirming.");
         if (proposed.action !== "type_qa_text" && proposed.action !== "fill_qa_demo_form") void speak(`I understood ${describe(proposed)}. Confirm on screen to execute.`);
       }
-    } catch (error) { setStatus(error instanceof Error ? error.message : "Interpretation failed"); }
+    } catch (error) {
+      // An in-flight Gemini or snapshot failure must not overwrite Emergency Stop.
+      if (activeRef.current && executionGateRef.current.isCurrent(requestEpoch)) {
+        setStatus(error instanceof Error ? error.message : "Interpretation failed");
+      }
+    }
     finally { setBusy(false); }
   }
 
