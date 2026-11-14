@@ -502,7 +502,9 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
       const context = new AudioContext();
       contextRef.current = context;
       await context.resume();
-      if (!mounted.current) return;
+      // The component can unmount while AudioContext.resume() is pending.
+      // Release the newly opened microphone instead of leaving its track active.
+      if (!mounted.current) { await releaseMicrophone(); return; }
       const source = context.createMediaStreamSource(stream);
       sourceRef.current = source;
       const processor = context.createScriptProcessor(4096, 1, 1);
