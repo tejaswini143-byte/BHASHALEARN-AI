@@ -645,7 +645,7 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
 
   async function stop() {
     const autofillWasDispatched = autofillDispatchedRef.current;
-    controlRequestRef.current += 1;
+    const stopEpoch = ++controlRequestRef.current;
     cancelSpeech();
     executionGateRef.current.disable();
     activeRef.current = false;
@@ -653,10 +653,16 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
     setActive(false); setAction(null); setReviewedTranscript("");
     try {
       await companion("/stop");
+      // Do not let a delayed stop response overwrite a newer connection attempt.
+      if (stopEpoch !== controlRequestRef.current) return;
       setStatus(autofillWasDispatched ? "Emergency stop sent. Inspect both demo fields before retrying."
         : "Emergency stop sent; explicitly re-enable to continue.");
     }
-    catch { setConnected(false); setStatus("Stop could not reach the companion. Use its PyAutoGUI fail-safe or close its process."); }
+    catch {
+      if (stopEpoch !== controlRequestRef.current) return;
+      setConnected(false);
+      setStatus("Stop could not reach the companion. Use its PyAutoGUI fail-safe or close its process.");
+    }
   }
 
   const clarification = action?.action === "clarify";
