@@ -1,13 +1,14 @@
-import { Component, useCallback, useEffect, useState, useSyncExternalStore, type ErrorInfo, type ReactNode } from "react";
+import { Component, useCallback, useEffect, useState, useSyncExternalStore, type ChangeEvent, type ErrorInfo, type ReactNode } from "react";
 import { Canvas, useThree } from "@react-three/fiber";
 import { OrbitControls, Stars } from "@react-three/drei";
 import { Link, useNavigate } from "react-router-dom";
 import { ApiError, clearToken, getCurrentStudent, getToken, type Student } from "./auth";
-import { ImmersiveTeacher } from "./TeacherPreview";
+import { ImmersiveTeacher, type LoadedModel } from "./TeacherPreview";
+import { disposeAvatar, loadLocalAvatar } from "./avatarAsset";
 import { VoiceTutor } from "./VoiceTutor";
 import { immersiveVoiceBridge } from "./immersiveVoiceBridge";
 import { playbackReducer, sampleLessons } from "./lessonEngine";
-import { cameraPresets, type CameraPreset } from "./immersiveCore";
+import { cameraPresets, focusedLessonObjectIds, type CameraPreset } from "./immersiveCore";
 import "./immersive-classroom.css";
 
 class SceneBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
@@ -78,6 +79,11 @@ function ImmersiveExperience({ student, offlineDemo }: { student: Student; offli
   const [preset, setPreset] = useState<CameraPreset>("overview");
   const [reduced, setReduced] = useState(() => window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   const [voiceOpen, setVoiceOpen] = useState(false);
+  const [exerciseChoice, setExerciseChoice] = useState("");
+  const [exerciseChecked, setExerciseChecked] = useState(false);
+  const [avatar, setAvatar] = useState<LoadedModel | null>(null);
+  const [avatarError, setAvatarError] = useState("");
+  const [avatarBusy, setAvatarBusy] = useState(false);
   const voiceState = useSyncExternalStore(immersiveVoiceBridge.subscribe, immersiveVoiceBridge.getState, immersiveVoiceBridge.getState);
   const lesson = sampleLessons[lessonIndex];
   const cameraCycle: CameraPreset[] = ["overview", "teacher", "lesson"];
@@ -103,31 +109,49 @@ function ImmersiveExperience({ student, offlineDemo }: { student: Student; offli
     window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey);
   }, [advance]);
 
+  async function onAvatarFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setAvatarError("");
+    setAvatarBusy(true);
+    try { setAvatar(await loadLocalAvatar(file)); }
+    catch (cause) { setAvatarError(cause instanceof Error ? cause.message : "Unable to load this avatar."); }
+    finally { setAvatarBusy(false); }
+  }
+
+  useEffect(() => () => { if (avatar) disposeAvatar(avatar); }, [avatar]);
+
   async function fullscreen() {
     const root = document.querySelector<HTMLElement>(".ic-experience");
     try { if (document.fullscreenElement) await document.exitFullscreen(); else await root?.requestFullscreen?.(); } catch { /* Keep the responsive in-page layout if fullscreen is denied. */ }
   }
 
   const activeStep = playback.step >= 0 ? lesson.steps[playback.step] : null;
+  const focusedIds = focusedLessonObjectIds(lesson, playback.step);
+  const focusedObjects = focusedIds.map(id => lesson.objects.find(item => item.id === id)).filter((item): item is NonNullable<typeof item> => Boolean(item));
   return <main className="ic-experience" aria-label="Immersive classroom">
     <div className="ic-scene"><SceneBoundary><Canvas aria-label="Decorative immersive 3D classroom" shadows dpr={[1, 1.5]} camera={{ position: cameraPresets.overview.position, fov: 39 }} gl={{ antialias: true, alpha: false, powerPreference: "low-power" }} frameloop={reduced ? "demand" : "always"} fallback={<WebGLFallback/>}>
-      <CameraDirector preset={preset}/><VoiceFrameScheduler reduced={reduced}/><ImmersiveRoom reduced={reduced}/><ImmersiveTeacher state={activeStep ? "explain" : "idle"} reduced={reduced} voiceState={voiceState}/>
+      <CameraDirector preset={preset}/><VoiceFrameScheduler reduced={reduced}/><ImmersiveRoom reduced={reduced}/><ImmersiveTeacher state={activeStep ? "explain" : "idle"} reduced={reduced} voiceState={voiceState} model={avatar}/>
       <OrbitControls makeDefault target={cameraPresets[preset].target} minDistance={5.5} maxDistance={14} minPolarAngle={0.55} maxPolarAngle={1.45} enablePan={false}/>
     </Canvas></SceneBoundary></div>
     <header className="ic-topbar"><Link to="/dashboard" className="ic-brand" aria-label="BHASHALEARN AI dashboard"><span>✦</span> BHASHA<span className="ic-brand-accent">LEARN</span><small> AI</small></Link><div className="ic-student"><i aria-hidden="true"/>{student.display_name || "Student"}{offlineDemo && <span className="ic-offline-status">LOCAL DEMO - BACKEND UNAVAILABLE</span>}<span>·</span><span>IMMERSIVE CLASS</span></div><Link to="/dashboard" className="ic-exit">Exit classroom <span aria-hidden="true">↗</span></Link></header>
     <div className="ic-scene-label"><i aria-hidden="true"/> LIVE 3D LEARNING SPACE</div>
+    <div className="ic-avatar-notice" role="status"><label>3D teacher avatar <input type="file" accept=".glb,model/gltf-binary" aria-label="Upload rigged GLB teacher" disabled={avatarBusy} onChange={event => void onAvatarFile(event)}/></label><span>{avatarBusy ? "Loading local avatar…" : avatar ? "Rigged teacher loaded locally" : "3D teacher avatar not loaded. Lesson board and voice controls remain available; a licensed rigged character is required for teacher animation."}</span>{avatarError && <span role="alert">{avatarError}</span>}{avatar && <button type="button" onClick={() => setAvatar(null)}>Remove teacher</button>}</div>
     <aside className="ic-board" aria-label="Interactive lesson board" aria-live="polite">
       <span className="ic-board-kicker">LESSON BOARD · {lesson.subject}</span>
       <h2>{activeStep?.title || lesson.title}</h2>
       <p>{activeStep?.explanation || lesson.intro}</p>
+      {focusedObjects.length > 0 && <div className="ic-board-focus" aria-label="Objects highlighted by the teacher">{focusedObjects.map(item => <span key={item.id} title={item.explanation || item.id}>{item.text || item.id}</span>)}</div>}
     </aside>
     <aside className="ic-hud" aria-label="Lesson controls">
-      <div className="ic-hud-top"><div><span className="ic-eyebrow">{lesson.subject}</span><h1>{lesson.title}</h1></div><label className="ic-lesson-select">Lesson<select aria-label="Choose lesson" value={lessonIndex} onChange={event => { setLessonIndex(Number(event.target.value)); setPlayback({ step: -1, playing: false }); }}>{sampleLessons.map((item, index) => <option key={item.id} value={index}>{item.title}</option>)}</select></label></div>
+      <div className="ic-hud-top"><div><span className="ic-eyebrow">{lesson.subject}</span><h1>{lesson.title}</h1></div><label className="ic-lesson-select">Lesson<select aria-label="Choose lesson" value={lessonIndex} onChange={event => { setLessonIndex(Number(event.target.value)); setPlayback({ step: -1, playing: false }); setExerciseChoice(""); setExerciseChecked(false); }}>{sampleLessons.map((item, index) => <option key={item.id} value={index}>{item.title}</option>)}</select></label></div>
       <p className="ic-explanation" aria-live="polite">{activeStep?.explanation || lesson.intro}</p>
       {activeStep && <div className="ic-step-name" aria-live="polite"><span>{String(playback.step + 1).padStart(2, "0")}</span>{activeStep.title}</div>}
       <div className="ic-voice-controls"><span className={`ic-voice-state is-${voiceState}`} data-testid="immersive-voice-state"><i aria-hidden="true"/>{voiceState === "idle" ? "Voice ready - no audio" : voiceState === "listening" ? "Listening" : voiceState === "thinking" ? "Thinking" : voiceState === "speaking" ? "Speaking" : voiceState === "paused" ? "Paused" : voiceState === "interrupted" ? "Speech interrupted" : "Voice unavailable"}</span><button type="button" aria-expanded={voiceOpen} onClick={() => setVoiceOpen(value => !value)}>{voiceOpen ? "Hide voice tutor" : "Open voice tutor"}</button></div>
       <div className="ic-progress" aria-label={`Lesson step ${Math.max(0, playback.step + 1)} of ${lesson.steps.length}`}><span style={{ width: `${Math.max(0, (playback.step + 1) / lesson.steps.length * 100)}%` }}/></div>
       <div className="ic-controls"><button onClick={() => advance("previous")} aria-label="Previous lesson step" disabled={playback.step < 0}>←</button><button className="ic-play" onClick={() => setPlayback(current => playbackReducer(current, current.playing ? "pause" : "play", lesson.steps.length))} aria-label={playback.playing ? "Pause lesson" : "Play lesson"}>{playback.playing ? "Ⅱ" : "▶"}<span>{playback.playing ? "Pause" : "Play lesson"}</span></button><button onClick={() => advance("next")} aria-label="Next lesson step" disabled={playback.step >= lesson.steps.length - 1}>→</button><span className="ic-control-divider"/><label className="ic-motion"><input type="checkbox" checked={reduced} onChange={event => setReduced(event.target.checked)}/> Reduce motion</label></div>
+      <section className="ic-exercise" aria-label="Lesson knowledge check"><h2>Check your understanding</h2><p>{lesson.exercise.prompt}</p><fieldset><legend>Choose one answer</legend>{lesson.exercise.choices.map(choice => <label key={choice}><input type="radio" name={`immersive-exercise-${lesson.id}`} value={choice} checked={exerciseChoice === choice} onChange={() => { setExerciseChoice(choice); setExerciseChecked(false); }}/>{choice}</label>)}</fieldset><button type="button" disabled={!exerciseChoice} onClick={() => setExerciseChecked(true)}>Check answer</button>{exerciseChecked && <p role="status">{exerciseChoice === lesson.exercise.answer ? `Correct. ${lesson.exercise.feedback}` : "Not quite. Review the lesson and try another answer."}</p>}</section>
       <details className="ic-shortcuts"><summary>Keyboard controls</summary><span>← → lesson steps · 1–3 camera · F fullscreen</span></details>
     </aside>
     <nav className="ic-camera-nav" aria-label="Camera presets">{cameraCycle.map((value, index) => <button key={value} className={preset === value ? "active" : ""} aria-pressed={preset === value} onClick={() => setPreset(value)}><span>{String(index + 1).padStart(2, "0")}</span>{cameraPresets[value].label}</button>)}<button className="ic-fullscreen" onClick={() => void fullscreen()} aria-label="Toggle fullscreen">⛶</button></nav>

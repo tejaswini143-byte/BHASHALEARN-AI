@@ -10,8 +10,12 @@ $candidatePython = @(
 $python = $null
 foreach ($candidate in $candidatePython) {
     if (-not (Test-Path -LiteralPath $candidate)) { continue }
-    $companionReady = & $candidate -c "import importlib.util; raise SystemExit(0 if all(importlib.util.find_spec(name) for name in ('numpy','sounddevice','pyautogui','pygetwindow','pywinauto')) else 1)" 2>$null
+    # A discoverable module may still fail at import time (for example, blocked native DLLs).
+    # Import the actual modules before selecting the interpreter.
+    $importCheck = & $candidate -c "import numpy, sounddevice, pyautogui, pygetwindow, pywinauto" 2>&1
     if ($LASTEXITCODE -eq 0) { $python = $candidate; break }
+    Write-Warning "Desktop dependencies failed to import in $candidate. Verify the approved environment and Windows application-control policy."
+    if ($importCheck) { Write-Verbose ($importCheck | Out-String) }
 }
 if (-not $python) { throw 'Desktop control and microphone support need numpy, sounddevice, pyautogui, pygetwindow, and pywinauto in the project .venv or approved bhashalearn-safe-venv. System Python is not supported.' }
 Write-Host 'BHASHALEARN desktop companion is temporary and loopback-only. Keep this window open; Ctrl+C stops it.'

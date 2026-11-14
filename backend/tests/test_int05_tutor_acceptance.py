@@ -293,4 +293,4 @@ def test_gemini_provider_http_failure_is_safely_reported(monkeypatch):
     with pytest.raises(HTTPException) as error:
         tutor.generate_tutor_reply("instruction", [{"role": "user", "content": "hello"}])
     assert error.value.status_code == 502
-    assert error.value.detail == "AI provider unavailable or returned an invalid response"
+    assert error.value.detail == "Gemini provider unavailable; retry later or check provider status."

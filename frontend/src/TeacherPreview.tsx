@@ -10,13 +10,14 @@ import { settledTeacherState, teacherLessonSummary, validateTeacherAction, type 
 import { immersiveVoiceBridge, type ImmersiveVoiceState } from "./immersiveVoiceBridge";
 import { getSharedSessionContext, type SharedSessionContext } from "./sessionContext";
 import { disposeTeacherPhoto, loadTeacherPhoto, type TeacherPhotoAsset } from "./teacherPhoto";
+import { speechMorphWeight, type TeacherViseme } from "./teacherMouth";
 import "./teacher-preview.css";
 
 const states: TeacherState[] = ["idle", "walk", "turn", "explain", "point", "listen", "celebrate"];
 const expressions: Expression[] = ["neutral", "happy", "curious", "encouraging", "thinking"];
 
 type TeacherProps = { state: TeacherState; expression: Expression; target: BoardTarget | null; walkTarget: [number, number]; lookTarget: [number, number, number]; viseme: string; reduced: boolean; model: LoadedModel | null; photo: TeacherPhotoAsset | null; mode: TeacherMode; voiceState: ImmersiveVoiceState };
-type LoadedModel = { scene: Group; clips: AnimationClip[] };
+export type LoadedModel = { scene: Group; clips: AnimationClip[] };
 type LoadedTeacherProps = Omit<TeacherProps, "target" | "model" | "photo" | "mode" | "voiceState"> & { model: LoadedModel };
 
 class SceneErrorBoundary extends Component<{ children: ReactNode; onError: () => void }, { failed: boolean }> {
@@ -87,9 +88,10 @@ function LoadedTeacher({ model, state, expression, viseme, walkTarget, lookTarge
       for (const [name, index] of Object.entries(dict)) {
         if (index === undefined) continue;
         const key = name.toLowerCase();
-        const active = viseme !== "sil" && (key.includes(viseme) || (viseme === "aa" && (key.includes("open") || key.includes("jaw"))));
-        const mood = expression === "neutral" ? false : key.includes(expression);
-        influences[index] = active || mood ? 0.55 : 0;
+        const speechWeight = speechMorphWeight(name, viseme as TeacherViseme);
+        const mood = expression !== "neutral" && key.includes(expression);
+        if (speechWeight !== null) influences[index] = speechWeight;
+        else if (mood) influences[index] = 0.55;
       }
     });
     invalidate();
@@ -109,9 +111,10 @@ function LoadedTeacher({ model, state, expression, viseme, walkTarget, lookTarge
         for (const [name, index] of Object.entries(dict)) {
           if (index === undefined) continue;
           const key = name.toLowerCase();
-          const speaking = syncedViseme !== "sil" && (key.includes(syncedViseme) || (syncedViseme === "aa" && (key.includes("open") || key.includes("jaw"))));
+          const speechWeight = speechMorphWeight(name, syncedViseme as TeacherViseme);
           const mood = expression !== "neutral" && key.includes(expression);
-          influences[index] = speaking || mood ? 0.55 : 0;
+          if (speechWeight !== null) influences[index] = speechWeight;
+          else if (mood) influences[index] = 0.55;
         }
       });
       invalidate();
@@ -164,8 +167,8 @@ function Teacher(props: TeacherProps) {
 
 // Shared by the immersive scene; it reuses the prototype rendering contract
 // without importing the preview room or its board-oriented controls.
-export function ImmersiveTeacher({ state = "idle", reduced = false, voiceState = "idle", mode = "holographic" }: { state?: TeacherState; reduced?: boolean; voiceState?: ImmersiveVoiceState; mode?: TeacherMode }) {
-  return <Teacher state={state} expression={voiceState === "thinking" ? "thinking" : "neutral"} target={null} walkTarget={[-2, -0.5]} lookTarget={[0, 1.5, -2]} viseme="sil" reduced={reduced} model={null} photo={null} mode={mode} voiceState={voiceState} />;
+export function ImmersiveTeacher({ state = "idle", reduced = false, voiceState = "idle", mode = "holographic", model = null }: { state?: TeacherState; reduced?: boolean; voiceState?: ImmersiveVoiceState; mode?: TeacherMode; model?: LoadedModel | null }) {
+  return <Teacher state={state} expression={voiceState === "thinking" ? "thinking" : "neutral"} target={null} walkTarget={[-2, -0.5]} lookTarget={[0, 1.5, -2]} viseme="sil" reduced={reduced} model={model} photo={null} mode={mode} voiceState={voiceState} />;
 }
 
 function CameraRig({ cinematic }: { cinematic: boolean }) {
@@ -253,10 +256,16 @@ export function TeacherPreview({ sessionId }: { sessionId?: string } = {}) {
     try {
       const bytes = await file.arrayBuffer();
       const gltf = await new Promise<LoadedModel>((resolve, reject) => new GLTFLoader().parse(bytes, "", result => resolve({ scene: result.scene, clips: result.animations }), reject));
-      setModel(gltf);
       const names: string[] = [];
       gltf.scene.traverse(node => { if ((node as THREE.SkinnedMesh).isSkinnedMesh) names.push("skinned mesh"); });
-      setModelStatus(`${file.name} · ${names.length ? "skinned character" : "static model"} · ${gltf.clips.length} animation clips`);
+      if (!names.length) {
+        disposeLoadedModel(gltf);
+        setModelStatus("This GLB has no rigged/skinned character. Choose a licensed rigged human avatar.");
+        event.target.value = "";
+        return;
+      }
+      setModel(gltf);
+      setModelStatus(`${file.name} · skinned character · ${gltf.clips.length} animation clips`);
     } catch { setModelStatus("Could not read that GLB. The human avatar remains unavailable."); }
     event.target.value = "";
   };

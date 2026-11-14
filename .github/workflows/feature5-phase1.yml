@@ -1,0 +1,36 @@
+name: Feature 5 Phase 1 frontend checks
+on:
+  pull_request:
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/feature5-phase1.yml'
+  push:
+    branches:
+      - 'feature/feature5-phase1-avatar-contract-20261113'
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/feature5-phase1.yml'
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install exact locked dependencies
+        run: npm ci --include=dev --no-audit --no-fund
+      - name: Verify runtime and build dependencies
+        run: npm ls react typescript vite
+      - name: Focused avatar and classroom tests
+        run: node --test tests/feature5AvatarSync.test.mjs tests/teacher.test.mjs tests/avatar-sync.test.mjs tests/immersive.test.mjs
+      - name: Full frontend tests
+        run: npm test
+      - name: TypeScript and production bundle
+        run: npm run build

@@ -175,6 +175,30 @@ def test_provider_http_failure_maps_to_502(monkeypatch):
     assert "private upstream detail" not in error.value.detail
 
 
+@pytest.mark.parametrize(("status", "expected"), [
+    (404, "model is unavailable"),
+    (400, "verify the credential and model access"),
+    (401, "verify the credential and model access"),
+    (403, "verify the credential and model access"),
+    (429, "rate limit or quota"),
+])
+def test_provider_configuration_failures_have_safe_diagnostics(monkeypatch, status, expected):
+    configured_settings(monkeypatch)
+    request = httpx.Request("POST", "https://example.invalid/generate")
+    response = httpx.Response(status, request=request, text="private provider body")
+    failure = httpx.HTTPStatusError("private upstream detail", request=request, response=response)
+    fake_request(monkeypatch, response=FakeResponse(error=failure))
+
+    with pytest.raises(HTTPException) as error:
+        tutor_service.generate_tutor_reply("Instruction", [{"role": "user", "content": "Hi"}])
+
+    assert error.value.status_code == 502
+    assert expected in error.value.detail
+    assert "private provider body" not in error.value.detail
+    assert "private upstream detail" not in error.value.detail
+    assert "test-only-gemini-key" not in error.value.detail
+
+
 def test_provider_timeout_maps_to_502(monkeypatch):
     configured_settings(monkeypatch)
     request = httpx.Request("POST", "https://example.invalid/generate")

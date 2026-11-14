@@ -43,11 +43,54 @@ background_lock = threading.Lock()
 background_config: dict[str, str] = {}
 background_stop = threading.Event()
 desktop_stop = threading.Event()
+desktop_generation = 0
+pending_execution_confirmations: dict[str, tuple[float, str]] = {}
 call_ui_root = None
 call_windows: dict[str, dict] = {}
 call_windows_lock = threading.Lock()
 pyautogui.FAILSAFE = True
 pyautogui.PAUSE = 0.15
+
+
+def _confirmation_fingerprint(payload: dict) -> str:
+    relevant = {key: payload.get(key) for key in (
+        "action", "snapshot_id", "active_window_id", "focus_target_id", "confirmed_close")}
+    return json.dumps(relevant, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _require_native_execution_approval(action: dict) -> bool:
+    """Fail closed unless the local Windows operator approves the exact action.
+
+    Browser-origin requests and a bearer token do not prove a human clicked
+    the web confirmation button. A separate native prompt is required.
+    """
+    if os.name != "nt":
+        return False
+    import ctypes
+    action_name = str(action.get("action", "unknown"))[:80]
+    app_name = str(action.get("app_id") or action.get("target_name") or "")[:80]
+    detail = f"{action_name}: {app_name}" if app_name else action_name
+    if action_name == "move_qa_pointer":
+        detail = f"Move the cursor {str(action.get('direction', ''))[:12]} in the disposable QA window."
+    if action_name == "type_qa_text":
+        detail = f"Replace the value in the QA Permitted text field with:\n{action['text']}"
+    if action_name == "fill_qa_demo_form":
+        detail = "Fill the QA demo form:\n" + "\n".join(
+            f"{field['label']}: {field['value']}" for field in action["fields"])
+    if action_name == "open_named_link":
+        detail = f"Open this approved link in your default browser:\n{action['url']}"
+    message = ("BHASHALEARN AI requests a Windows desktop action:\n\n"
+               + detail + "\n\nApprove this action? Choose No to cancel.")
+    # MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2 | MB_TOPMOST
+    return ctypes.windll.user32.MessageBoxW(None, message, "BHASHALEARN AI — Desktop approval",
+                                             0x00000004 | 0x00000030 | 0x00000100 | 0x00040000) == 6
+
+
+def _invalidate_desktop_approvals() -> None:
+    # Called with lock held so approval and control transitions are atomic.
+    global desktop_generation
+    desktop_generation += 1
+    pending_execution_confirmations.clear()
 
 QA_WINDOW_TITLE = "BHASHALEARN Desktop Control QA"
 WINDOW_PADDING = 24
@@ -603,30 +646,78 @@ class Handler(BaseHTTPRequestHandler):
             if not any(t.name == "bhashalearn-local-reminders" and t.is_alive() for t in threading.enumerate()):
                 threading.Thread(target=_background_poll, name="bhashalearn-local-reminders", daemon=True).start()
             return self._send(200, {"enabled": True, "delivery": "loopback_companion"})
-        if self.path not in {"/activate", "/disable", "/stop", "/action", "/desktop/execute"}:
+        if self.path not in {"/activate", "/disable", "/stop", "/action", "/desktop/confirm", "/desktop/execute"}:
             return self._send(404, {"error": "not found"})
         if self.path == "/stop":
-            with lock: active = False; stopped = True; desktop_stop.set()
+            with lock:
+                active = False; stopped = True; desktop_stop.set()
+                _invalidate_desktop_approvals()
             last_action = "Emergency stop; desktop control disabled"
             return self._send(200, {"ok": True, "active": False, "last_action": last_action})
         if self.path == "/disable":
-            with lock: active = False; desktop_stop.set()
+            with lock:
+                active = False; desktop_stop.set()
+                _invalidate_desktop_approvals()
             return self._send(200, {"ok": True, "active": False})
         if self.path == "/activate":
-            with lock: active = True; stopped = False; desktop_stop.clear()
+            with lock:
+                active = True; stopped = False; desktop_stop.clear()
+                _invalidate_desktop_approvals()
             return self._send(200, {"ok": True, "active": True})
-        if not active or stopped: return self._send(423, {"error": "desktop control is disabled"})
-        if self.path == "/desktop/execute":
+        with lock:
+            generation = desktop_generation
+            enabled = active and not stopped
+        if not enabled: return self._send(423, {"error": "desktop control is disabled"})
+        if self.path in {"/desktop/confirm", "/desktop/execute"}:
             if self.headers.get("Origin") not in ALLOWED_ORIGINS:
-                return self._send(403, {"error": "desktop execution is available only to the local BHASHALEARN app"})
+                return self._send(403, {"error": "desktop approval is available only to the local BHASHALEARN app"})
             length = min(int(self.headers.get("Content-Length", "0")), 8192)
             try: payload = json.loads(self.rfile.read(length))
             except Exception: return self._send(400, {"error": "invalid JSON"})
             if not isinstance(payload, dict) or not isinstance(payload.get("action"), dict):
                 return self._send(422, {"error": "a validated action plan is required"})
+            action = payload["action"]
+            if action.get("action") == "open_named_link":
+                url = action.get("url")
+                if not isinstance(url, str) or url not in windows_automation.APPROVED_LINKS:
+                    return self._send(422, {"error": "Choose an approved link: YouTube, ChatGPT, or Google."})
+            if action.get("action") == "type_qa_text":
+                value = action.get("text")
+                if (not isinstance(value, str) or not 1 <= len(value) <= 120 or not value.isprintable()
+                        or action.get("target_name") != "Permitted text field"):
+                    return self._send(422, {"error": "Use 1–120 printable characters in the QA Permitted text field."})
+            if action.get("action") == "fill_qa_demo_form":
+                try:
+                    windows_automation.validate_demo_form(action.get("fields"))
+                except RuntimeError as exc:
+                    return self._send(422, {"error": str(exc)})
+            if self.path == "/desktop/confirm":
+                # Independent OS-level consent: an authenticated browser request
+                # alone must never mint an executable confirmation ticket.
+                if not _require_native_execution_approval(payload["action"]):
+                    return self._send(403, {"error": "local Windows operator did not approve this action"})
+                confirmation = secrets.token_urlsafe(32)
+                fingerprint = _confirmation_fingerprint(payload)
+                with lock:
+                    approval_current = generation == desktop_generation and active and not stopped and not desktop_stop.is_set()
+                    if approval_current:
+                        now = time.monotonic()
+                        for key, (expires, _) in list(pending_execution_confirmations.items()):
+                            if expires <= now: pending_execution_confirmations.pop(key, None)
+                        pending_execution_confirmations[confirmation] = (now + 60.0, fingerprint)
+                if not approval_current:
+                    return self._send(423, {"error": "desktop control changed during approval"})
+                return self._send(200, {"confirmation_token": confirmation, "expires_in_seconds": 60})
+            confirmation = payload.get("confirmation_token")
+            with lock:
+                pending = pending_execution_confirmations.pop(confirmation, None) if isinstance(confirmation, str) else None
+            if not pending or pending[0] <= time.monotonic() or pending[1] != _confirmation_fingerprint(payload):
+                return self._send(409, {"error": "a fresh one-time user confirmation is required for this exact action"})
             def ensure_control_active():
-                if desktop_stop.is_set() or not active or stopped:
-                    raise RuntimeError("Emergency Stop cancelled the remaining desktop actions.")
+                with lock:
+                    if generation == desktop_generation and active and not stopped and not desktop_stop.is_set():
+                        return
+                raise RuntimeError("Emergency Stop cancelled the remaining desktop actions.")
             try:
                 result = windows_automation.execute_action(
                     payload["action"], snapshot_id=payload.get("snapshot_id"),
@@ -635,7 +726,9 @@ class Handler(BaseHTTPRequestHandler):
                     confirmed_close=payload.get("confirmed_close") is True,
                     type_text=type_text, cancel_check=ensure_control_active)
             except pyautogui.FailSafeException:
-                with lock: active = False; stopped = True; desktop_stop.set()
+                with lock:
+                    active = False; stopped = True; desktop_stop.set()
+                    _invalidate_desktop_approvals()
                 return self._send(423, {"error": "PyAutoGUI fail-safe stopped desktop control"})
             except Exception as exc:
                 return self._send(422, {"error": str(exc)[:240]})

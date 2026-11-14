@@ -30,6 +30,28 @@ from pywinauto import Desktop
 
 
 SUPPORTED_APPS = {"notepad": "Notepad", "chrome": "Google Chrome", "edge": "Microsoft Edge"}
+APPROVED_LINKS = frozenset({"https://www.youtube.com/", "https://chatgpt.com/", "https://www.google.com/"})
+DEMO_FORM_VALUES = {"Demo form Name": "Demo Learner", "Demo form Email": "demo.learner@example.test"}
+DEMO_FORM_IDS = {"Demo form Name": "qa-demo-name", "Demo form Email": "qa-demo-email"}
+
+
+def validate_demo_form(fields) -> None:
+    if not isinstance(fields, list) or len(fields) != len(DEMO_FORM_VALUES):
+        raise RuntimeError("The demo form requires the approved Name and Email fields.")
+    seen_labels = set()
+    seen_ids = set()
+    for field in fields:
+        if not isinstance(field, dict):
+            raise RuntimeError("Invalid demo form field.")
+        label, target_id = field.get("label"), field.get("target_id")
+        if (not isinstance(label, str) or label not in DEMO_FORM_VALUES or label in seen_labels
+                or field.get("value") != DEMO_FORM_VALUES[label]
+                or not isinstance(target_id, str) or not target_id or target_id in seen_ids):
+            raise RuntimeError("Only the approved demo fields and synthetic values may be filled.")
+        seen_labels.add(label)
+        seen_ids.add(target_id)
+
+
 PROCESS_APPS = {"notepad.exe": "notepad", "chrome.exe": "chrome", "msedge.exe": "edge"}
 SENSITIVE_LABEL = re.compile(r"password|passcode|one[- ]time code|\botp\b|credit card|cvv|bank account|social security|passport|\bssn\b", re.I)
 MAX_CONTROLS = 30
@@ -94,6 +116,15 @@ def _control_kind(control_type: str, app_id: str = "") -> str | None:
         return "text"
     return {"Button": "button", "Hyperlink": "link", "Edit": "text",
             "ComboBox": "search", "MenuItem": "button"}.get(control_type)
+
+
+def _is_pointer_qa_window(app_id, wrapper) -> bool:
+    if app_id not in {"chrome", "edge"}:
+        return False
+    try:
+        return wrapper.window_text().startswith("BHASHALEARN Desktop Control QA")
+    except Exception:
+        return False
 
 
 def get_snapshot() -> dict:
@@ -183,6 +214,7 @@ def get_snapshot() -> dict:
             "focused_target_id": focused_target_id,
             "targets": targets,
             "active_app": active_entry["label"] if active_entry else None,
+            "pointer_qa_window": bool(active_entry and _is_pointer_qa_window(active_entry["app_id"], active_entry["wrapper"])),
             "window_count": all_window_count}
 
 
@@ -203,7 +235,7 @@ def _foreground_handle() -> int:
     return int(ctypes.windll.user32.GetForegroundWindow())
 
 
-def _launch_app(app_id: str) -> dict:
+def _launch_app(app_id: str, *, cancel_check) -> dict:
     if app_id not in SUPPORTED_APPS:
         raise RuntimeError("Only Notepad, Chrome, and Edge can be launched by voice.")
     paths = {
@@ -225,16 +257,23 @@ def _launch_app(app_id: str) -> dict:
         scratch = Path(tempfile.gettempdir()) / f"BHASHALEARN-Desktop-Control-{secrets.token_hex(6)}.txt"
         scratch.write_text("", encoding="utf-8")
         command.append(str(scratch))
+    cancel_check()
     subprocess.Popen(command, close_fds=True)
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
         time.sleep(0.25)
+        cancel_check()
         opened = [item for item in _windows() if item["app_id"] == app_id]
-        if opened:
-            newest = next((item for item in opened if item["handle"] not in before), opened[-1])
+        newest = next((item for item in opened if item["handle"] not in before), None)
+        if newest is None and opened and app_id != "notepad":
+            newest = opened[-1]
+        if newest is not None:
+            cancel_check()
             newest["wrapper"].set_focus()
             return {"ok": True, "action": "open_app", "app_id": app_id,
                     "verified_window": newest["id"]}
+    if app_id == "notepad":
+        raise RuntimeError("No new Notepad window was verified. Check whether Notepad opened the scratch file in an existing tab before retrying.")
     raise RuntimeError(f"{SUPPORTED_APPS[app_id]} did not open a visible window within 10 seconds.")
 
 
@@ -261,9 +300,22 @@ def execute_action(payload: dict, *, type_text, cancel_check, confirmed_close: b
                                           focus_target_id=focus_target_id))
         return {"ok": True, "action": "sequence", "steps": results}
     if action == "open_app":
-        result = _launch_app(payload.get("app_id"))
+        result = _launch_app(payload.get("app_id"), cancel_check=cancel_check)
         context["launched_app"] = payload.get("app_id")
         return result
+    if action == "open_named_link":
+        url = payload.get("url")
+        if not isinstance(url, str) or url not in APPROVED_LINKS:
+            raise RuntimeError("Choose an approved link: YouTube, ChatGPT, or Google.")
+        cancel_check()
+        failure = "Windows could not send the approved link to the default browser. Check that a default browser is configured."
+        try:
+            dispatched = webbrowser.open(url, new=2, autoraise=True)
+        except (OSError, webbrowser.Error):
+            raise RuntimeError(failure) from None
+        if not dispatched:
+            raise RuntimeError(failure)
+        return {"ok": True, "action": action, "url": url}
     if action == "open_website":
         url = payload.get("url")
         parsed = urlsplit(url or "")
@@ -366,6 +418,182 @@ def execute_action(payload: dict, *, type_text, cancel_check, confirmed_close: b
         if ctypes.windll.user32.IsWindow(target["handle"]):
             raise RuntimeError("The window is still open; it may have an unsaved-work confirmation. Resolve it yourself.")
         return {"ok": True, "action": action, "target": target["label"], "closed": True}
+
+    if action == "fill_qa_demo_form":
+        fields = payload.get("fields")
+        validate_demo_form(fields)
+        window = _cached_target(snapshot_id, active_window_id)
+        if (window["kind"] != "window" or _foreground_handle() != window["handle"]
+                or not _is_pointer_qa_window(window["app_id"], window["wrapper"])):
+            raise RuntimeError("Keep the disposable desktop QA window in the foreground.")
+
+        def require_foreground():
+            if (_foreground_handle() != window["handle"]
+                    or not _is_pointer_qa_window(window["app_id"], window["wrapper"])):
+                raise RuntimeError("The disposable QA window changed.")
+
+        def resolve_fields():
+            edits = window["wrapper"].descendants(control_type="Edit")
+            resolved = []
+            for field in fields:
+                label = field["label"]
+                cached = _cached_target(snapshot_id, field["target_id"])
+                matches = [edit for edit in edits if edit.is_visible()
+                           and str(edit.element_info.name or "").strip() == label]
+                if (cached["kind"] != "text" or cached["handle"] != window["handle"] or cached["label"] != label
+                        or len(matches) != 1 or matches[0].element_info != cached["wrapper"].element_info):
+                    raise RuntimeError("The approved demo form changed. Prepare the action again.")
+                edit = matches[0]
+                element = edit.element_info.element
+                if (element.CurrentAutomationId != DEMO_FORM_IDS[label]
+                        or element.CurrentIsPassword or not edit.is_enabled()):
+                    raise RuntimeError("The approved demo field is no longer editable.")
+                value = edit.iface_value
+                if value.CurrentIsReadOnly:
+                    raise RuntimeError("The approved demo field is read-only.")
+                resolved.append(value)
+            return resolved
+
+        # Preflight both controls before the first write. A provider error or
+        # Emergency Stop after the first write may leave a partially filled form.
+        try:
+            resolve_fields()
+        except RuntimeError:
+            raise
+        except Exception:
+            raise RuntimeError("Windows could not access both demo fields. Reopen the QA page and prepare the action again.") from None
+        attempted = False
+        try:
+            for index, field in enumerate(fields):
+                value = resolve_fields()[index]
+                require_foreground()
+                cancel_check()
+                if value.CurrentValue == field["value"]:
+                    continue
+                attempted = True
+                value.SetValue(field["value"])
+                if value.CurrentValue != field["value"]:
+                    raise RuntimeError("Windows did not verify the demo field value.")
+            verified = resolve_fields()
+            require_foreground()
+            cancel_check()
+            if any(value.CurrentValue != field["value"] for value, field in zip(verified, fields)):
+                raise RuntimeError("Windows did not verify both demo field values.")
+        except Exception:
+            if attempted:
+                raise RuntimeError("The demo form may be partly filled. Inspect both fields before retrying.") from None
+            raise
+        return {"ok": True, "action": action, "verified_fields": len(fields)}
+
+    if action == "type_qa_text":
+        value = payload.get("text")
+        if not isinstance(value, str) or not 1 <= len(value) <= 120 or not value.isprintable():
+            raise RuntimeError("Text entry must be 1–120 printable characters.")
+        window = _cached_target(snapshot_id, active_window_id)
+        if (window["kind"] != "window" or _foreground_handle() != window["handle"]
+                or not _is_pointer_qa_window(window["app_id"], window["wrapper"])):
+            raise RuntimeError("Keep the disposable desktop QA window in the foreground.")
+        label = "Permitted text field"
+        if (not target or target["kind"] != "text" or target["handle"] != window["handle"]
+                or target["label"] != label or payload.get("target_name") != label):
+            raise RuntimeError("Choose the Permitted text field in the disposable QA window.")
+        wrapper = target["wrapper"]
+        fields = [field for field in window["wrapper"].descendants(control_type="Edit")
+                  if field.is_visible() and str(field.element_info.name or "").strip() == label]
+        if len(fields) != 1 or fields[0].element_info != wrapper.element_info:
+            raise RuntimeError("The approved field is missing or its name is no longer unique.")
+        if (not wrapper.is_visible() or not wrapper.is_enabled()
+                or wrapper.element_info.element.CurrentIsPassword):
+            raise RuntimeError("The approved field is no longer editable.")
+        # Use the freshly resolved control after confirming its identity.
+        try:
+            field_value = fields[0].iface_value
+            readonly = field_value.CurrentIsReadOnly
+        except Exception:
+            raise RuntimeError("Windows could not access the approved field for text entry. Prepare the action again.") from None
+        if readonly:
+            raise RuntimeError("The approved field is read-only.")
+        cancel_check()
+        if (_foreground_handle() != window["handle"]
+                or not _is_pointer_qa_window(window["app_id"], window["wrapper"])):
+            raise RuntimeError("The disposable desktop QA window changed before text entry.")
+        try:
+            field_value.SetValue(value)
+            observed = field_value.CurrentValue
+        except Exception:
+            raise RuntimeError("Windows could not confirm the write. Inspect the approved field before retrying.") from None
+        if observed != value:
+            raise RuntimeError("Windows did not verify the field value. Inspect the field before retrying.")
+        return {"ok": True, "action": action, "target": label, "typed_characters": len(value)}
+
+    if action in {"move_qa_pointer", "click_qa_control"}:
+        window = _cached_target(snapshot_id, active_window_id)
+        if (window["kind"] != "window" or _foreground_handle() != window["handle"]
+                or not _is_pointer_qa_window(window["app_id"], window["wrapper"])):
+            raise RuntimeError("Keep the disposable desktop QA window in the foreground.")
+        bounds = window["wrapper"].rectangle()
+        # Keep moves away from the resize border and the global corner fail-safe.
+        left, top, right, bottom = bounds.left + 8, bounds.top + 8, bounds.right - 8, bounds.bottom - 8
+        if right <= left or bottom <= top:
+            raise RuntimeError("The disposable QA window is too small. Enlarge it and prepare the action again.")
+        if action == "move_qa_pointer":
+            direction = payload.get("direction")
+            delta = {"left": (-80, 0), "right": (80, 0), "up": (0, -80), "down": (0, 80)}.get(direction) if isinstance(direction, str) else None
+            if delta is None:
+                raise RuntimeError("Choose left, right, up, or down.")
+            start = pyautogui.position()
+            if not (left <= start.x < right and top <= start.y < bottom):
+                raise RuntimeError("Place the cursor inside the disposable desktop QA window first.")
+            x = max(left, min(right - 1, start.x + delta[0]))
+            y = max(top, min(bottom - 1, start.y + delta[1]))
+            if (x, y) == (start.x, start.y):
+                raise RuntimeError("The cursor is already at the edge of the QA window.")
+        else:
+            if not target or target["kind"] != "button" or target["handle"] != window["handle"]:
+                raise RuntimeError("Choose a visible button from the disposable desktop QA window.")
+            wrapper = target["wrapper"]
+            rect = wrapper.rectangle()
+            label = str(wrapper.element_info.name or "").strip()
+            if (label.casefold() not in {"test button", "search", "open chapter"}
+                    or not wrapper.is_visible() or not wrapper.is_enabled()
+                    or label != target["label"] or label != payload.get("target_name")
+                    or [rect.left, rect.top, rect.right, rect.bottom] != target["rect"]):
+                raise RuntimeError("The approved button changed. Prepare the action again.")
+            matches = [button for button in window["wrapper"].descendants(control_type="Button")
+                       if button.is_visible()
+                       and str(button.element_info.name or "").strip().casefold() == label.casefold()]
+            if len(matches) != 1 or matches[0].element_info != wrapper.element_info:
+                raise RuntimeError("The approved button is missing or its name is no longer unique.")
+            x, y = (rect.left + rect.right) // 2, (rect.top + rect.bottom) // 2
+
+        if not (left <= x < right and top <= y < bottom):
+            raise RuntimeError("The approved target is outside the disposable QA window.")
+        cancel_check()
+        if _foreground_handle() != window["handle"]:
+            raise RuntimeError("The desktop QA window lost focus.")
+        pyautogui.moveTo(x, y, duration=0.15)
+        actual = pyautogui.position()
+        if (actual.x, actual.y) != (x, y):
+            raise RuntimeError("Windows did not move the cursor to the approved position.")
+        if (_foreground_handle() != window["handle"]
+                or not _is_pointer_qa_window(window["app_id"], window["wrapper"])):
+            raise RuntimeError("The desktop QA window changed during pointer movement.")
+        if action == "click_qa_control":
+            cancel_check()
+            hit = Desktop(backend="uia").from_point(x, y)
+            current = wrapper.rectangle()
+            current_pointer = pyautogui.position()
+            if (_foreground_handle() != window["handle"]
+                    or not _is_pointer_qa_window(window["app_id"], window["wrapper"])
+                    or hit.element_info != wrapper.element_info
+                    or not wrapper.is_visible() or not wrapper.is_enabled()
+                    or str(wrapper.element_info.name or "").strip() != label
+                    or [current.left, current.top, current.right, current.bottom] != target["rect"]
+                    or (current_pointer.x, current_pointer.y) != (x, y)):
+                raise RuntimeError("The approved button is no longer under the cursor.")
+            cancel_check()
+            pyautogui.click(x, y)
+        return {"ok": True, "action": action, "cursor": [x, y]}
 
     if action in {"click_target", "move_to_target", "focus_target", "type_into", "search"}:
         if not target or target["kind"] == "window":

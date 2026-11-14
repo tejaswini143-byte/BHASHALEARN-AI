@@ -143,5 +143,22 @@ def generate_tutor_reply(instruction: str, history: list[dict[str, str]]) -> str
         if not answer:
             raise ValueError("AI returned no text")
         return answer
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code
+        if status == 404:
+            detail = (
+                "Configured Gemini model is unavailable; choose a model enabled for this credential "
+                "in BHASHALEARN_GEMINI_MODEL."
+            )
+        elif status in {400, 401, 403}:
+            detail = (
+                "Gemini rejected the configured request; verify the credential and model access "
+                "without sharing the key."
+            )
+        elif status == 429:
+            detail = "Gemini rate limit or quota was reached; retry later or check provider quota."
+        else:
+            detail = "Gemini provider unavailable; retry later or check provider status."
+        raise HTTPException(status_code=502, detail=detail) from None
     except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
         raise HTTPException(status_code=502, detail="AI provider unavailable or returned an invalid response") from exc
