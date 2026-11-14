@@ -89,3 +89,10 @@ test("unmount during asynchronous audio startup releases microphone tracks", () 
   const start = source.slice(source.indexOf("async function toggleRecording()"), source.indexOf("function generateLocalDemo("));
   assert.match(start, /await context\.resume\(\);\s*\/\/[^\n]*\n\s*\/\/[^\n]*\n\s*if \(!mounted\.current\) \{ await releaseMicrophone\(\); return; \}/);
 });
+
+
+test("late Gemini failures cannot overwrite Emergency Stop status", () => {
+  const panel = readFileSync(new URL("../src/DesktopControlPanel.tsx", import.meta.url), "utf8");
+  const interpret = panel.slice(panel.indexOf("  async function interpret()"), panel.indexOf("  function describe("));
+  assert.match(interpret, /catch \(error\) \{\s*\/\/[^\n]*\n\s*if \(activeRef\.current && executionGateRef\.current\.isCurrent\(requestEpoch\)\)/);
+});
