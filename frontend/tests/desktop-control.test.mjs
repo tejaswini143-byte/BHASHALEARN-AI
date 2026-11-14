@@ -147,3 +147,43 @@ test("disposable QA provides uniquely named, duplicate, search, typing, and sand
   assert.match(sandbox, /desktopQa:true/);
   assert.match(sandbox, /Click event fired; approved destination loaded:/);
 });
+
+test("late Gemini plan is rejected after Emergency Stop and re-enable", async () => {
+  const { createDesktopExecutionGate } = await import("../src/desktopExecution.mjs");
+  const gate = createDesktopExecutionGate();
+  gate.enable();
+  const requestEpoch = gate.snapshot();
+  gate.disable();
+  assert.equal(gate.isCurrent(requestEpoch), false);
+  gate.enable();
+  assert.equal(gate.isCurrent(requestEpoch), false, "Re-enabling must not revive stale Gemini responses");
+  assert.throws(() => gate.begin("stale-plan"), /fresh confirmation/);
+});
+
+test("Emergency Stop invalidates an executing token even after re-enable", async () => {
+  const { createDesktopExecutionGate } = await import("../src/desktopExecution.mjs");
+  const gate = createDesktopExecutionGate();
+  gate.enable();
+  gate.registerPlan("approved-sequence");
+  const token = gate.begin("approved-sequence");
+  gate.disable();
+  gate.enable();
+  assert.throws(() => gate.assertCurrent(token), /Emergency Stop cancelled/);
+  assert.equal(gate.isCurrent(token), false);
+  gate.finish(token);
+  gate.registerPlan("fresh-sequence");
+  const freshToken = gate.begin("fresh-sequence");
+  assert.doesNotThrow(() => gate.assertCurrent(freshToken));
+  gate.finish(freshToken);
+});
+
+test("plan invalidation prevents a pending approval from executing", async () => {
+  const { createDesktopExecutionGate } = await import("../src/desktopExecution.mjs");
+  const gate = createDesktopExecutionGate();
+  gate.enable();
+  gate.registerPlan("transcript-before-edit");
+  const oldEpoch = gate.snapshot();
+  gate.invalidatePlan();
+  assert.equal(gate.isCurrent(oldEpoch), false);
+  assert.throws(() => gate.begin("transcript-before-edit"), /fresh confirmation/);
+});
