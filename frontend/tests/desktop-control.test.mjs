@@ -9,6 +9,7 @@ test("desktop commands use the approved QA page and semantic targets only", asyn
   const panel = await read("../src/DesktopControlPanel.tsx");
   assert.match(helper, /APPROVED_HOSTS/);
   assert.match(helper, /APPROVED_PORTS/);
+  assert.match(helper, /"5173"/);
   assert.match(helper, /"5202"/);
   assert.match(helper, /"5203"/);
   assert.match(helper, /desktop-control-test\.html/);
