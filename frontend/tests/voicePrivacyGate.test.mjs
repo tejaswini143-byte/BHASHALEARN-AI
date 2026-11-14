@@ -99,7 +99,7 @@ test("late Gemini failures cannot overwrite Emergency Stop status", () => {
 
 test("delayed emergency stop response cannot overwrite a newer connection state", () => {
   const panel = readFileSync(new URL("../src/DesktopControlPanel.tsx", import.meta.url), "utf8");
-  const stop = panel.slice(panel.indexOf("  async function stop()"), panel.indexOf("  const clarification ="));
+  const stop = panel.slice(panel.indexOf("  async function stop()"), panel.indexOf("  const clarification =", panel.indexOf("  async function stop()")));
   assert.match(stop, /const stopEpoch = \+\+controlRequestRef\.current/);
   assert.match(stop, /await companion\("\/stop"\);[\s\S]*?if \(stopEpoch !== controlRequestRef\.current\) return;[\s\S]*?setStatus\(/);
   assert.match(stop, /catch \{\s*if \(stopEpoch !== controlRequestRef\.current\) return;\s*setConnected\(false\)/);
