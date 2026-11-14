@@ -187,3 +187,47 @@ test("plan invalidation prevents a pending approval from executing", async () =>
   assert.equal(gate.isCurrent(oldEpoch), false);
   assert.throws(() => gate.begin("transcript-before-edit"), /fresh confirmation/);
 });
+
+test("Phase 5: invalid and empty plan IDs cannot bypass confirmation", async () => {
+  const { createDesktopExecutionGate } = await import("../src/desktopExecution.mjs");
+  const gate = createDesktopExecutionGate();
+  gate.enable();
+  for (const invalid of [null, undefined, ""]) {
+    assert.throws(() => gate.registerPlan(invalid), /valid action plan/);
+    assert.throws(() => gate.begin(invalid), /fresh confirmation/);
+  }
+  assert.throws(() => gate.begin("unreviewed"), /fresh confirmation/);
+});
+
+test("Phase 5: repeated stop, re-enable, and new plan cannot revive old approval", async () => {
+  const { createDesktopExecutionGate } = await import("../src/desktopExecution.mjs");
+  const gate = createDesktopExecutionGate();
+  gate.enable();
+  gate.registerPlan("old");
+  const oldEpoch = gate.snapshot();
+  gate.disable();
+  gate.disable();
+  gate.enable();
+  assert.equal(gate.isCurrent(oldEpoch), false);
+  assert.throws(() => gate.begin("old"), /fresh confirmation/);
+  gate.registerPlan("new");
+  const token = gate.begin("new");
+  assert.doesNotThrow(() => gate.assertCurrent(token));
+  gate.finish(token);
+  assert.throws(() => gate.begin("new"), /fresh confirmation/);
+});
+
+test("Phase 5: stale finish cannot release a newer in-flight action", async () => {
+  const { createDesktopExecutionGate } = await import("../src/desktopExecution.mjs");
+  const gate = createDesktopExecutionGate();
+  gate.enable();
+  gate.registerPlan("first");
+  const first = gate.begin("first");
+  gate.finish(first);
+  gate.registerPlan("second");
+  const second = gate.begin("second");
+  gate.finish(first);
+  assert.throws(() => gate.begin("second"), /already executing/);
+  assert.doesNotThrow(() => gate.assertCurrent(second));
+  gate.finish(second);
+});
