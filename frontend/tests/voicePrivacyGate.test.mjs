@@ -34,6 +34,10 @@ test("failed Prisma transcription retains the reviewed audio for retry or discar
   assert.match(source, /catch \(cause\) \{ if \(!controller\.signal\.aborted\) handleError\(cause\); return false; \}/);
 });
 
+test("saved Prisma transcript is restored after session load without replacing an active draft", () => {
+  assert.match(source, /if \(state\?\.voice_transcript\?\.trim\(\)\)\s*\{\s*setDraft\(current => current\.trim\(\) \? current : state\.voice_transcript \|\| ""\);\s*\}/);
+});
+
 test("Windows control remains gated by separate transcript review, Gemini plan and action confirmation", () => {
   assert.match(source, /I reviewed this transcript/);
   assert.match(source, /then prepare an action, review the proposal/);

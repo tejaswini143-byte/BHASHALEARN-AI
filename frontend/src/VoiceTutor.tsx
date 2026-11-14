@@ -220,6 +220,12 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
         setPreferences({ preferred_language: context.preferred_language, learning_level: context.learning_level, learning_pace: context.learning_pace, learning_goal: context.learning_goal });
         voiceStateRef.current = state;
         setVoiceState(state);
+        // Prisma transcripts are saved with the voice session so the student can
+        // continue reviewing after a refresh or navigation. Preserve any text
+        // already entered in the current draft.
+        if (state?.voice_transcript?.trim()) {
+          setDraft(current => current.trim() ? current : state.voice_transcript || "");
+        }
         setResumePrompt(state?.resume_status === "awaiting_confirmation" && Boolean(state.checkpoint_message_id));
       })
       .catch(cause => { if (loadId === activeHistory.current) handleError(cause); })
