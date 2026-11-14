@@ -83,3 +83,9 @@ test("microphone capture requires a second explicit decision before getUserMedia
   assert.ok(consent >= 0 && capture > consent, "Microphone capture must be preceded by a separate user confirmation");
   assert.match(start, /if \(!window\.confirm\([\s\S]*?\)\) return;/);
 });
+
+
+test("unmount during asynchronous audio startup releases microphone tracks", () => {
+  const start = source.slice(source.indexOf("async function toggleRecording()"), source.indexOf("function generateLocalDemo("));
+  assert.match(start, /await context\.resume\(\);\s*\/\/[^\n]*\n\s*\/\/[^\n]*\n\s*if \(!mounted\.current\) \{ await releaseMicrophone\(\); return; \}/);
+});
