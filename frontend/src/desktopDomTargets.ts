@@ -8,7 +8,7 @@ export type DesktopTarget = {
 export type ApprovedSite = { id: string; name: string; url: string };
 
 const APPROVED_HOSTS = new Set(["127.0.0.1", "localhost"]);
-const APPROVED_PORTS = new Set(["5173", "5198", "5199", "5200", "5201", "5202", "5203", "15199"]);
+const APPROVED_PORTS = new Set(["5173", "5184", "5185", "5198", "5199", "5200", "5201", "5202", "5203", "15199"]);
 const APPROVED_PATHS = new Set(["/desktop-control-test.html", "/desktop-control-sandbox.html"]);
 
 function qaWindow(): Window | null {

@@ -35,7 +35,7 @@ async function stopRecording(page: Page) {
   await page.getByRole("button", { name: "Stop recording" }).dispatchEvent("click");
 }
 
-async function mockVoiceBrowser(page: Page, options: { micDenied?: boolean; sttStatus?: number; ttsStatus?: number; transcript?: string } = {}) {
+async function mockVoiceBrowser(page: Page, options: { micDenied?: boolean; sttStatus?: number; ttsStatus?: number; transcript?: string; savedTranscript?: string } = {}) {
   await page.addInitScript(({ micDenied }) => {
     sessionStorage.setItem("bhashalearn_access_token", "mock-browser-token");
     const testWindow = window as Window & { voiceTest?: { micCalls: number; tracksStopped: number; recordedFormat?: string; recordedSize?: number } };
@@ -95,7 +95,7 @@ async function mockVoiceBrowser(page: Page, options: { micDenied?: boolean; sttS
   await page.route("**/api/v1/auth/me", route => route.fulfill({ json: { id: "mock-student", email: "learner@example.test", display_name: "Voice Learner" } }));
   await page.route("**/api/v1/sessions?limit=100", route => route.fulfill({ json: [session] }));
   await page.route("**/api/v1/students/me/preferences", route => route.fulfill({ json: prefs }));  await page.route("**/api/v1/voice/sessions/provider-mode", route => route.fulfill({ json: { mode: "unavailable", configured: false } }));
-  const initialVoiceState = { session_id: session.id, topic: session.topic, lesson_step: "introduction", student_question: null, active_response_language: "mixed", playback_state: "idle", voice_transcript: null, checkpoint_message_id: null, checkpoint_playback_ms: null, resume_status: "none", updated_at: "2026-11-09T10:00:00Z" };
+  const initialVoiceState = { session_id: session.id, topic: session.topic, lesson_step: "introduction", student_question: null, active_response_language: "mixed", playback_state: "idle", voice_transcript: options.savedTranscript ?? null, checkpoint_message_id: null, checkpoint_playback_ms: null, resume_status: "none", updated_at: "2026-11-09T10:00:00Z" };
   await page.route(`**/api/v1/voice/sessions/${session.id}/state`, async route => {
     if (route.request().method() === "GET") return route.fulfill({ json: initialVoiceState });
     const update = route.request().postDataJSON() as Partial<typeof initialVoiceState>;
@@ -126,6 +126,17 @@ async function mockVoiceBrowser(page: Page, options: { micDenied?: boolean; sttS
 }
 
 test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
+  test("restores a saved Prisma transcript after a session refresh", async ({ page }) => {
+    await mockVoiceBrowser(page, { savedTranscript: "Open Notepad." });
+    const transcript = page.getByLabel("Prisma transcript or typed message");
+    await expect(transcript).toHaveValue("Open Notepad.");
+    await page.reload();
+    await expect(transcript).toHaveValue("Open Notepad.");
+    const panel = page.getByRole("region", { name: "Windows desktop control" });
+    await expect(panel).toContainText("Prisma transcript: Open Notepad.");
+    await expect(panel.getByRole("button", { name: "Prepare Notepad action" })).toBeDisabled();
+  });
+
   test("dismissing consent preserves the local preview without reopening the microphone or uploading", async ({ page }) => {
     await mockVoiceBrowser(page);
     const micCalls = () => page.evaluate(() => (window as Window & { voiceTest: { micCalls: number } }).voiceTest.micCalls);

@@ -84,6 +84,9 @@ def test_settings_read_canonical_root_env_file_with_process_override(tmp_path, m
     for name in BACKEND_ENV_NAMES:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.chdir(tmp_path)
+    # The suite fixture disables the project .env globally. This test opts back
+    # into its synthetic temporary file to verify Settings' supported behavior.
+    monkeypatch.setattr(Settings, "model_config", {**Settings.model_config, "env_file": ".env"})
 
     from_file = Settings()
     assert from_file.database_url == "sqlite:///root-env.db"
