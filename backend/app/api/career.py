@@ -149,6 +149,14 @@ class MentorQuestion(BaseModel):
             raise ValueError("Language must be English, Telugu, or mixed")
         return value
 
+    @field_validator("question")
+    @classmethod
+    def clean_question(cls, value: str) -> str:
+        value = value.strip()
+        if len(value) < 2:
+            raise ValueError("Question must contain at least two non-space characters")
+        return value
+
 
 class ResumeExtractInput(BaseModel):
     document_id: str = Field(min_length=36, max_length=36)
@@ -184,14 +192,6 @@ class ResumeProfileReview(BaseModel):
         if len(keys) != len(set(keys)):
             raise ValueError("Resume skills must be unique")
         return self
-
-    @field_validator("question")
-    @classmethod
-    def clean_question(cls, value: str) -> str:
-        value = value.strip()
-        if len(value) < 2:
-            raise ValueError("Question must contain at least two non-space characters")
-        return value
 
 def _owned_goal(goal_id: str, student: Student, db: Session) -> CareerGoal:
     goal = db.scalar(select(CareerGoal).where(CareerGoal.id == goal_id, CareerGoal.student_id == student.id))
