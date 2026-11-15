@@ -62,12 +62,13 @@ export function mapBoardTarget(target: BoardTarget, boardWidth = 6, boardHeight 
 }
 
 export function validateVisemeTimeline(timeline: VisemeFrame[]): VisemeFrame[] {
-  let previousAt = -1;
+  let previousEnd = 0;
   for (const frame of timeline) {
-    if (!Number.isFinite(frame.atMs) || frame.atMs < 0 || frame.atMs < previousAt || !Number.isFinite(frame.durationMs) || frame.durationMs <= 0 || !visemes.has(frame.viseme)) {
+    if (!Number.isFinite(frame.atMs) || frame.atMs < 0 || frame.atMs < previousEnd || !Number.isFinite(frame.durationMs) || frame.durationMs <= 0 || !visemes.has(frame.viseme)) {
       throw new Error("Invalid viseme timeline");
     }
-    previousAt = frame.atMs;
+    previousEnd = frame.atMs + frame.durationMs;
+    if (!Number.isSafeInteger(previousEnd)) throw new Error("Invalid viseme timeline");
   }
   return timeline.map(frame => ({ ...frame }));
 }

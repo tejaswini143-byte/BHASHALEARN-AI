@@ -3,3 +3,19 @@
 .vt-app-immersive .vt-mobile-menu{display:none}
 
 .vt-demo-badge{display:inline-block;margin-left:8px;padding:4px 7px;border:1px solid #bb91ff77;border-radius:12px;color:#dfccff;background:#49296c66;font-size:8px;font-weight:800;letter-spacing:.06em}.vt-demo-play{margin:8px;padding:8px 11px;border:1px solid #8a76c9;border-radius:8px;background:#28214b;color:#e2d8ff;font-size:10px;font-weight:750}.vt-app-immersive .vt-top-actions label{white-space:nowrap}.vt-app-immersive .vt-top-actions select{max-width:150px}
+
+/* Keep the voice action controls reachable inside the fixed-height desktop layout. */
+.vt-chat{overflow:hidden}
+.vt-chat-header{flex:0 0 auto}
+.vt-transcript{flex:1 1 50%}
+.vt-compose{flex:1 1 50%;min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;scroll-padding-block:16px}
+.vt-compose:focus-visible{outline:2px solid #86dff2;outline-offset:-2px}
+
+@media(max-width:800px){
+  .vt-app{height:auto;min-height:100vh;min-height:100dvh;overflow:visible}
+  .vt-main{height:auto;min-height:100vh;min-height:100dvh}
+  .vt-layout{overflow:visible;flex:none}
+  .vt-chat{height:auto;min-height:570px;overflow:visible}
+  .vt-transcript{flex:0 1 auto;max-height:45vh}
+  .vt-compose{flex:0 0 auto;max-height:none;overflow:visible;scrollbar-gutter:auto}
+}

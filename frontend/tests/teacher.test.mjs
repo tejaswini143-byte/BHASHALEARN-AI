@@ -82,3 +82,26 @@ test("teacher route shows only rigged assets and integrates the lesson board", a
   assert.ok(component.includes("getSharedSessionContext(sessionId)"));
   assert.ok(component.includes("useSyncExternalStore(immersiveVoiceBridge.subscribeFrames"));
 });
+
+
+test("avatar timing rejects overlapping and non-finite end times", () => {
+  assert.throws(() => core.validateVisemeTimeline([
+    { atMs: 0, durationMs: 120, viseme: "aa" },
+    { atMs: 100, durationMs: 50, viseme: "ee" },
+  ]), /Invalid viseme timeline/);
+  assert.throws(() => core.validateVisemeTimeline([
+    { atMs: Number.MAX_SAFE_INTEGER, durationMs: 100, viseme: "aa" },
+  ]), /Invalid viseme timeline/);
+  assert.deepEqual(core.validateVisemeTimeline([
+    { atMs: 0, durationMs: 120, viseme: "aa" },
+    { atMs: 120, durationMs: 50, viseme: "ee" },
+  ]).map(frame => frame.viseme), ["aa", "ee"]);
+});
+
+
+test("realistic teacher rejects unrigged GLB assets instead of showing a static model", async () => {
+  const source = await readFile(new URL("../src/TeacherPreview.tsx", import.meta.url), "utf8");
+  assert.match(source, /if \(!names\.length\)/);
+  assert.match(source, /no rigged\/skinned character/);
+  assert.match(source, /disposeLoadedModel\(gltf\)/);
+});
