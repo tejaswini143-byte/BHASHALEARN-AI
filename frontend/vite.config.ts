@@ -19,6 +19,7 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       port: 5173,
+      watch: { ignored: ["**/public/avatars/AvatarSample_B.vrm"] },
       proxy: { "/api": apiTarget, "/health": apiTarget },
     },
   };

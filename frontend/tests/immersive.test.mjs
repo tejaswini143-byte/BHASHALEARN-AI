@@ -75,9 +75,10 @@ test("immersive classroom renders the existing authenticated voice tutor and sha
 });
 
 
-test("missing rigged avatar is disclosed while lesson controls remain available", async () => {
+test("bundled rigged avatar loads while lesson controls remain available", async () => {
   const scene = await readFile(resolve(sourceDir, "ImmersiveClassroom.tsx"), "utf8");
-  assert.match(scene, /3D teacher avatar not loaded/);
+  assert.match(scene, /loadBundledAvatar\(\)/);
+  assert.match(scene, /AvatarSample_B · Pixiv sample VRM/);
   assert.match(scene, /role="status"/);
   assert.match(scene, /Interactive lesson board/);
   assert.match(scene, /<VoiceTutor/);

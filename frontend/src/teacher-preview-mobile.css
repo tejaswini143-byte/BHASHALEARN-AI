@@ -1,0 +1,16 @@
+@media (max-width: 450px) {
+  .tp-header-right {
+    gap: 5px;
+    min-width: 0;
+  }
+
+  .tp-header-right > a:last-child {
+    display: none;
+  }
+
+  .tp-header-right .session-mode-nav a {
+    min-width: 0;
+    padding: 6px 5px;
+    font-size: 9px;
+  }
+}

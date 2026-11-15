@@ -69,8 +69,9 @@ test("teacher route shows only rigged assets and integrates the lesson board", a
   assert.ok(app.includes('path="/teacher"'));
   assert.ok(component.includes("<Canvas"));
   assert.ok(component.includes("WebGL preview unavailable"));
-  assert.ok(component.includes("NO HUMAN AVATAR"));
-  assert.ok(component.includes("Realistic teacher asset not configured"));
+  assert.ok(component.includes("LOADING AVATAR"));
+  assert.ok(component.includes("Loading the licensed classroom teacher"));
+  assert.ok(component.includes("loadBundledAvatar"));
   assert.ok(component.includes("Interactive lesson board"));
   assert.ok(component.includes("tp-stage-board"));
   assert.ok(component.includes("Open live AI tutor and microphone"));
@@ -100,8 +101,11 @@ test("avatar timing rejects overlapping and non-finite end times", () => {
 
 
 test("realistic teacher rejects unrigged GLB assets instead of showing a static model", async () => {
-  const source = await readFile(new URL("../src/TeacherPreview.tsx", import.meta.url), "utf8");
-  assert.match(source, /if \(!names\.length\)/);
-  assert.match(source, /no rigged\/skinned character/);
-  assert.match(source, /disposeLoadedModel\(gltf\)/);
+  const [source, loader] = await Promise.all([
+    readFile(new URL("../src/TeacherPreview.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/avatarAsset.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(source, /loadLocalAvatar\(file\)/);
+  assert.match(loader, /no rigged character/i);
+  assert.match(loader, /disposeAvatar\(model\)/);
 });
