@@ -226,6 +226,17 @@ def test_future_seeker_mentor_receives_owned_roadmap_and_supports_telugu(client,
     assert client.post(path, headers=headers, json={"question": "x", "language": "french"}).status_code == 422
 
 
+def test_experience_profile_persists_and_readiness_explains_its_evidence(client):
+    headers = auth(client, "career-experience@example.com")
+    goal = create_goal(client, headers, experience_summary="Built two Python class projects").json()
+    assert goal["experience_summary"] == "Built two Python class projects"
+    plan = client.post(f"/api/v1/career/goals/{goal['id']}/roadmap", headers=headers).json()
+    assert 0 <= plan["readiness"]["score"] <= 100
+    assert "not job readiness" in plan["readiness"]["basis"]
+    assert plan["readiness"]["scored_skills"]
+    assert client.get(f"/api/v1/career/goals", headers=headers).json()[0]["experience_summary"] == "Built two Python class projects"
+
+
 def test_skill_gap_states_separate_reported_from_assessed():
     rows = skill_gaps(["digital-literacy", "programming-basics", "python"],
                       [{"skill_key": "programming-basics", "proficiency": "advanced"}, {"skill_key": "python", "proficiency": "unknown"}],

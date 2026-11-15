@@ -15,6 +15,7 @@
 ## Integration update
 
 - Added an authenticated, student-owned Gemini mentor endpoint. It passes the saved career goal, self-reported skills, current roadmap phase completion, progress, and weekly study adjustment to the existing provider abstraction.
+- Added an optional experience summary to the saved profile through migration `0021_feature3_experience_profile`, and an evidence-weighted learning-readiness score with per-skill points and an explicit note that it does not predict employability.
 - Added English, Telugu, and mixed-language mentor controls to the existing Career Roadmap page. Conversation content is not persisted; the answer is generated on request using current saved context.
 - Added backend service/API coverage and a mocked browser acceptance step for post-progress mentor context.
 

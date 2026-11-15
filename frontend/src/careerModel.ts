@@ -19,6 +19,7 @@ export type CareerRoadmap = {
     recommended_weekly_minutes: number; current_week_start: string; current_week_studied_minutes: number;
   };
   version_number: number;
+  readiness: { score: number; basis: string; scored_skills: { skill_key: string; status: string; points: number }[] };
   estimated_weeks: number;
   available_minutes_per_day: number;
   scheduled_weekly_minutes: number;

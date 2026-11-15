@@ -200,6 +200,7 @@ class CareerGoal(Base):
     custom_goal: Mapped[str | None] = mapped_column(String(160))
     education_level: Mapped[str] = mapped_column(String(32), nullable=False)
     field_of_study: Mapped[str | None] = mapped_column(String(120))
+    experience_summary: Mapped[str | None] = mapped_column(Text)
     interests_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     weekly_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
     daily_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=120)

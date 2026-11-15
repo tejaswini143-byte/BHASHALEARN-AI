@@ -16,6 +16,7 @@ const roadmap = (completed = false, lessonCompleted = false) => ({
   available_minutes_per_day: 120, scheduled_weekly_minutes: 60, target_timeframe_weeks: 24, timeframe_feasibility: "within_target",
   skill_gaps: [{ skill_key: "digital-literacy", name: "Digital literacy", status: "recommended_next", self_assessed_proficiency: null, verified: false }],
   progress: { completed_milestones: completed ? 1 : 0, total_milestones: 1, completed_lessons: lessonCompleted ? 1 : 0 },
+  readiness: { score: completed ? 100 : 0, basis: "Evidence-weighted learning plan progress; not job readiness or employability.", scored_skills: [{ skill_key: "digital-literacy", status: completed ? "already_demonstrated" : "recommended_next", points: completed ? 100 : 0 }] },
   study_adjustment: { state: "not_recorded", previous_target_minutes: null, previous_studied_minutes: null, recommended_weekly_minutes: 300, current_week_start: "2026-11-02", current_week_studied_minutes: 0 },
 });
 

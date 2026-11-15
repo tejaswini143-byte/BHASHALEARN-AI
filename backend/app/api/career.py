@@ -23,6 +23,7 @@ class GoalCreate(BaseModel):
     career_key: str = Field(min_length=1, max_length=64)
     education_level: str = Field(min_length=1, max_length=32)
     field_of_study: str | None = Field(default=None, max_length=120)
+    experience_summary: str | None = Field(default=None, max_length=1200)
     interests: list[str] = Field(default_factory=list, max_length=12)
     weekly_minutes: int = Field(ge=30, le=2400)
     daily_minutes: int = Field(default=120, ge=15, le=480)
@@ -50,6 +51,11 @@ class GoalCreate(BaseModel):
     @classmethod
     def clean_field_of_study(cls, value: str | None) -> str | None:
         return value.strip()[:120] or None if value is not None else None
+
+    @field_validator("experience_summary")
+    @classmethod
+    def clean_experience_summary(cls, value: str | None) -> str | None:
+        return value.strip()[:1200] or None if value is not None else None
 
     @field_validator("learning_format")
     @classmethod
@@ -163,6 +169,7 @@ def _goal_json(goal: CareerGoal) -> dict:
             "career_title_te": CAREER_TELUGU.get(goal.career_key, "అభ్యాస లక్ష్యం"),
             "custom_goal": goal.custom_goal,
             "education_level": goal.education_level, "field_of_study": goal.field_of_study,
+            "experience_summary": goal.experience_summary,
             "interests": json.loads(goal.interests_json), "constraints": json.loads(goal.constraints_json or "[]"),
             "weekly_minutes": goal.weekly_minutes, "daily_minutes": goal.daily_minutes,
             "study_days_per_week": goal.study_days_per_week, "learning_format": goal.learning_format,
@@ -248,6 +255,12 @@ def _build(goal: CareerGoal, student_id: str, db: Session) -> dict:
     profile = _profile(student_id, db)
     demonstrated = _demonstrated(student_id, db)
     gaps = skill_gaps(required, profile, demonstrated)
+    proficiency = {item["skill_key"]: item["proficiency"] for item in profile}
+    readiness_points = {"beginner": 35, "intermediate": 50, "advanced": 65}
+    evidence = [{"skill_key": item["skill_key"], "status": item["status"],
+                 "points": 100 if item["status"] == "already_demonstrated" else
+                 readiness_points.get(proficiency.get(item["skill_key"]), 15 if item["status"] == "needs_assessment" else 0)}
+                for item in gaps]
     completions = db.scalars(select(CareerMilestoneCompletion).where(
         CareerMilestoneCompletion.goal_id == goal.id, CareerMilestoneCompletion.student_id == student_id
     )).all()
@@ -288,6 +301,9 @@ def _build(goal: CareerGoal, student_id: str, db: Session) -> dict:
     plan["target_timeframe_weeks"] = goal.timeframe_weeks
     plan["timeframe_feasibility"] = ("within_target" if not goal.timeframe_weeks or plan["estimated_weeks"] <= goal.timeframe_weeks else "target_may_be_too_short")
     plan["skill_gaps"] = gaps
+    plan["readiness"] = {"score": round(sum(item["points"] for item in evidence) / max(1, len(evidence))),
+                         "basis": "Evidence-weighted learning plan progress; not job readiness or employability.",
+                         "scored_skills": evidence}
     plan["progress"] = {"completed_milestones": len(done), "total_milestones": len(plan["phases"]),
                         "completed_lessons": len(completed_lessons)}
     plan["study_adjustment"] = {
@@ -320,7 +336,7 @@ def list_goals(student: Student = Depends(current_student), db: Session = Depend
 def create_goal(payload: GoalCreate, student: Student = Depends(current_student), db: Session = Depends(get_db)):
     db.query(CareerGoal).filter(CareerGoal.student_id == student.id, CareerGoal.active.is_(True)).update({"active": False})
     goal = CareerGoal(student_id=student.id, career_key=payload.career_key, custom_goal=payload.custom_goal, education_level=payload.education_level,
-                      field_of_study=payload.field_of_study,
+                      field_of_study=payload.field_of_study, experience_summary=payload.experience_summary,
                       interests_json=json.dumps(payload.interests, ensure_ascii=False), weekly_minutes=payload.weekly_minutes,
                       daily_minutes=payload.daily_minutes, study_days_per_week=payload.study_days_per_week,
                       learning_format=payload.learning_format, timeframe_weeks=payload.timeframe_weeks,
