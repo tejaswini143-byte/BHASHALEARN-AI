@@ -188,6 +188,54 @@ def test_browser_navigation_rejects_private_address_bar_redirect(monkeypatch):
         windows_automation._navigate_and_verify("https://github.com", cancel_check=lambda: None)
 
 
+@pytest.mark.parametrize("write_verifies", [True, False])
+def test_browser_text_entry_requires_exact_ui_value_and_never_submits(write_verifies, monkeypatch):
+    from scripts.public_urls import socket
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *args, **kwargs: [
+        (2, 1, 6, "", ("93.184.216.34", 443)),
+    ])
+    field_value = SimpleNamespace(CurrentValue="replace me", CurrentIsReadOnly=False)
+    info = SimpleNamespace(element=SimpleNamespace(CurrentIsPassword=False))
+    focused = {"value": False}
+    def set_focus(): focused["value"] = True
+    def has_focus(): return focused["value"]
+    wrapper = SimpleNamespace(iface_value=field_value, is_enabled=lambda: True, element_info=info,
+                               set_focus=set_focus, has_keyboard_focus=has_focus)
+    browser = {"id": "w-42", "app_id": "edge", "handle": 42}
+    snapshot = {"snapshot_id": "fresh", "active_window_id": "w-42", "active_app": "Microsoft Edge",
+                "targets": [{"id": "field", "name": "Search", "kind": "search"}]}
+    monkeypatch.setattr(windows_automation, "get_snapshot", lambda: snapshot)
+    monkeypatch.setattr(windows_automation, "_windows", lambda: [browser])
+    monkeypatch.setattr(windows_automation, "_foreground_handle", lambda: 42)
+    monkeypatch.setattr(windows_automation, "_cached_target", lambda *_: {"kind": "search", "handle": 42, "wrapper": wrapper})
+    monkeypatch.setattr(windows_automation, "_read_browser_address", lambda _: "https://chatgpt.com/")
+    shortcut_calls, pressed = [], []
+    def send_hotkey(*keys):
+        shortcut_calls.append(keys)
+        if keys == ("ctrl", "a"):
+            field_value.CurrentValue = ""
+    monkeypatch.setattr(windows_automation.pyautogui, "hotkey", send_hotkey)
+    monkeypatch.setattr(windows_automation.pyautogui, "press", lambda key: pressed.append(key))
+    def type_char(char):
+        if write_verifies:
+            field_value.CurrentValue = (field_value.CurrentValue if shortcut_calls else "") + char
+    if write_verifies:
+        result = windows_automation.execute_action(
+            {"action": "type_into_visible", "target_name": "Search", "text": "safe query", "text_mode": "replace"},
+            type_text=type_char, cancel_check=lambda: None,
+            sequence_context={"browser_window_id": "w-42", "verified_url": "https://chatgpt.com/"})
+        assert result == {"ok": True, "action": "type_into_visible", "target": "Search",
+                         "typed_characters": 10, "verified": True, "submitted": False}
+        assert shortcut_calls == [("ctrl", "a")]
+        assert pressed == []
+    else:
+        with pytest.raises(RuntimeError, match="exact text entry"):
+            windows_automation.execute_action(
+                {"action": "type_into_visible", "target_name": "Search", "text": "safe query", "text_mode": "replace"},
+                type_text=lambda _: None, cancel_check=lambda: None,
+                sequence_context={"browser_window_id": "w-42", "verified_url": "https://chatgpt.com/"})
+
+
 @pytest.mark.parametrize("outcome", ["move", "edge", "click", "duplicate", "changed", "wrong_window", "obscured",
                                      "renamed_after_move", "resized_after_move", "disabled_after_move", "left_qa_tab"])
 def test_qa_pointer_is_bounded_to_the_approved_window(monkeypatch, outcome):
