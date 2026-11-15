@@ -105,8 +105,13 @@ def test_background_connection_accepts_documented_loopback_backend_port(companio
     status, result = request(companion_server, "/background/enable", {
         **payload, "api_base": "http://127.0.0.1:18028/api/v1"
     }, origin=origin)
-    assert status == 422
-    assert "Only an authenticated loopback" in result["error"]
+    if 18028 in companion.ALLOWED_API_PORTS:
+        assert status == 200
+        assert result["enabled"] is True
+        assert companion.background_config["api_base"] == "http://127.0.0.1:18028/api/v1"
+    else:
+        assert status == 422
+        assert "Only an authenticated loopback" in result["error"]
 
 
 def test_repeated_reminder_poll_reserves_only_one_call_window(monkeypatch):

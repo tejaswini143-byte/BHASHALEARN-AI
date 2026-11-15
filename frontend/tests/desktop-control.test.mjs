@@ -4,6 +4,17 @@ import { test } from "node:test";
 
 const read = path => readFile(new URL(path, import.meta.url), "utf8");
 
+test("Calculator and other native desktop actions bypass the browser-only executor", async () => {
+  const panel = await read("../src/DesktopControlPanel.tsx");
+  assert.match(panel, /function canExecuteInBrowser\(step: Action\): boolean/);
+  assert.match(panel, /return !\["open_app", "calculate"/);
+  assert.match(panel, /step\.action === "sequence"[\s\S]*?step\.steps!\.every\(canExecuteInBrowser\)/);
+  assert.match(panel, /"open_approved_site"[\s\S]*?"enter"\]\s*\.includes\(step\.action\)/);
+  assert.match(panel, /currentContext && canExecuteInBrowser\(approvedAction\)[\s\S]*?executeStep\(approvedAction, executionEpoch\)/);
+  assert.match(panel, /companion\("\/desktop\/confirm", executionPayload\)/);
+  assert.match(panel, /step\.action === "calculate"/);
+});
+
 test("desktop commands use the approved QA page and semantic targets only", async () => {
   const helper = await read("../src/desktopDomTargets.ts");
   const panel = await read("../src/DesktopControlPanel.tsx");

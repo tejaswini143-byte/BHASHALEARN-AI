@@ -390,7 +390,16 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
 
   function requiresBoundTargets(step: Action): boolean {
     if (step.action === "sequence") return (step.steps || []).some(requiresBoundTargets);
-    return !["open_app", "open_website", "search_web", "search_youtube", "open_approved_site", "navigate_back", "navigate_forward", "stop", "clarify", "click_visible", "focus_visible", "type_into_visible"].includes(step.action);
+    return !["open_app", "calculate", "open_website", "search_web", "search_youtube", "open_approved_site", "navigate_back", "navigate_forward", "stop", "clarify", "click_visible", "focus_visible", "type_into_visible"].includes(step.action);
+  }
+
+  function canExecuteInBrowser(step: Action): boolean {
+    if (step.action === "sequence") return Boolean(step.steps?.length)
+      && step.steps!.every(canExecuteInBrowser);
+    return ["clarify", "stop", "open_approved_site", "navigate_back", "navigate_forward",
+      "scroll_up", "scroll_down", "click_target", "focus_target", "type_into", "search",
+      "center", "left", "right", "up", "down", "click", "double_click", "type", "enter"]
+      .includes(step.action);
   }
 
   function addWindowContext(step: Action, snapshot: DesktopSnapshot): Action {
@@ -537,7 +546,8 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
       let summary: string;
       const localPlan = planLocalCommand(normalized, Boolean(currentContext));
       const fillsDemoForm = approvedAction.action === "fill_qa_demo_form";
-      if (currentContext && !localPlan && !pointerCommand(normalized) && approvedAction.action !== "type_qa_text" && !fillsDemoForm) {
+      if (currentContext && canExecuteInBrowser(approvedAction) && !localPlan
+        && !pointerCommand(normalized) && approvedAction.action !== "type_qa_text" && !fillsDemoForm) {
         summary = await executeStep(approvedAction, executionEpoch);
       } else {
         let executionPayload: { confirmed_close: boolean; action: Action } & Partial<{
