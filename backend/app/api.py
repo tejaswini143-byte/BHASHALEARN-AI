@@ -159,6 +159,8 @@ def preferences(body: PreferencesIn, sid: uuid.UUID = Depends(student_id), db: S
     if not body.consent:
         row.call_enabled = False
         row.opted_out_at = datetime.now(timezone.utc)
+    else:
+        row.opted_out_at = None
     db.commit()
     return {"timezone": row.timezone, "language": row.language, "voice_enabled": row.voice_enabled,
             "call_enabled": row.call_enabled, "consent": row.call_consent_at is not None}
