@@ -2,23 +2,25 @@ import { Component, Suspense, useCallback, useEffect, useMemo, useRef, useState,
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls, Stars } from "@react-three/drei";
 import * as THREE from "three";
-import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { AnimationMixer, type AnimationClip, type Group, type Object3D } from "three";
+import type { VRM } from "@pixiv/three-vrm";
 import { Link } from "react-router-dom";
 import { SessionModeNav } from "./SessionModeNav";
 import { settledTeacherState, teacherLessonSummary, validateTeacherAction, type BoardTarget, type Expression, type TeacherAction, type TeacherLessonContext, type TeacherMode, type TeacherState } from "./teacherCore";
 import { immersiveVoiceBridge, type ImmersiveVoiceState } from "./immersiveVoiceBridge";
 import { getSharedSessionContext, type SharedSessionContext } from "./sessionContext";
 import { disposeTeacherPhoto, loadTeacherPhoto, type TeacherPhotoAsset } from "./teacherPhoto";
+import { loadBundledAvatar, loadLocalAvatar } from "./avatarAsset";
 import { speechMorphWeight, type TeacherViseme } from "./teacherMouth";
 import "./teacher-preview.css";
+import "./teacher-preview-mobile.css";
 
 const states: TeacherState[] = ["idle", "walk", "turn", "explain", "point", "listen", "celebrate"];
 const expressions: Expression[] = ["neutral", "happy", "curious", "encouraging", "thinking"];
 
 type TeacherProps = { state: TeacherState; expression: Expression; target: BoardTarget | null; walkTarget: [number, number]; lookTarget: [number, number, number]; viseme: string; reduced: boolean; model: LoadedModel | null; photo: TeacherPhotoAsset | null; mode: TeacherMode; voiceState: ImmersiveVoiceState };
-export type LoadedModel = { scene: Group; clips: AnimationClip[] };
-type LoadedTeacherProps = Omit<TeacherProps, "target" | "model" | "photo" | "mode" | "voiceState"> & { model: LoadedModel };
+export type LoadedModel = { scene: Group; clips: AnimationClip[]; vrm?: VRM };
+type LoadedTeacherProps = Omit<TeacherProps, "target" | "model" | "photo" | "mode"> & { model: LoadedModel };
 
 class SceneErrorBoundary extends Component<{ children: ReactNode; onError: () => void }, { failed: boolean }> {
   state = { failed: false };
@@ -47,7 +49,7 @@ function Room({ mode }: { mode: TeacherMode }) {
   </>;
 }
 
-function LoadedTeacher({ model, state, expression, viseme, walkTarget, lookTarget, reduced }: LoadedTeacherProps) {
+function LoadedTeacher({ model, state, expression, viseme, walkTarget, lookTarget, reduced, voiceState }: LoadedTeacherProps) {
   const outer = useRef<THREE.Group>(null);
   const mixer = useMemo(() => new AnimationMixer(model.scene), [model]);
   const { invalidate } = useThree();
@@ -59,17 +61,24 @@ function LoadedTeacher({ model, state, expression, viseme, walkTarget, lookTarge
     return { scale, position: [-center.x * scale, -bounds.min.y * scale, -center.z * scale] as [number, number, number] };
   }, [model]);
   const humanoidBones = useMemo(() => {
-    const found: Record<string, THREE.Bone> = {};
+    const found: Record<string, Object3D | undefined> = {};
+    if (model.vrm) {
+      const humanoid = model.vrm.humanoid;
+      found.leftArm = humanoid.getNormalizedBoneNode("leftUpperArm") ?? undefined;
+      found.rightArm = humanoid.getNormalizedBoneNode("rightUpperArm") ?? undefined;
+      found.leftLeg = humanoid.getNormalizedBoneNode("leftUpperLeg") ?? undefined;
+      found.rightLeg = humanoid.getNormalizedBoneNode("rightUpperLeg") ?? undefined;
+      found.head = humanoid.getNormalizedBoneNode("head") ?? undefined;
+    }
     model.scene.traverse(node => {
       const bone = node as THREE.Bone;
       if (!bone.isBone) return;
       const name = bone.name.toLowerCase().replace(/[^a-z]/g, "");
-      if (/^(hips|pelvis)$/.test(name)) found.hips = bone;
-      if (/^(head|headjoint)$/.test(name)) found.head = bone;
-      if (/^(leftupperarm|upperarml|lupperarm|leftarm)$/.test(name)) found.leftArm = bone;
-      if (/^(rightupperarm|upperarmr|rupperarm|rightarm)$/.test(name)) found.rightArm = bone;
-      if (/^(leftupperleg|upperlegl|lupperleg|leftthigh)$/.test(name)) found.leftLeg = bone;
-      if (/^(rightupperleg|upperlegr|rupperleg|rightthigh)$/.test(name)) found.rightLeg = bone;
+      if (!found.head && /^(head|headjoint)$/.test(name)) found.head = bone;
+      if (!found.leftArm && /^(leftupperarm|upperarml|lupperarm|leftarm)$/.test(name)) found.leftArm = bone;
+      if (!found.rightArm && /^(rightupperarm|upperarmr|rupperarm|rightarm)$/.test(name)) found.rightArm = bone;
+      if (!found.leftLeg && /^(leftupperleg|upperlegl|lupperleg|leftthigh)$/.test(name)) found.leftLeg = bone;
+      if (!found.rightLeg && /^(rightupperleg|upperlegr|rupperleg|rightthigh)$/.test(name)) found.rightLeg = bone;
     });
     return found;
   }, [model]);
@@ -80,6 +89,7 @@ function LoadedTeacher({ model, state, expression, viseme, walkTarget, lookTarge
     return () => { mixer.stopAllAction(); mixer.uncacheRoot(model.scene); };
   }, [mixer, model, state]);
   useEffect(() => {
+    if (model.vrm) return;
     model.scene.traverse((node: Object3D) => {
       const mesh = node as THREE.Mesh;
       const dict = mesh.morphTargetDictionary;
@@ -97,13 +107,33 @@ function LoadedTeacher({ model, state, expression, viseme, walkTarget, lookTarge
     invalidate();
   }, [expression, invalidate, model, viseme]);
   const lastSyncViseme = useRef("");
+  const elapsed = useRef(0);
+  const nextBlink = useRef(2 + Math.random() * 2.5);
   useFrame((_, delta) => {
     const clip = model.clips.find(item => item.name.toLowerCase().includes(state));
     mixer.update(reduced ? 0 : delta);
+    elapsed.current += Math.min(delta, 0.08);
+    if (model.vrm) {
+      const vrm = model.vrm;
+      const t = elapsed.current;
+      const blinkPhase = t - nextBlink.current;
+      const blink = blinkPhase >= 0 && blinkPhase < 0.18 ? (blinkPhase < 0.08 ? blinkPhase / 0.08 : 1 - (blinkPhase - 0.08) / 0.1) : 0;
+      if (blinkPhase >= 0.18) nextBlink.current = t + 2.2 + Math.random() * 3.2;
+      vrm.expressionManager?.setValue("blink", blink);
+      const mood = expression === "happy" || expression === "encouraging" ? "happy" : expression === "curious" ? "surprised" : expression === "thinking" ? "relaxed" : null;
+      for (const name of ["happy", "surprised", "relaxed"]) vrm.expressionManager?.setValue(name, name === mood ? 0.38 : 0);
+      const mouth = voiceState === "speaking" ? viseme : "sil";
+      const visemeWeights: Record<string, [string, number] | null> = {
+        aa: ["aa", 0.8], ee: ["ee", 0.76], oh: ["oh", 0.76], fv: ["ih", 0.44], th: ["ih", 0.5], mm: null, sil: null,
+      };
+      const cue = visemeWeights[mouth] ?? null;
+      for (const name of ["aa", "ih", "ou", "ee", "oh"]) vrm.expressionManager?.setValue(name, cue?.[0] === name ? cue[1] : 0);
+      vrm.update(reduced ? 0 : delta);
+    }
     const syncedViseme = viseme;
     if (syncedViseme !== lastSyncViseme.current) {
       lastSyncViseme.current = syncedViseme;
-      model.scene.traverse((node: Object3D) => {
+      if (!model.vrm) model.scene.traverse((node: Object3D) => {
         const mesh = node as THREE.Mesh;
         const dict = mesh.morphTargetDictionary;
         const influences = mesh.morphTargetInfluences;
@@ -127,13 +157,17 @@ function LoadedTeacher({ model, state, expression, viseme, walkTarget, lookTarge
     const walking = state === "walk" ? Math.sin(time * 6) * 0.48 : 0;
     if (humanoidBones.leftLeg) humanoidBones.leftLeg.rotation.x = walking;
     if (humanoidBones.rightLeg) humanoidBones.rightLeg.rotation.x = -walking;
-    if (humanoidBones.leftArm) humanoidBones.leftArm.rotation.x = -walking * 0.55;
+    if (humanoidBones.leftArm) humanoidBones.leftArm.rotation.x = -walking * 0.55 + (state === "explain" || state === "listen" ? Math.sin(time * 1.4) * 0.05 : 0);
     if (humanoidBones.rightArm) {
       const goal = state === "point" || state === "explain" || state === "celebrate" ? -0.85 : -walking * 0.55;
       humanoidBones.rightArm.rotation.x = THREE.MathUtils.damp(humanoidBones.rightArm.rotation.x, goal, 5, delta);
-      humanoidBones.rightArm.rotation.z = THREE.MathUtils.damp(humanoidBones.rightArm.rotation.z, state === "celebrate" ? -0.85 : 0, 5, delta);
+      const shoulder = model.vrm ? state === "celebrate" ? 0.95 : state === "explain" || state === "point" ? 0.42 : 0.9 : state === "celebrate" ? -0.85 : 0;
+      humanoidBones.rightArm.rotation.z = THREE.MathUtils.damp(humanoidBones.rightArm.rotation.z, shoulder, 5, delta);
     }
-    if (humanoidBones.leftArm) humanoidBones.leftArm.rotation.z = THREE.MathUtils.damp(humanoidBones.leftArm.rotation.z, state === "celebrate" ? 0.85 : 0, 5, delta);
+    if (humanoidBones.leftArm) {
+      const shoulder = model.vrm ? state === "celebrate" ? -0.95 : state === "explain" ? -0.42 + Math.sin(time * 1.8) * 0.05 : -0.9 : state === "celebrate" ? 0.85 : 0;
+      humanoidBones.leftArm.rotation.z = THREE.MathUtils.damp(humanoidBones.leftArm.rotation.z, shoulder, 5, delta);
+    }
     if (humanoidBones.head) humanoidBones.head.rotation.z = THREE.MathUtils.damp(humanoidBones.head.rotation.z, expression === "curious" ? -0.1 : 0, 3, delta);
     outer.current.position.x = THREE.MathUtils.damp(outer.current.position.x, walkTarget[0], state === "walk" ? 1.5 : 2.5, delta);
     outer.current.position.z = THREE.MathUtils.damp(outer.current.position.z, walkTarget[1], state === "walk" ? 1.5 : 2.5, delta);
@@ -162,7 +196,7 @@ function Teacher(props: TeacherProps) {
   const expression = voiceState === "thinking" ? "thinking" : props.expression;
   // Render only a supplied rigged character. A flat photo or geometric
   // prototype is not presented as a realistic human teacher.
-  return props.model ? <LoadedTeacher state={voiceTeacherState} expression={expression} viseme={viseme} walkTarget={props.walkTarget} lookTarget={props.lookTarget} reduced={props.reduced} model={props.model} /> : null;
+  return props.model ? <LoadedTeacher state={voiceTeacherState} expression={expression} viseme={viseme} walkTarget={props.walkTarget} lookTarget={props.lookTarget} reduced={props.reduced} model={props.model} voiceState={voiceState} /> : null;
 }
 
 // Shared by the immersive scene; it reuses the prototype rendering contract
@@ -205,6 +239,17 @@ export function TeacherPreview({ sessionId }: { sessionId?: string } = {}) {
   useEffect(() => () => { if (transitionTimer.current !== undefined) window.clearTimeout(transitionTimer.current); }, []);
   useEffect(() => () => { if (model) disposeLoadedModel(model); }, [model]);
   useEffect(() => () => { if (photoAsset) disposeTeacherPhoto(photoAsset); }, [photoAsset]);
+  useEffect(() => {
+    let active = true;
+    setModelStatus("Loading the licensed classroom teacher…");
+    loadBundledAvatar().then(loaded => {
+      if (active) { setModel(loaded); setModelStatus("AvatarSample_B · Pixiv sample VRM · animated locally"); }
+      else disposeLoadedModel(loaded);
+    }).catch(cause => {
+      if (active) setModelStatus(cause instanceof Error ? `${cause.message} Upload a licensed .glb or .vrm.` : "Teacher avatar unavailable. Upload a licensed .glb or .vrm.");
+      });
+    return () => { active = false; };
+  }, []);
   useEffect(() => {
     let active = true;
     setLessonContext(null);
@@ -251,22 +296,13 @@ export function TeacherPreview({ sessionId }: { sessionId?: string } = {}) {
   const removePhoto = () => { setPhotoAsset(null); setPhotoError(""); };
   const loadLocalModel = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]; if (!file) return;
-    if (!file.name.toLowerCase().endsWith(".glb")) { setModelStatus("Choose a single-file .glb model."); return; }
+    if (!/\.(glb|vrm)$/i.test(file.name)) { setModelStatus("Choose a single-file .glb or .vrm model."); return; }
     setModelStatus("Loading local model…");
     try {
-      const bytes = await file.arrayBuffer();
-      const gltf = await new Promise<LoadedModel>((resolve, reject) => new GLTFLoader().parse(bytes, "", result => resolve({ scene: result.scene, clips: result.animations }), reject));
-      const names: string[] = [];
-      gltf.scene.traverse(node => { if ((node as THREE.SkinnedMesh).isSkinnedMesh) names.push("skinned mesh"); });
-      if (!names.length) {
-        disposeLoadedModel(gltf);
-        setModelStatus("This GLB has no rigged/skinned character. Choose a licensed rigged human avatar.");
-        event.target.value = "";
-        return;
-      }
+      const gltf = await loadLocalAvatar(file);
       setModel(gltf);
-      setModelStatus(`${file.name} · skinned character · ${gltf.clips.length} animation clips`);
-    } catch { setModelStatus("Could not read that GLB. The human avatar remains unavailable."); }
+      setModelStatus(`${file.name} · skinned character · ${gltf.vrm ? "VRM facial expressions" : `${gltf.clips.length} animation clips`}`);
+    } catch (cause) { setModelStatus(cause instanceof Error ? cause.message : "Could not read that avatar file."); }
     event.target.value = "";
   };
   const lesson = teacherLessonSummary(lessonContext as TeacherLessonContext | null);
@@ -283,8 +319,8 @@ export function TeacherPreview({ sessionId }: { sessionId?: string } = {}) {
       <section className="tp-stage-shell tp-stage-realistic" ref={stageRef} aria-label="Interactive classroom">
         {!sceneError ? <SceneErrorBoundary onError={() => setSceneError(true)}><Canvas shadows dpr={[1, 1.5]} camera={{ position: [0.4, 3, 8.4], fov: 42 }} gl={{ antialias: true, alpha: false, powerPreference: "low-power" }} frameloop={reduced ? "demand" : "always"} aria-label="Three dimensional classroom scene"><CameraRig cinematic={cinematic}/><Room mode={mode}/><Suspense fallback={null}><Teacher state={state} expression={expression} target={target} walkTarget={walkTarget} lookTarget={lookTarget} viseme="sil" reduced={reduced} model={model} photo={photoAsset} mode={mode} voiceState="idle"/></Suspense><OrbitControls makeDefault target={[0, 1.5, -2]} minDistance={5.5} maxDistance={13} minPolarAngle={0.45} maxPolarAngle={1.48} enablePan={false} /></Canvas></SceneErrorBoundary> : <div className="tp-webgl-fallback" role="alert"><strong>WebGL preview unavailable</strong><span>Enable WebGL in your browser or try a recent desktop browser.</span></div>}
         <div className="tp-stage-board" aria-label="Live smartboard content"><span>LIVE LESSON BOARD · {lessonContext?.preferred_language || "SESSION"}</span><h2>{lesson.title}</h2>{boardQuestion && <small>Student: {boardQuestion.content}</small>}{boardReply ? <article>{boardReply.content}</article> : <p>Ask a question in the live tutor to write its explanation here.</p>}</div>
-        {!model && <div className="tp-avatar-unavailable" role="status"><strong>Realistic teacher asset not configured</strong><span>Upload a licensed, rigged full-body GLB to preview an animated character. Your selected photo remains a private reference preview only.</span></div>}
-        <div className="tp-stage-label"><i/> CLASSROOM · {model ? "LOCAL RIGGED GLB" : "NO HUMAN AVATAR"}</div>
+        {!model && <div className="tp-avatar-unavailable" role="status"><strong>Teacher avatar loading</strong><span>{modelStatus}. The classroom teacher loads from the included Pixiv AvatarSample_B VRM. Your selected photo remains a private reference preview only.</span></div>}
+        <div className="tp-stage-label"><i/> CLASSROOM · {model ? model.vrm ? "VRM TEACHER" : "LOCAL RIGGED AVATAR" : "LOADING AVATAR"}</div>
         <div className="tp-stage-actions"><button onClick={() => setCinematic(value => !value)} aria-pressed={cinematic}>Camera: {cinematic ? "Cinematic" : "Wide"}</button><button onClick={() => void fullscreenToggle()}>{fullscreen ? "Exit fullscreen" : "Fullscreen"}</button></div>
         <div className="tp-stage-caption" aria-live="polite">{model ? `${expression} · ${state}` : "AI tutoring and lesson board are available below."}</div>
       </section>
@@ -311,7 +347,7 @@ export function TeacherPreview({ sessionId }: { sessionId?: string } = {}) {
           {photoError && <p className="tp-photo-error" role="alert">{photoError}</p>}
           <small>Photo stays in this browser and is never sent to Gemini or Gnani. It is shown only in the preview below; one photo cannot create a realistic rigged 3D teacher.</small>
         </section>
-        <div className="tp-control-block tp-upload"><span className="tp-label">LOCAL AVATAR ASSET</span><label className="tp-upload-button">Choose GLB<input type="file" accept=".glb,model/gltf-binary" onChange={loadLocalModel}/></label><small>{modelStatus}</small><small>Use an asset you have rights to use. Nothing is downloaded remotely.</small></div>
+        <div className="tp-control-block tp-upload"><span className="tp-label">LOCAL AVATAR ASSET</span><label className="tp-upload-button">Choose GLB or VRM<input type="file" accept=".glb,.vrm,model/gltf-binary,application/octet-stream" onChange={loadLocalModel}/></label><small>{modelStatus}</small><small>Use an asset you have rights to use. The bundled sample’s terms are in frontend/public/avatars/THIRD_PARTY_NOTICES.md.</small></div>
         <label className="tp-motion-toggle"><input type="checkbox" checked={reduced} onChange={event => setReduced(event.target.checked)}/> Reduce motion</label>
       </aside>
     </section>

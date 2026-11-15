@@ -11,11 +11,12 @@ require.extensions[".ts"] = (module, filename) => module._compile(ts.transpileMo
 const sourceDir = resolve(dirname(fileURLToPath(import.meta.url)), "../src");
 const { validateAvatarFile, MAX_AVATAR_BYTES, hasRiggedCharacter } = require(resolve(sourceDir, "avatarAsset.ts"));
 
-test("local avatar import rejects empty, oversized and non-GLB files", () => {
+test("local avatar import accepts GLB and VRM, and rejects invalid or oversized files", () => {
   assert.throws(() => validateAvatarFile({ name: "avatar.png", size: 200 }), /glb/);
   assert.throws(() => validateAvatarFile({ name: "teacher.glb", size: 0 }), /empty/);
   assert.throws(() => validateAvatarFile({ name: "teacher.glb", size: MAX_AVATAR_BYTES + 1 }), /25 MB/);
   assert.doesNotThrow(() => validateAvatarFile({ name: "teacher.GLB", size: 1024 }));
+  assert.doesNotThrow(() => validateAvatarFile({ name: "teacher.vrm", size: 1024 }));
 });
 
 test("only skinned character models qualify as rigged teacher avatars", () => {
@@ -25,7 +26,9 @@ test("only skinned character models qualify as rigged teacher avatars", () => {
 
 test("immersive classroom has accessible avatar import, error and removal controls", async () => {
   const [scene, preview, css] = await Promise.all(["ImmersiveClassroom.tsx", "TeacherPreview.tsx", "immersive-classroom.css"].map(name => readFile(resolve(sourceDir, name), "utf8")));
-  assert.match(scene, /Upload rigged GLB teacher/);
+  assert.match(scene, /Upload rigged GLB or VRM teacher/);
+  assert.match(scene, /loadBundledAvatar\(\)/);
+  assert.match(preview, /loadBundledAvatar\(\)/);
   assert.match(scene, /role="alert"/);
   assert.match(scene, /Remove teacher/);
   assert.match(scene, /model=\{avatar\}/);

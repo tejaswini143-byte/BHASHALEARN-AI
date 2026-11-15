@@ -4,7 +4,7 @@ import { OrbitControls, Stars } from "@react-three/drei";
 import { Link, useNavigate } from "react-router-dom";
 import { ApiError, clearToken, getCurrentStudent, getToken, type Student } from "./auth";
 import { ImmersiveTeacher, type LoadedModel } from "./TeacherPreview";
-import { disposeAvatar, loadLocalAvatar } from "./avatarAsset";
+import { disposeAvatar, loadBundledAvatar, loadLocalAvatar } from "./avatarAsset";
 import { VoiceTutor } from "./VoiceTutor";
 import { immersiveVoiceBridge } from "./immersiveVoiceBridge";
 import { playbackReducer, sampleLessons } from "./lessonEngine";
@@ -94,6 +94,17 @@ function ImmersiveExperience({ student, offlineDemo }: { student: Student; offli
     media.addEventListener("change", update); return () => media.removeEventListener("change", update);
   }, []);
   useEffect(() => {
+    let active = true;
+    setAvatarBusy(true);
+    loadBundledAvatar().then(model => {
+      if (active) setAvatar(model);
+      else disposeAvatar(model);
+    }).catch(cause => {
+      if (active) setAvatarError(cause instanceof Error ? cause.message : "Bundled teacher avatar could not load.");
+    }).finally(() => { if (active) setAvatarBusy(false); });
+    return () => { active = false; };
+  }, []);
+  useEffect(() => {
     if (!playback.playing) return;
     const id = window.setInterval(() => setPlayback(current => playbackReducer(current, "tick", lesson.steps.length)), 2400);
     return () => window.clearInterval(id);
@@ -137,7 +148,7 @@ function ImmersiveExperience({ student, offlineDemo }: { student: Student; offli
     </Canvas></SceneBoundary></div>
     <header className="ic-topbar"><Link to="/dashboard" className="ic-brand" aria-label="BHASHALEARN AI dashboard"><span>✦</span> BHASHA<span className="ic-brand-accent">LEARN</span><small> AI</small></Link><div className="ic-student"><i aria-hidden="true"/>{student.display_name || "Student"}{offlineDemo && <span className="ic-offline-status">LOCAL DEMO - BACKEND UNAVAILABLE</span>}<span>·</span><span>IMMERSIVE CLASS</span></div><Link to="/dashboard" className="ic-exit">Exit classroom <span aria-hidden="true">↗</span></Link></header>
     <div className="ic-scene-label"><i aria-hidden="true"/> LIVE 3D LEARNING SPACE</div>
-    <div className="ic-avatar-notice" role="status"><label>3D teacher avatar <input type="file" accept=".glb,model/gltf-binary" aria-label="Upload rigged GLB teacher" disabled={avatarBusy} onChange={event => void onAvatarFile(event)}/></label><span>{avatarBusy ? "Loading local avatar…" : avatar ? "Rigged teacher loaded locally" : "3D teacher avatar not loaded. Lesson board and voice controls remain available; a licensed rigged character is required for teacher animation."}</span>{avatarError && <span role="alert">{avatarError}</span>}{avatar && <button type="button" onClick={() => setAvatar(null)}>Remove teacher</button>}</div>
+    <div className="ic-avatar-notice" role="status"><label>3D teacher avatar <input type="file" accept=".glb,.vrm,model/gltf-binary,application/octet-stream" aria-label="Upload rigged GLB or VRM teacher" disabled={avatarBusy} onChange={event => void onAvatarFile(event)}/></label><span>{avatarBusy ? "Loading licensed teacher avatar…" : avatar ? avatar.vrm ? "AvatarSample_B · Pixiv sample VRM · teacher animated locally" : "Rigged teacher loaded locally" : "3D teacher avatar unavailable; lesson board and voice controls remain available."}</span>{avatarError && <span role="alert">{avatarError}</span>}{avatar && <button type="button" onClick={() => setAvatar(null)}>Remove teacher</button>}</div>
     <aside className="ic-board" aria-label="Interactive lesson board" aria-live="polite">
       <span className="ic-board-kicker">LESSON BOARD · {lesson.subject}</span>
       <h2>{activeStep?.title || lesson.title}</h2>
