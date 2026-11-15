@@ -2,7 +2,7 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint, Integer, Float, Index, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint, Integer, Float, Index, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON, TypeDecorator
 from pgvector.sqlalchemy import Vector
@@ -318,6 +318,23 @@ class SessionVisualState(Base):
     visual_key: Mapped[str] = mapped_column(String(80), nullable=False)
     start_node: Mapped[str | None] = mapped_column(String(1))
     end_node: Mapped[str | None] = mapped_column(String(1))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+
+class VisualLessonSessionState(Base):
+    """Student-owned visual lesson snapshot and resumable interaction state."""
+    __tablename__ = "visual_lesson_session_states"
+
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("learning_sessions.id", ondelete="CASCADE"), primary_key=True
+    )
+    lesson_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    lesson_json: Mapped[str] = mapped_column(Text, nullable=False)
+    current_step: Mapped[int] = mapped_column(Integer, default=-1, nullable=False)
+    paused: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    completed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    interactions_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
+    quiz_responses_json: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
 

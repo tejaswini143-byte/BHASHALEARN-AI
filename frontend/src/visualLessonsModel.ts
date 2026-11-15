@@ -8,7 +8,10 @@ export type VisualLesson = {
   description: BilingualText;
   objectives: BilingualText[];
   takeaways: BilingualText[];
-  steps: { title: BilingualText; explanation: BilingualText }[];
+  steps: { title: BilingualText; explanation: BilingualText; scene_id?: VisualLessonId }[];
+  questions?: { prompt: BilingualText; answer: BilingualText; explanation: BilingualText }[];
+  activities?: { instruction: BilingualText; control: "select-planet" | "rotate-shape" | "adjust-length" | "adjust-gravity" | "change-time" }[];
+  completion_criteria?: BilingualText[];
 };
 
 export const visualLessons: VisualLesson[] = [

@@ -1,11 +1,14 @@
 import { Component, Suspense, useCallback, useEffect, useMemo, useReducer, useRef, useState, type ErrorInfo, type ReactNode } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
+import { Html, OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
-import { Link, useNavigate } from "react-router-dom";
-import { ApiError, clearToken, getCurrentStudent, getToken, type Student } from "./auth";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { ApiError, clearToken, getCurrentStudent, getToken, request, type Student } from "./auth";
 import { initialVisualControls, pendulumPeriod, planetPosition, shapeMeasurements, solarPlanets, visualControlsReducer, visualLessons, type ShapeKind, type SolarPlanet, type VisualLessonId } from "./visualLessonsModel";
-import { fetchVisualLessonCatalog, visualLessonApiError } from "./visualLessonsApi";
+import { fetchVisualLessonCatalog, generateVisualLesson, visualLessonApiError } from "./visualLessonsApi";
+import { createVisualLessonEnvelope, validateGeneratedVisualLessonEnvelope, validateVisualLessonEnvelope, type GeneratedVisualLessonEnvelope } from "./visualLessonContract";
 import type { VisualLesson } from "./visualLessonsModel";
+import { VisualFlowBoard } from "./VisualFlowBoard";
 import "./visual-lessons.css";
 
 class SimulationBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
@@ -19,7 +22,7 @@ function SimulationFallback() {
   return <section className="vl-fallback" role="alert"><span aria-hidden="true">◇</span><div><h3>3D simulation unavailable</h3><p>This device or browser cannot start the 3D view. Use the lesson text and controls below, or try a browser with WebGL enabled.</p></div></section>;
 }
 
-function OrbitingPlanet({ planet, timeScale, selected, onSelect }: { planet: SolarPlanet; timeScale: number; selected: boolean; onSelect: () => void }) {
+function OrbitingPlanet({ planet, timeScale, selected, language, onSelect }: { planet: SolarPlanet; timeScale: number; selected: boolean; language: "en" | "te"; onSelect: () => void }) {
   const group = useRef<THREE.Group>(null);
   useFrame(({ clock }) => {
     if (!group.current) return;
@@ -29,16 +32,17 @@ function OrbitingPlanet({ planet, timeScale, selected, onSelect }: { planet: Sol
   return <group ref={group} onClick={onSelect}>
     <mesh><sphereGeometry args={[selected ? 0.18 : 0.13, 24, 18]}/><meshStandardMaterial color={planet.color} emissive={planet.color} emissiveIntensity={selected ? 0.35 : 0.08}/></mesh>
     {selected && <mesh><sphereGeometry args={[0.25, 24, 18]}/><meshBasicMaterial color="#74e9ff" wireframe transparent opacity={0.42}/></mesh>}
+    {selected && <Html position={[0, 0.35, 0]} center distanceFactor={8} style={{ pointerEvents: "none" }}><span className="vl-planet-label">{planet.name[language]}</span></Html>}
   </group>;
 }
 
-function SolarSystemScene({ selected, timeScale, onSelect, reduced }: { selected: string; timeScale: number; onSelect: (id: string) => void; reduced: boolean }) {
+function SolarSystemScene({ selected, timeScale, language, onSelect, reduced }: { selected: string; timeScale: number; language: "en" | "te"; onSelect: (id: string) => void; reduced: boolean }) {
   return <>
     <color attach="background" args={["#081126"]}/><ambientLight intensity={0.55}/><pointLight position={[0, 1, 0]} intensity={28} distance={12} color="#ffc76d"/>
     <mesh><sphereGeometry args={[0.43, 32, 24]}/><meshStandardMaterial color="#ffbf5e" emissive="#ff8f32" emissiveIntensity={2.1}/></mesh>
     {solarPlanets.map(planet => <group key={planet.id} rotation={[0, 0, 0]}>
       <mesh rotation={[-Math.PI / 2, 0, 0]}><ringGeometry args={[planet.orbit - 0.004, planet.orbit + 0.004, 96]}/><meshBasicMaterial color={selected === planet.id ? "#9b83ff" : "#43628e"} transparent opacity={0.55}/></mesh>
-      <OrbitingPlanet planet={planet} timeScale={reduced ? 0 : timeScale} selected={selected === planet.id} onSelect={() => onSelect(planet.id)}/>
+      <OrbitingPlanet planet={planet} timeScale={reduced ? 0 : timeScale} selected={selected === planet.id} language={language} onSelect={() => onSelect(planet.id)}/>
     </group>)}
   </>;
 }
@@ -100,9 +104,21 @@ function AuthGate({ children }: { children: (student: Student) => ReactNode }) {
 }
 
 function LessonWorkspace({ student }: { student: Student }) {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedSession = searchParams.get("session");
   const [controls, dispatch] = useReducer(visualControlsReducer, initialVisualControls);
   const [catalog, setCatalog] = useState<VisualLesson[]>(visualLessons);
   const [catalogStatus, setCatalogStatus] = useState("Loading authenticated lesson catalog…");
+  const [sessionId, setSessionId] = useState("");
+  const [sessionReady, setSessionReady] = useState(false);
+  const [sessionStatus, setSessionStatus] = useState("Connecting to your learning session…");
+  const [generatedEnvelopes, setGeneratedEnvelopes] = useState<Partial<Record<VisualLessonId, GeneratedVisualLessonEnvelope>>>({});
+  const [quizResponses, setQuizResponses] = useState<string[]>([]);
+  const [quizDraft, setQuizDraft] = useState("");
+  const [quizRevealed, setQuizRevealed] = useState(false);
+  const [generationTopic, setGenerationTopic] = useState("");
+  const [generating, setGenerating] = useState(false);
+  const [generationMessage, setGenerationMessage] = useState("");
   useEffect(() => {
     const token = getToken();
     if (!token) return;
@@ -112,11 +128,85 @@ function LessonWorkspace({ student }: { student: Student }) {
       .catch(error => { if (!controller.signal.aborted) setCatalogStatus(visualLessonApiError(error)); });
     return () => controller.abort();
   }, []);
+  useEffect(() => {
+    let active = true;
+    const token = getToken();
+    if (!token) return;
+    const headers = { Authorization: `Bearer ${token}` };
+    (async () => {
+      try {
+        const sessions = await request<{ id: string; topic: string }[]>("/sessions?limit=100", { headers });
+        let selected = requestedSession ? sessions.find(item => item.id === requestedSession) : sessions[0];
+        if (requestedSession && !selected) setSessionStatus("The requested learning session was unavailable; using your latest session.");
+        if (!selected && !requestedSession) {
+          selected = await request<{ id: string; topic: string }>("/sessions", { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ topic: "Interactive visual lessons", language: "english" }) });
+        }
+        if (!active || !selected) return;
+        setSessionId(selected.id);
+        if (requestedSession !== selected.id) setSearchParams({ session: selected.id }, { replace: true });
+      } catch (cause) {
+        if (active) setSessionStatus(cause instanceof Error ? cause.message : "Could not open your learning session.");
+      }
+    })();
+    return () => { active = false; };
+  }, [requestedSession, setSearchParams]);
+  useEffect(() => {
+    if (!sessionId) return;
+    let active = true;
+    const token = getToken();
+    if (!token) return;
+    setSessionReady(false);
+    request<{ state: null | { envelope: unknown; current_step: number; paused: boolean; completed: boolean; interactions: Record<string, string | number | boolean>; quiz_responses: string[] } }>(`/visual-lessons/session-state?session_id=${encodeURIComponent(sessionId)}`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(({ state }) => {
+        if (!active || !state) return;
+        const envelope = state.envelope as { version?: number };
+        const valid = envelope?.version === 2 ? validateGeneratedVisualLessonEnvelope(state.envelope) : validateVisualLessonEnvelope(state.envelope);
+        setCatalog(items => [...items.filter(item => item.id !== valid.lesson.id), valid.lesson]);
+        if (envelope.version === 2) setGeneratedEnvelopes(items => ({ ...items, [valid.lesson.id]: valid as GeneratedVisualLessonEnvelope }));
+        dispatch({ type: "lesson", id: valid.lesson.id });
+        if (state.current_step >= 0) dispatch({ type: "step", delta: state.current_step + 1, stepCount: valid.lesson.steps.length });
+        setQuizResponses(state.quiz_responses ?? []);
+        setQuizDraft(state.quiz_responses?.[0] ?? "");
+        setQuizRevealed(Boolean(state.quiz_responses?.length));
+        const interaction = state.interactions;
+        if (typeof interaction.selected_planet === "string") dispatch({ type: "planet", id: interaction.selected_planet });
+        if (typeof interaction.time_scale === "number") dispatch({ type: "time-scale", value: interaction.time_scale });
+        if (typeof interaction.shape === "string" && ["cube", "sphere", "cylinder"].includes(interaction.shape)) dispatch({ type: "shape", value: interaction.shape as ShapeKind });
+        for (const key of ["size", "rotation", "length", "gravity"] as const) if (typeof interaction[key] === "number") dispatch({ type: key, value: interaction[key] });
+        setCatalogStatus(state.completed ? "Lesson restored · completed progress saved" : "Lesson restored · progress saved");
+      })
+      .catch(cause => { if (active) setSessionStatus(cause instanceof Error ? cause.message : "Saved lesson progress could not be restored."); })
+      .finally(() => { if (active) setSessionReady(true); });
+    return () => { active = false; };
+  }, [sessionId]);
   const [language, setLanguage] = useState<"en" | "te">("en");
   const immersiveUrl = `/immersive?lesson=${encodeURIComponent(controls.lessonId)}`;
   const [reduced, setReduced] = useState(() => typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   const [replayKey, setReplayKey] = useState(0);
+  const [smartboardOpen, setSmartboardOpen] = useState(true);
   const lesson = catalog.find(item => item.id === controls.lessonId);
+  useEffect(() => {
+    if (!sessionId || !sessionReady || !lesson) return;
+    const token = getToken();
+    if (!token) return;
+    const envelope = generatedEnvelopes[lesson.id] ?? createVisualLessonEnvelope(lesson);
+    const timer = window.setTimeout(() => {
+      request<{ state: unknown }>("/visual-lessons/session-state", {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: sessionId,
+          envelope,
+          current_step: controls.step,
+          paused: !controls.playing,
+          completed: controls.step >= lesson.steps.length - 1 && (!lesson.questions?.length || quizResponses.length > 0),
+          interactions: { selected_planet: controls.selectedPlanet, time_scale: controls.timeScale, shape: controls.shape, size: controls.size, rotation: controls.rotation, length: controls.length, gravity: controls.gravity },
+          quiz_responses: quizResponses,
+        }),
+      }).then(() => setSessionStatus("Progress saved to your learning session")).catch(cause => setSessionStatus(cause instanceof Error ? cause.message : "Progress could not be saved."));
+    }, 450);
+    return () => window.clearTimeout(timer);
+  }, [sessionId, sessionReady, lesson, controls, generatedEnvelopes, quizResponses]);
   const voiceUrl = `/voice?topic=${encodeURIComponent(lesson?.title[language] ?? "Visual lesson")}`;
   const step = lesson && controls.step >= 0 ? lesson.steps[controls.step] : null;
   const selectedPlanet = solarPlanets.find(planet => planet.id === controls.selectedPlanet) ?? solarPlanets[2];
@@ -124,7 +214,37 @@ function LessonWorkspace({ student }: { student: Student }) {
   const subjectOptions = useMemo(() => [...new Map(catalog.map(item => [item.subject.en, item.subject])).entries()], [catalog]);
   const filteredLessons = catalog.filter(item => item.subject.en === (lesson?.subject.en ?? catalog[0]?.subject.en));
   const advance = useCallback((delta: number) => { if (lesson) dispatch({ type: "step", delta, stepCount: lesson.steps.length }); }, [lesson]);
-  const reset = useCallback(() => { dispatch({ type: "reset" }); setReplayKey(key => key + 1); }, []);
+  const reset = useCallback(() => { dispatch({ type: "reset" }); setReplayKey(key => key + 1); setQuizResponses([]); setQuizDraft(""); setQuizRevealed(false); }, []);
+  async function createAiLesson(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const topic = generationTopic.trim();
+    if (!topic || !sessionId) return;
+    const token = getToken();
+    if (!token) { setGenerationMessage("Please sign in again to generate a lesson."); return; }
+    setGenerating(true);
+    setGenerationMessage("");
+    try {
+      const result = await generateVisualLesson(token, sessionId, topic, controls.lessonId, language === "te" ? "telugu" : "english");
+      setCatalog(current => [...current.filter(item => item.id !== result.lesson.id), result.lesson]);
+      setGeneratedEnvelopes(current => ({ ...current, [result.lesson.id]: result }));
+      setQuizResponses([]);
+      setQuizDraft("");
+      setQuizRevealed(false);
+      dispatch({ type: "lesson", id: result.lesson.id });
+      if (result.scene.kind === "solar-system") dispatch({ type: "time-scale", value: Number(result.scene.parameters.time_scale) });
+      if (result.scene.kind === "geometry") {
+        dispatch({ type: "shape", value: result.scene.parameters.shape as ShapeKind });
+        dispatch({ type: "size", value: Number(result.scene.parameters.size) });
+      }
+      if (result.scene.kind === "pendulum") {
+        dispatch({ type: "length", value: Number(result.scene.parameters.length) });
+        dispatch({ type: "gravity", value: Number(result.scene.parameters.gravity) });
+      }
+      setGenerationMessage(language === "en" ? "Validated AI lesson loaded. Its scene uses the supported simulation controls." : "ధృవీకరించిన AI పాఠం సిద్ధమైంది. ఇది మద్దతు ఉన్న అనుకరణ నియంత్రణలను ఉపయోగిస్తుంది.");
+    } catch (cause) {
+      setGenerationMessage(cause instanceof Error ? cause.message : "Could not generate a lesson.");
+    } finally { setGenerating(false); }
+  }
   useEffect(() => {
     const media = window.matchMedia("(prefers-reduced-motion: reduce)"), update = () => setReduced(media.matches);
     media.addEventListener("change", update); return () => media.removeEventListener("change", update);
@@ -145,13 +265,21 @@ function LessonWorkspace({ student }: { student: Student }) {
     <div className="vl-shell">
       <section className="vl-title"><div><span className="vl-eyebrow">INTERACTIVE VISUAL LESSONS</span><h1>Ideas you can <span>explore.</span></h1><p>Choose a subject and topic, then learn by interacting with the model.</p></div><label className="vl-language">Explanation language<select aria-label="Explanation language" value={language} onChange={event => setLanguage(event.target.value as "en" | "te")}><option value="en">English</option><option value="te">తెలుగు</option></select></label></section>
       <p role="status" aria-live="polite" className="vl-meta">{catalogStatus}</p>
-      <section className="vl-picker" aria-label="Lesson selection"><label>Subject<select aria-label="Choose subject" value={lesson.subject.en} onChange={event => { const next = catalog.find(item => item.subject.en === event.target.value); if (next) { dispatch({ type: "lesson", id: next.id }); setReplayKey(key => key + 1); } }}>{subjectOptions.map(([key, text]) => <option key={key} value={key}>{text[language]}</option>)}</select></label><label>Topic<select aria-label="Choose topic" value={lesson.id} onChange={event => { dispatch({ type: "lesson", id: event.target.value as VisualLessonId }); setReplayKey(key => key + 1); }}>{filteredLessons.map(item => <option key={item.id} value={item.id}>{item.topic[language]}</option>)}</select></label><span className="vl-meta">{lesson.subject[language]} · {lesson.topic[language]}</span></section>
-      <section className="vl-lesson-head"><div><h2>{lesson.title[language]}</h2><p>{lesson.description[language]}</p></div><button className="vl-reset" onClick={reset}>↺ Reset lesson</button></section>
+      <p role="status" aria-live="polite" className="vl-meta">{sessionStatus}</p>
+      <form className="vl-ai-generate" onSubmit={event => void createAiLesson(event)}>
+        <label htmlFor="vl-ai-topic">{language === "en" ? "Create a bilingual lesson with Gemini" : "Geminiతో ద్విభాషా పాఠం రూపొందించండి"}</label>
+        <div><input id="vl-ai-topic" value={generationTopic} onChange={event => setGenerationTopic(event.target.value)} minLength={2} maxLength={200} placeholder={language === "en" ? "Enter a topic for this lesson" : "పాఠం కోసం అంశాన్ని నమోదు చేయండి"}/><button type="submit" disabled={generating || !sessionId || !generationTopic.trim()}>{generating ? (language === "en" ? "Generating…" : "రూపొందిస్తోంది…") : (language === "en" ? "Generate lesson" : "పాఠం రూపొందించు")}</button></div>
+        {generationMessage && <p role={generationMessage.startsWith("Could not") || generationMessage.startsWith("Please sign") ? "alert" : "status"}>{generationMessage}</p>}
+      </form>
+      <section className="vl-picker" aria-label="Lesson selection"><label>Subject<select aria-label="Choose subject" value={lesson.subject.en} onChange={event => { const next = catalog.find(item => item.subject.en === event.target.value); if (next) { dispatch({ type: "lesson", id: next.id }); setReplayKey(key => key + 1); setQuizResponses([]); setQuizDraft(""); setQuizRevealed(false); } }}>{subjectOptions.map(([key, text]) => <option key={key} value={key}>{text[language]}</option>)}</select></label><label>Topic<select aria-label="Choose topic" value={lesson.id} onChange={event => { dispatch({ type: "lesson", id: event.target.value as VisualLessonId }); setReplayKey(key => key + 1); setQuizResponses([]); setQuizDraft(""); setQuizRevealed(false); }}>{filteredLessons.map(item => <option key={item.id} value={item.id}>{item.topic[language]}</option>)}</select></label><span className="vl-meta">{lesson.subject[language]} · {lesson.topic[language]}</span></section>
+      <section className="vl-lesson-head"><div><h2>{lesson.title[language]}</h2><p>{lesson.description[language]}</p></div><div className="vl-lesson-actions"><button type="button" className="vl-board-toggle" aria-expanded={smartboardOpen} onClick={() => setSmartboardOpen(value => !value)}>{smartboardOpen ? (language === "en" ? "Hide smartboard" : "స్మార్ట్‌బోర్డ్ దాచు") : (language === "en" ? "Open smartboard" : "స్మార్ట్‌బోర్డ్ తెరువు")}</button><button className="vl-reset" onClick={reset}>↺ Reset lesson</button></div></section>
+      {smartboardOpen && <VisualFlowBoard lesson={lesson} activeStep={Math.max(0, controls.step)} language={language} sessionId={sessionId} onStepChange={index => dispatch({ type: "step", delta: index - controls.step, stepCount: lesson.steps.length })} onReset={reset}/>}
       <section className="vl-layout">
         <div className="vl-primary">
           <div className="vl-simulation" aria-label={`${lesson.title.en} 3D simulation`}>
             <SimulationBoundary><Canvas camera={{ position: [0, 4.2, 8.5], fov: 45 }} dpr={[1, 1.5]} gl={{ antialias: true, alpha: false, powerPreference: "low-power" }} frameloop={reduced ? "demand" : "always"} fallback={<SimulationFallback/>} aria-label={`${lesson.title.en} interactive 3D scene`}>
-              <Suspense fallback={null}>{controls.lessonId === "solar-system" ? <SolarSystemScene selected={controls.selectedPlanet} timeScale={controls.timeScale} onSelect={id => dispatch({ type: "planet", id })} reduced={reduced}/> : controls.lessonId === "geometry" ? <GeometryScene shape={controls.shape} size={controls.size} rotation={controls.rotation} reduced={reduced}/> : <PendulumScene length={controls.length} gravity={controls.gravity} playing={controls.playing} reduced={reduced} resetKey={replayKey}/>}</Suspense>
+              <Suspense fallback={null}>{controls.lessonId === "solar-system" ? <SolarSystemScene selected={controls.selectedPlanet} timeScale={controls.timeScale} language={language} onSelect={id => dispatch({ type: "planet", id })} reduced={reduced}/> : controls.lessonId === "geometry" ? <GeometryScene shape={controls.shape} size={controls.size} rotation={controls.rotation} reduced={reduced}/> : <PendulumScene length={controls.length} gravity={controls.gravity} playing={controls.playing} reduced={reduced} resetKey={replayKey}/>}</Suspense>
+              <OrbitControls makeDefault enableDamping minDistance={3} maxDistance={16} />
             </Canvas></SimulationBoundary>
             <div className="vl-scene-caption" aria-live="polite">{controls.lessonId === "solar-system" ? `${language === "en" ? "Selected planet" : "ఎంచుకున్న గ్రహం"}: ${selectedPlanet.name[language]}` : controls.lessonId === "geometry" ? (language === "en" ? `${controls.shape} · ${measurements.faces} faces · ${measurements.edges} edges · ${measurements.vertices} vertices` : `${controls.shape} · ${measurements.faces} ముఖాలు · ${measurements.edges} అంచులు · ${measurements.vertices} శీర్షాలు`) : (language === "en" ? `${controls.playing ? "Motion running" : "Paused"} · period ${pendulumPeriod(controls.length, controls.gravity).toFixed(2)} s` : `${controls.playing ? "చలనం కొనసాగుతోంది" : "నిలిపివేయబడింది"} · ఆవర్తన కాలం ${pendulumPeriod(controls.length, controls.gravity).toFixed(2)} s`)}</div>
           </div>
@@ -168,6 +296,9 @@ function LessonWorkspace({ student }: { student: Student }) {
           <section className="vl-card vl-crossmode" aria-label="Continue learning"><span className="vl-eyebrow">{language === "en" ? "CONTINUE LEARNING" : "అభ్యాసాన్ని కొనసాగించండి"}</span><h3>{language === "en" ? "Learn with your AI teacher" : "AI ఉపాధ్యాయునితో నేర్చుకోండి"}</h3><p>{language === "en" ? "Continue this topic in the immersive smartboard classroom or discuss it with the voice tutor." : "ఈ అంశాన్ని స్మార్ట్‌బోర్డ్ తరగతిలో కొనసాగించండి లేదా వాయిస్ ట్యూటర్‌తో చర్చించండి."}</p><div className="vl-crossmode-links"><Link to={immersiveUrl}>3D classroom</Link><Link to={voiceUrl}>Voice tutor</Link></div></section>
           <section className="vl-card"><span className="vl-eyebrow">{language === "en" ? "KEY TAKEAWAY" : "ముఖ్యాంశం"}</span><ul>{lesson.takeaways.map((item, index) => <li key={index}>{item[language]}</li>)}</ul></section>
           {controls.lessonId === "solar-system" && <section className="vl-card vl-planet-detail"><span className="vl-eyebrow">{language === "en" ? "PLANET PROFILE" : "గ్రహ పరిచయం"}</span><h3>{selectedPlanet.name[language]}</h3><p>{selectedPlanet.description[language]}</p><strong>{language === "en" ? "Orbital period" : "కక్ష్య కాలం"}: {selectedPlanet.orbitalDays.toLocaleString()} {language === "en" ? "days" : "రోజులు"}</strong></section>}
+          {lesson.questions?.[0] && <section className="vl-card vl-quiz" aria-label={language === "en" ? "Lesson question" : "పాఠ ప్రశ్న"}><span className="vl-eyebrow">{language === "en" ? "YOUR TURN" : "మీ వంతు"}</span><h3>{lesson.questions[0].prompt[language]}</h3><form onSubmit={event => { event.preventDefault(); if (!quizDraft.trim()) return; setQuizResponses([quizDraft.trim()]); setQuizRevealed(true); }}><input aria-label={language === "en" ? "Your answer" : "మీ సమాధానం"} value={quizDraft} onChange={event => setQuizDraft(event.target.value)} maxLength={500} disabled={quizRevealed}/><button type="submit" disabled={!quizDraft.trim() || quizRevealed}>{language === "en" ? "Check answer" : "సమాధానం తనిఖీ చేయి"}</button></form>{quizRevealed && <p role="status">{quizDraft.trim().toLocaleLowerCase() === lesson.questions[0].answer[language].trim().toLocaleLowerCase() ? (language === "en" ? "Correct. " : "సరైనది. ") : `${language === "en" ? "Review: " : "మళ్లీ చూడండి: "}${lesson.questions[0].answer[language]}. `}{lesson.questions[0].explanation[language]}</p>}</section>}
+          {lesson.activities?.length ? <section className="vl-card"><span className="vl-eyebrow">{language === "en" ? "INTERACTIVE ACTIVITIES" : "ఇంటరాక్టివ్ కార్యకలాపాలు"}</span><ul>{lesson.activities.map((activity, index) => <li key={index}>{activity.instruction[language]}</li>)}</ul></section> : null}
+          {lesson.completion_criteria?.length ? <section className="vl-card"><span className="vl-eyebrow">{language === "en" ? "COMPLETION CRITERIA" : "పూర్తి ప్రమాణాలు"}</span><ul>{lesson.completion_criteria.map((criterion, index) => <li key={index}>{criterion[language]}</li>)}</ul><p role="status">{controls.step >= lesson.steps.length - 1 && (!lesson.questions?.length || quizResponses.length > 0) ? (language === "en" ? "Lesson completed · progress saved" : "పాఠం పూర్తయింది · పురోగతి భద్రపరచబడింది") : (language === "en" ? "Continue the steps and answer the question to complete this lesson." : "పాఠాన్ని పూర్తి చేయడానికి దశలను కొనసాగించి ప్రశ్నకు సమాధానం ఇవ్వండి.")}</p></section> : null}
         </aside>
       </section>
       <p className="vl-motion"><label><input type="checkbox" checked={reduced} onChange={event => setReduced(event.target.checked)}/>{language === "en" ? "Reduce motion" : "చలనాన్ని తగ్గించు"}</label><span>{language === "en" ? "Keyboard: ← → lesson steps · R reset" : "కీబోర్డ్: ← → పాఠ దశలు · R మళ్లీ ప్రారంభించు"}</span></p>
