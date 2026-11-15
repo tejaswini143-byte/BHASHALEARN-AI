@@ -134,7 +134,7 @@ test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
     await expect(transcript).toHaveValue("Open Notepad.");
     const panel = page.getByRole("region", { name: "Windows desktop control" });
     await expect(panel).toContainText("Prisma transcript: Open Notepad.");
-    await expect(panel.getByRole("button", { name: "Prepare Notepad action" })).toBeDisabled();
+    await expect(panel.getByRole("button", { name: "Plan Notepad with Gemini" })).toBeDisabled();
   });
 
   test("dismissing consent preserves the local preview without reopening the microphone or uploading", async ({ page }) => {
@@ -185,7 +185,7 @@ test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
     await expect.poll(() => audio.evaluate(element => element.currentTime)).toBe(0);
   });
 
-  test("Open Notepad is planned locally and requires both approvals and a verified window", async ({ page }) => {
+  test("Open Notepad requires a matching Gemini plan, both approvals and a verified window", async ({ page }) => {
     const requests: string[] = [];
     const proposed = { action: "open_app", app_id: "notepad" };
     const origin = "http://127.0.0.1:18765";
@@ -196,6 +196,7 @@ test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
     };
     let nativeApproved = false;
     let verifyExecution = false;
+    let geminiAction: typeof proposed = { action: "open_app", app_id: "calculator" };
     let delayActivation = false;
     let releaseActivation!: () => void;
     const activationHeld = new Promise<void>(resolve => { releaseActivation = resolve; });
@@ -235,8 +236,8 @@ test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
     await page.route("**/api/v1/assistant/voice/speech", route => route.fulfill({ status: 204 }));
     await page.route("**/api/v1/assistant/desktop/interpret", route => {
       requests.push("interpret");
-      expect(route.request().postDataJSON().transcript).toBe("Open Notepad");
-      return route.fulfill({ json: { action: proposed } });
+      expect(route.request().postDataJSON().transcript).toBe("Open Notepad.");
+      return route.fulfill({ json: { action: geminiAction } });
     });
     await mockVoiceBrowser(page, { transcript: "Open Notepad." });
     await startRecording(page);
@@ -245,7 +246,7 @@ test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
     await expect(page.getByLabel("Prisma transcript or typed message")).toHaveValue("Open Notepad.");
 
     const panel = page.getByRole("region", { name: "Windows desktop control" });
-    const interpret = panel.getByRole("button", { name: "Prepare Notepad action" });
+    const interpret = panel.getByRole("button", { name: "Plan Notepad with Gemini" });
     const confirm = panel.getByRole("button", { name: "Confirm and execute" });
     await panel.getByRole("button", { name: "Connect to local companion" }).click();
     await expect(panel.getByRole("status")).toContainText("Connected · control disabled");
@@ -257,12 +258,18 @@ test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
     await expect(interpret).toBeEnabled();
     expect(requests).toEqual([]);
     await interpret.click();
+    await expect(panel.getByText("Gemini’s plan did not match the requested app.", { exact: false })).toBeVisible();
+    await expect(confirm).toHaveCount(0);
+    expect(requests).toEqual(["interpret"]);
+
+    geminiAction = proposed;
+    await interpret.click();
     await expect(confirm).toBeVisible();
-    expect(requests).toEqual([]);
+    expect(requests).toEqual(["interpret", "interpret"]);
 
     await confirm.click();
     await expect(panel.getByText("Local Windows operator declined.", { exact: false })).toBeVisible();
-    expect(requests).toEqual(["confirm"]);
+    expect(requests).toEqual(["interpret", "interpret", "confirm"]);
     await expect(panel.getByText("completed open_app", { exact: false })).toHaveCount(0);
 
     nativeApproved = true;
@@ -274,7 +281,7 @@ test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
     await interpret.click();
     await confirm.click();
     await expect(panel.getByRole("status")).toContainText("Completed: completed open_app");
-    expect(requests).toEqual(["confirm", "confirm", "execute", "confirm", "execute"]);
+    expect(requests).toEqual(["interpret", "interpret", "confirm", "interpret", "confirm", "execute", "interpret", "confirm", "execute"]);
     await panel.getByRole("button", { name: "Emergency Stop" }).click();
     await expect(interpret).toBeDisabled();
     await expect(confirm).toHaveCount(0);

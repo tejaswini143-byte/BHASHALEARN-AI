@@ -271,6 +271,7 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
     const qaContext = getDesktopQaContext();
     const token = getToken(); if (!token) { setStatus("Sign in again to interpret a command."); return; }
     const localPlan = planLocalCommand(normalized, Boolean(qaContext));
+    const requireGeminiAppPlan = localPlan?.action === "open_app";
     const pointer = pointerCommand(normalized);
     const autofill = FILL_DEMO_FORM.test(normalized);
     const dictation = qaContext ? /^type(?:\s+|$)([\s\S]*)$/i.exec(transcript.trim()) : null;
@@ -288,7 +289,7 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
         targets = targetsForCommand(snapshot, normalized);
         approved_sites = {};
       }
-      let proposed = localPlan;
+      let proposed = requireGeminiAppPlan ? null : localPlan;
       if (autofill) {
         const snapshot = qaContext ? desktopSnapshotRef.current : null;
         const fields: FormField[] = [];
@@ -334,6 +335,9 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
         const value = await response.json();
         if (!response.ok) throw new Error(value.detail || "Gemini could not interpret this command");
         proposed = bindNamedClickTargets(value.action as Action, normalized, targets);
+        if (requireGeminiAppPlan && (proposed.action !== "open_app" || proposed.app_id !== localPlan?.app_id)) {
+          throw new Error("Gemini’s plan did not match the requested app. Review the transcript and try again.");
+        }
       }
       if (!activeRef.current || !executionGateRef.current.isCurrent(requestEpoch)) {
         setStatus("Emergency Stop cancelled the pending command.");
@@ -675,7 +679,7 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
     </div>
     <p>Prisma transcript: {transcript || "Record a command first."}</p>
     {transcript.trim() && !STOP_WORDS.test(transcript.normalize("NFC").trim()) && <button type="button" disabled={!connected || !active || busy || reviewedTranscript === transcript.normalize("NFC").trim()} onClick={() => { executionGateRef.current.invalidatePlan(); currentPlanRef.current = null; setReviewedTranscript(transcript.normalize("NFC").trim()); setAction(null); setStatus("Transcript reviewed. You can prepare the action plan."); }}>I reviewed this transcript</button>}
-    <button type="button" disabled={!connected || !active || !transcript.trim() || busy || (!STOP_WORDS.test(transcript.normalize("NFC").trim()) && reviewedTranscript !== transcript.normalize("NFC").trim())} onClick={() => void interpret()}>{STOP_WORDS.test(transcript.normalize("NFC").trim()) ? "Voice Emergency Stop" : localAction?.action === "open_app" ? "Prepare Notepad action" : localAction ? "Prepare link action" : pointerCommand(transcript.normalize("NFC").trim()) ? "Prepare pointer action" : FILL_DEMO_FORM.test(transcript.trim()) ? "Prepare demo autofill" : /^type(?:\s|$)/i.test(transcript.trim()) && getDesktopQaContext() ? "Prepare text entry" : "Interpret with Gemini"}</button>
+    <button type="button" disabled={!connected || !active || !transcript.trim() || busy || (!STOP_WORDS.test(transcript.normalize("NFC").trim()) && reviewedTranscript !== transcript.normalize("NFC").trim())} onClick={() => void interpret()}>{STOP_WORDS.test(transcript.normalize("NFC").trim()) ? "Voice Emergency Stop" : localAction?.action === "open_app" ? "Plan Notepad with Gemini" : localAction ? "Prepare link action" : pointerCommand(transcript.normalize("NFC").trim()) ? "Prepare pointer action" : FILL_DEMO_FORM.test(transcript.trim()) ? "Prepare demo autofill" : /^type(?:\s|$)/i.test(transcript.trim()) && getDesktopQaContext() ? "Prepare text entry" : "Interpret with Gemini"}</button>
     {action && (clarification
       ? <div role="status" aria-label="Clarification needed"><p>{action.clarification}</p><button type="button" onClick={() => setAction(null)}>Clear clarification</button></div>
       : <div role="group" aria-label="Confirm desktop action"><p>Proposed: <b>{describe(action)}</b>{action.action === "sequence" && <ol>{(action.steps || []).map((step, index) => <li key={index}>{describe(step)}</li>)}</ol>}</p>
