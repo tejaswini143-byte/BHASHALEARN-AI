@@ -14,14 +14,14 @@ require.extensions[".ts"] = (module, filename) => module._compile(ts.transpileMo
 require.extensions[".tsx"] = (module, filename) => module._compile(ts.transpileModule(require("node:fs").readFileSync(filename, "utf8"), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true } }).outputText, filename);
 require.extensions[".css"] = () => {};
 const { DocumentsPage, DocumentDetailPage } = require(resolve(dirname(fileURLToPath(import.meta.url)), "../src/Documents.tsx"));
-const { validatePdfSelection, createDocumentUploadBody } = require(resolve(dirname(fileURLToPath(import.meta.url)), "../src/documentModel.ts"));
+const { validateDocumentSelection, createDocumentUploadBody } = require(resolve(dirname(fileURLToPath(import.meta.url)), "../src/documentModel.ts"));
 const { requestHeaders, request } = require(resolve(dirname(fileURLToPath(import.meta.url)), "../src/auth.ts"));
 
 test("Documents component renders upload and library loading UI", () => {
   const html = renderToStaticMarkup(React.createElement(MemoryRouter, null, React.createElement(DocumentsPage)));
   assert.match(html, /Documents/);
   assert.match(html, /Add a study document/);
-  assert.match(html, /Upload PDF/);
+  assert.match(html, /Upload document/);
   assert.match(html, /Loading your documents/);
 });
 
@@ -32,7 +32,7 @@ test("Document details component renders loading UI", () => {
 
 test("document component exposes upload, loading, status, and empty states", async () => {
   const source = await readFile(new URL("../src/Documents.tsx", import.meta.url), "utf8");
-  for (const expected of ["Add a study document", "Browse files", "Upload PDF", "Loading your documents", "No documents yet", "role=\"alert\"", "role=\"status\"", "Your documents", "onDrop", "window.confirm"]) assert.ok(source.includes(expected), `missing UI contract: ${expected}`);
+  for (const expected of ["Add a study document", "Browse files", "Upload document", "DOCX", "Loading your documents", "No documents yet", "role=\"alert\"", "role=\"status\"", "Your documents", "onDrop", "window.confirm"]) assert.ok(source.includes(expected), `missing UI contract: ${expected}`);
 });
 
 test("document details fetch bounded pages and display extraction results", async () => {
@@ -56,10 +56,11 @@ test("documents UI exposes explicit indexing status and authenticated semantic s
 });
 
 test("file selection rejects invalid, empty, and oversized files", () => {
-  assert.equal(validatePdfSelection({ name: "notes.txt", type: "text/plain", size: 1 }), "Choose a PDF file.");
-  assert.equal(validatePdfSelection({ name: "empty.pdf", type: "application/pdf", size: 0 }), "The selected file is empty.");
-  assert.match(validatePdfSelection({ name: "large.pdf", type: "application/pdf", size: 10 * 1024 * 1024 + 1 }), /10 MB/);
-  assert.equal(validatePdfSelection({ name: "lesson.pdf", type: "application/pdf", size: 20 }), null);
+  assert.equal(validateDocumentSelection({ name: "notes.txt", type: "text/plain", size: 1 }), "Choose a PDF or DOCX file.");
+  assert.equal(validateDocumentSelection({ name: "empty.pdf", type: "application/pdf", size: 0 }), "The selected file is empty.");
+  assert.match(validateDocumentSelection({ name: "large.pdf", type: "application/pdf", size: 10 * 1024 * 1024 + 1 }), /10 MB/);
+  assert.equal(validateDocumentSelection({ name: "lesson.pdf", type: "application/pdf", size: 20 }), null);
+  assert.equal(validateDocumentSelection({ name: "resume.docx", type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", size: 20 }), null);
 });
 
 test("multipart upload body uses the backend's file field", () => {
