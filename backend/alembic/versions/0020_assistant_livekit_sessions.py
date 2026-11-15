@@ -22,15 +22,27 @@ def upgrade() -> None:
         sa.UniqueConstraint("room_name", name="uq_assistant_livekit_room"),
     )
     op.create_index("ix_assistant_livekit_owner_created", "assistant_livekit_sessions", ["student_id", "created_at"])
-    op.add_column("assistant_call_attempts", sa.Column("livekit_session_id", sa.String(36),
-        sa.ForeignKey("assistant_livekit_sessions.id", ondelete="SET NULL"), nullable=True))
-    op.add_column("assistant_call_attempts", sa.Column("participant_identity", sa.String(128), nullable=True))
-    op.create_unique_constraint("uq_assistant_call_participant_identity", "assistant_call_attempts", ["participant_identity"])
+    # Constraint creation through op.create_unique_constraint is unsupported by
+    # SQLite's ALTER TABLE implementation. Batch mode emits native ALTERs on
+    # PostgreSQL and safely rebuilds the table for SQLite migration tests.
+    with op.batch_alter_table("assistant_call_attempts") as batch:
+        batch.add_column(sa.Column(
+            "livekit_session_id", sa.String(36),
+            sa.ForeignKey(
+                "assistant_livekit_sessions.id", ondelete="SET NULL",
+                name="fk_assistant_call_attempts_livekit_session_id",
+            ), nullable=True,
+        ))
+        batch.add_column(sa.Column("participant_identity", sa.String(128), nullable=True))
+        batch.create_unique_constraint(
+            "uq_assistant_call_participant_identity", ["participant_identity"]
+        )
 
 
 def downgrade() -> None:
-    op.drop_constraint("uq_assistant_call_participant_identity", "assistant_call_attempts", type_="unique")
-    op.drop_column("assistant_call_attempts", "participant_identity")
-    op.drop_column("assistant_call_attempts", "livekit_session_id")
+    with op.batch_alter_table("assistant_call_attempts") as batch:
+        batch.drop_constraint("uq_assistant_call_participant_identity", type_="unique")
+        batch.drop_column("participant_identity")
+        batch.drop_column("livekit_session_id")
     op.drop_index("ix_assistant_livekit_owner_created", table_name="assistant_livekit_sessions")
     op.drop_table("assistant_livekit_sessions")

@@ -31,7 +31,7 @@ test("personalized classroom lesson supports actions and explicit confusion with
   });
   await page.goto("/classroom?session=session-1");
   await expect(page.getByRole("heading", { name: "Your lesson plan" })).toBeVisible();
-  await expect(page.getByText("Explain the idea of halves and use it in an example.")).toBeVisible();
+  await expect(page.getByRole("article").filter({ hasText: "LEARNING OBJECTIVE" }).getByText("Explain the idea of halves and use it in an example.")).toBeVisible();
   await expect(page.getByText("AI lesson service is unavailable. Showing a deterministic lesson plan.")).toBeVisible();
   await page.getByRole("button", { name: "Explain more simply" }).click();
   await expect.poll(() => planCalls.at(-1)?.action).toBe("simpler");

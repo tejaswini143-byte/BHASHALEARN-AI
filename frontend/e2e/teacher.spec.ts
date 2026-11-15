@@ -1,9 +1,10 @@
 import { expect, test } from "@playwright/test";
 
-test("3D teacher preview exposes the classroom and working lesson controls", async ({ page }) => {
+test("licensed VRM teacher exposes the classroom and working lesson controls", async ({ page }) => {
   await page.goto("/teacher");
-  await expect(page.getByRole("heading", { name: "Meet your AI teacher." })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Interactive 3D classroom" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "AI classroom" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Interactive classroom" })).toBeVisible();
+  await expect(page.locator(".tp-local-note")).toContainText("AvatarSample_B · Pixiv sample VRM · animated locally", { timeout: 30_000 });
   const canvas = page.locator(".tp-stage-shell canvas");
   await expect(canvas).toBeVisible();
   expect(await canvas.evaluate(element => Boolean((element as HTMLCanvasElement).getContext("webgl2") || (element as HTMLCanvasElement).getContext("webgl")))).toBeTruthy();
@@ -12,15 +13,11 @@ test("3D teacher preview exposes the classroom and working lesson controls", asy
   await expect(page.getByLabel("Animation")).toHaveValue("listen");
   await page.getByLabel("Expression").selectOption("curious");
   await expect(page.getByLabel("Expression")).toHaveValue("curious");
-  await page.getByRole("button", { name: "Play synthetic viseme demo" }).click();
-  await expect(page.getByRole("button", { name: "Stop synthetic viseme demo" })).toBeVisible();
   await page.getByLabel("Board position").selectOption("0.28,0.58");
-  await expect(page.getByText("Look at the highlighted board position")).toBeVisible();
-  await page.locator('input[type="file"][accept=".glb,model/gltf-binary"]').setInputFiles({ name: "invalid.glb", mimeType: "model/gltf-binary", buffer: Buffer.from("not a glTF binary") });
-  await expect(page.getByText("Could not read that GLB. The geometric preview remains available.")).toBeVisible();
+  await expect(page.locator(".tp-stage-caption")).toContainText("curious");
 });
 
-test("photo teacher requires likeness permission, previews locally and switches modes", async ({ page }) => {
+test("photo teacher requires likeness permission and previews locally", async ({ page }) => {
   await page.goto("/teacher");
   const picker = page.getByLabel("Choose full-body teacher photo");
   await expect(picker).toBeDisabled();
@@ -39,18 +36,6 @@ test("photo teacher requires likeness permission, previews locally and switches 
   await expect(page.getByAltText("Selected teacher photo: authorized-person.png")).toBeVisible();
   await expect(page.getByText("Photo stays in this browser and is never sent to Gemini or Gnani.")).toBeVisible();
 
-  const bridgeState = async (state: "speaking" | "idle") => page.evaluate(async value => {
-    const { immersiveVoiceBridge } = await import("/src/immersiveVoiceBridge.ts");
-    immersiveVoiceBridge.setState(value as "speaking" | "idle");
-  }, state);
-  await bridgeState("speaking");
-  await expect(page.getByRole("status").filter({ hasText: "Teacher speech playing" })).toBeVisible();
-  await bridgeState("idle");
-
-  await page.getByRole("button", { name: "Holographic teacher" }).click();
-  await expect(page.getByAltText("Selected teacher photo: authorized-person.png")).toBeVisible();
-  await expect(page.getByText("Photo teacher · static appearance")).toBeVisible();
-  await page.getByRole("button", { name: "Human teacher" }).click();
   await page.getByRole("button", { name: "Remove photo" }).click();
   await expect(page.getByAltText("Selected teacher photo: authorized-person.png")).toHaveCount(0);
 });

@@ -68,6 +68,6 @@ test("learning profile loading and error states are accessible", async ({ page }
   const profileRequest = page.waitForRequest(request => request.url().includes("/students/me/learning-profile"));
   await page.goto("/classroom");
   await profileRequest;
-  await expect(page.getByRole("status")).toContainText("Loading learning profile");
+  await expect(page.getByText("Loading learning profile…", { exact: true })).toBeVisible();
   await expect(page.getByRole("alert")).toContainText("Profile service unavailable");
 });

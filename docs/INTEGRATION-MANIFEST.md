@@ -29,8 +29,8 @@ The release base's current migration head is `0019_explicit_call_microphone_auth
 - Feature 3 adds `0020_feature3_future_seeker` from `0019`, then `0021_feature3_experience_profile`, then `0022_feature3_resume_profile`.
 - Feature 4 adds `0020_visual_lesson_session_state` from `0019`.
 
-These are parallel Alembic heads. After all relevant feature migrations are integrated, add a no-op merge revision with all retained heads in `down_revision`, then verify upgrade/downgrade/re-upgrade on a disposable database. Do not renumber or rewrite released migration identifiers.
+These were parallel Alembic heads. `0023_merge_feature_tracks` joins the Feature 2, Feature 3, and Feature 4 heads without renumbering existing revisions. SQLite disposable-database upgrade/downgrade passed; the schema was also migrated to the single `0023_merge_feature_tracks` head for local API smoke tests. Do not run these instructions against a shared or production database without an explicit reviewed migration plan.
 
 ## Integration validation gates
 
-Pending: resolve cross-feature conflicts; confirm routers are included once; run Alembic graph checks and migration tests; run backend and frontend tests/build; run browser routes and responsive checks; report unavailable live providers/Windows actions as blocked rather than passed. No PR is merged by this work.
+Validated: feature merges resolved; Alembic has one head; disposable SQLite migration upgrade/downgrade passed; backend pytest passed 464 with 3 skipped; frontend unit tests passed 148; TypeScript/Vite production build passed; full Playwright suite passed 75 with 8 skipped; local `/ready` and `/api/v1/health` returned ready/ok. The real HTTP student journey showed auth/session creation working and Gemini chat returning 503 because no provider credential is configured in this isolated checkout; the UI preserved the unsent draft and did not fabricate a reply. Gnani live STT, paid calls, and native Windows execution were not performed. See [`SCREEN-COMPARISON.md`](design-reference/SCREEN-COMPARISON.md) for missing routes and visual gaps. No PR is merged by this work.

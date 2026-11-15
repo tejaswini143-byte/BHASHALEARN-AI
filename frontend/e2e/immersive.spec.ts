@@ -14,8 +14,8 @@ test("immersive route preserves student access control", async ({ page }) => {
 test("authenticated student can control the floating lesson and camera", async ({ page }) => {
   await authenticatePreview(page);
   await page.goto("/immersive");
-  await expect(page.getByRole("heading", { name: "The Pythagorean theorem" })).toBeVisible();
-  await expect(page.getByText("Discover how the squares on a right triangle's sides fit together.")).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "Lesson controls" }).getByRole("heading", { name: "The Pythagorean theorem" })).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "Lesson controls" }).getByText("Discover how the squares on a right triangle's sides fit together.")).toBeVisible();
   await page.getByRole("button", { name: "Next lesson step" }).click();
   await expect(page.locator(".ic-step-name")).toContainText("Find the right angle");
   await page.getByRole("button", { name: "Next lesson step" }).click();
@@ -28,7 +28,7 @@ test("authenticated student can control the floating lesson and camera", async (
   await page.keyboard.press("3");
   await expect(page.getByRole("button", { name: /Lesson/ })).toHaveAttribute("aria-pressed", "true");
   await page.getByLabel("Choose lesson").selectOption("1");
-  await expect(page.getByRole("heading", { name: "A tour of the solar system" })).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "Lesson controls" }).getByRole("heading", { name: "A tour of the solar system" })).toBeVisible();
   await page.getByLabel("Reduce motion").check();
   await expect(page.getByLabel("Reduce motion")).toBeChecked();
   await page.getByRole("button", { name: "Play lesson" }).click();
@@ -51,14 +51,14 @@ test("WebGL failure leaves lesson navigation available", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "3D view unavailable" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Next lesson step" })).toBeVisible();
   await page.getByLabel("Choose lesson").selectOption("2");
-  await expect(page.getByRole("heading", { name: "Everyday words: Telugu ↔ English" })).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "Lesson controls" }).getByRole("heading", { name: "Everyday words: Telugu ↔ English" })).toBeVisible();
 });
 
 test("small screens keep lesson and camera controls inside the viewport", async ({ page }) => {
   await authenticatePreview(page);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/immersive");
-  await expect(page.getByRole("heading", { name: "The Pythagorean theorem" })).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "Lesson controls" }).getByRole("heading", { name: "The Pythagorean theorem" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Next lesson step" })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Camera presets" })).toBeVisible();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
