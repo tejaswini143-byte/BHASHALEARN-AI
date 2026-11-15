@@ -3,9 +3,11 @@ export type AuthResult = { access_token: string; token_type: string };
 const API = "/api/v1";
 const TOKEN_KEY = "bhashalearn_access_token";
 
-export function getToken(): string | null { return sessionStorage.getItem(TOKEN_KEY); }
-export function saveToken(token: string): void { sessionStorage.setItem(TOKEN_KEY, token); }
-export function clearToken(): void { sessionStorage.removeItem(TOKEN_KEY); }
+// Auth helpers are also imported by static-rendered views and Node test runners.
+// Keep those environments anonymous instead of assuming browser storage exists.
+export function getToken(): string | null { return typeof sessionStorage === "undefined" ? null : sessionStorage.getItem(TOKEN_KEY); }
+export function saveToken(token: string): void { if (typeof sessionStorage !== "undefined") sessionStorage.setItem(TOKEN_KEY, token); }
+export function clearToken(): void { if (typeof sessionStorage !== "undefined") sessionStorage.removeItem(TOKEN_KEY); }
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) { super(message); this.name = "ApiError"; }
