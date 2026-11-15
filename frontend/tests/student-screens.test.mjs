@@ -52,4 +52,6 @@ test("recovery and student screen routes are registered", async () => {
   assert.match(authPages, /password-reset\/request/);
   assert.match(authPages, /password-reset\/complete/);
   assert.match(authPages, /Passwords do not match/);
+  assert.match(authPages, /Confirm password/);
+  assert.match(authPages, /password !== confirmPassword/);
 });

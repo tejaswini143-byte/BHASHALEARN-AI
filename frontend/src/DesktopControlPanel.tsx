@@ -769,7 +769,7 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
   }
 
   const clarification = action?.action === "clarify";
-  return <section aria-label="Windows desktop control" style={{ margin: "12px 0", padding: 14, border: "1px solid #53648d", borderRadius: 12, background: "#101a30" }}>
+  return <section aria-label="Windows desktop control" className="desktop-control-panel">
     <strong>Opt-in Windows desktop control</strong> <span role="status">· {status}</span>
     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
       <button type="button" disabled={busy} onClick={() => void connect()}>Connect to local companion</button>

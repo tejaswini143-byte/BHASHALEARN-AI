@@ -31,15 +31,16 @@ test("renders empty student data and unavailable features safely",async({page})=
  await openDashboard(page,false,true);
  await expect(page.getByRole("heading",{name:/good to see you, ari/i})).toBeVisible();
  await expect(page.getByText("Your learning activity will appear here when recorded.")).toBeVisible();
- const assistantLink=page.getByRole("link",{name:/AI personal assistant/}).first();
- await expect(assistantLink).toBeVisible();
- await expect(assistantLink).toHaveAttribute("href","/assistant");
+ const classroomLink=page.getByRole("link",{name:/AI Classroom/}).first();
+ await expect(classroomLink).toBeVisible();
+ await expect(classroomLink).toHaveAttribute("href","/voice");
+ await expect(page.getByRole("link",{name:/Chatbot/}).first()).toHaveAttribute("href","/chat");
  await expect(page.getByText("Streak tracking unavailable")).toBeVisible();
  await expect(page.getByText("Unavailable",{exact:true})).toBeVisible();
 });
 test("personalizes the next step and sorts only recorded timeline events",async({page})=>{
  await openDashboard(page,true);
- await expect(page.getByRole("heading",{name:"Practice equivalent fractions"})).toBeVisible();
+ await expect(page.locator(".cc-continue").getByRole("heading",{name:"Fractions"})).toBeVisible();
  await expect(page.getByText("Course: Mathematics")).toBeVisible();
  await expect(page.getByRole("heading",{name:"Fractions",exact:true}).first()).toBeVisible();
  const events=page.locator("#timeline li");
@@ -48,9 +49,9 @@ test("personalizes the next step and sorts only recorded timeline events",async(
  await expect(events.nth(1)).toContainText("Fractions");
  await expect(page.getByText("Mission Mode XP")).toBeVisible();
 });
-test("feature navigation resolves to registered routes including the career roadmap",async({page})=>{
+test("primary dashboard navigation resolves to registered learning routes",async({page})=>{
  await openDashboard(page);
- const routes=[["Immersive AI classroom","/immersive"],["Voice learning","/voice"],["Visual lessons","/visual"],["Adaptive quizzes","/quizzes"],["Mission Mode","/missions"],["Future Me simulator","/future-me"],["Progress analytics","/progress-analytics"],["Learning documents","/documents"],["Career roadmap","/career"]];
+ const routes=[["AI Classroom","/voice"],["Chatbot","/chat"],["PDF Learning","/documents"],["My Courses","/courses"],["Timeline","/timeline"],["Progress","/progress-analytics"],["Settings","/settings"]];
  for(const [name,path] of routes){
   const link=page.getByRole("link",{name:new RegExp(name)}).last();
   await expect(link).toHaveAttribute("href",path);
@@ -59,8 +60,8 @@ test("feature navigation resolves to registered routes including the career road
   await page.goto("/dashboard");
   await expect(page.getByRole("heading",{name:/good to see you, ari/i})).toBeVisible();
  }
- await expect(page.getByRole("link",{name:"Open career roadmap"})).toHaveAttribute("href","/career");
- await expect(page.getByRole("link",{name:"Explore career scenarios"})).toHaveAttribute("href","/future-me");
+ await expect(page.getByRole("link",{name:"Visual lesson studio →"})).toHaveAttribute("href","/visual-lessons");
+ await expect(page.getByRole("link",{name:"Career roadmap →"})).toHaveAttribute("href","/career");
 });
 test("mobile layout and reduced motion remain usable",async({page})=>{
  await page.setViewportSize({width:390,height:844});await page.emulateMedia({reducedMotion:"reduce"});await openDashboard(page);
@@ -70,6 +71,6 @@ test("mobile layout and reduced motion remain usable",async({page})=>{
  await expect(menu).toHaveAttribute("aria-expanded","false");
  await menu.click();
  await expect(page.getByRole("button",{name:"Close dashboard navigation"})).toHaveAttribute("aria-expanded","true");
- const motion=await page.locator(".cc-feature").first().evaluate(el=>getComputedStyle(el).transitionDuration);
+ const motion=await page.locator(".cc-shortcut").first().evaluate(el=>getComputedStyle(el).transitionDuration);
  expect(motion==="0s"||motion==="0.01ms").toBeTruthy();
 });
