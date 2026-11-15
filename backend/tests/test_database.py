@@ -38,7 +38,7 @@ def test_alembic_upgrade_and_downgrade(tmp_path, monkeypatch):
     command.upgrade(cfg, "head")
     engine = create_engine(f"sqlite:///{db_file.as_posix()}")
     inspector = inspect(engine)
-    assert {"students", "courses", "learning_sessions", "chat_messages", "learning_progress", "documents", "document_pages", "assistant_livekit_sessions", "visual_lesson_session_states"}.issubset(inspector.get_table_names())
+    assert {"students", "courses", "learning_sessions", "chat_messages", "learning_progress", "documents", "document_pages", "assistant_livekit_sessions", "visual_lesson_session_states", "future_seeker_reflections"}.issubset(inspector.get_table_names())
     assert {item["name"] for item in inspector.get_unique_constraints("assistant_call_attempts")} >= {
         "uq_assistant_call_participant_identity",
     }
