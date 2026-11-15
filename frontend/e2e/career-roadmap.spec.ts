@@ -70,7 +70,7 @@ test("student builds a roadmap and completes a milestone", async ({ page }) => {
   await page.getByRole("button", { name: "Close lesson" }).click();
   await page.getByRole("button", { name: "Complete milestone" }).click();
   await expect(page.getByRole("button", { name: "Milestone completed" })).toBeDisabled();
-  await expect(page.getByText("100%")).toBeVisible();
+  await expect(page.getByText("100%", { exact: true }).last()).toBeVisible();
   await page.getByLabel("Minutes studied this week").fill("45");
   await page.getByRole("button", { name: "Save study time" }).click();
   await expect(page.getByText(/Current log: 45 min/)).toBeVisible();
