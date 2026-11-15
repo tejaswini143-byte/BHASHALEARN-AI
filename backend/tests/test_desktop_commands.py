@@ -59,6 +59,40 @@ def test_opening_approved_apps_and_https_sites_is_structured(monkeypatch):
     assert plan.action == "open_website" and plan.url == "https://chatgpt.com/"
 
 
+def test_named_public_website_not_in_alias_list_is_resolved_and_bound(monkeypatch):
+    monkeypatch.setattr(desktop_commands, "generate_tutor_reply",
+                        lambda *_: '{"action":"open_website","url":"https://www.amazon.com"}')
+    plan = desktop_commands.interpret_desktop_command("Open Amazon")
+    assert plan.action == "open_website"
+    assert plan.url == "https://www.amazon.com/"
+
+
+def test_arbitrary_named_site_and_dictation_stay_in_one_exact_sequence(monkeypatch):
+    captured = []
+    def fake(_instruction, history):
+        captured.append(history[0]["content"])
+        return ('{"action":"sequence","steps":[{"action":"open_website","url":"https://www.amazon.com"},'
+                '{"action":"type_into_visible","target_name":"Search","text":"[LOCAL_DICTATION]"}]}')
+    monkeypatch.setattr(desktop_commands, "generate_tutor_reply", fake)
+    plan = desktop_commands.interpret_desktop_command("Open Amazon and type Hello")
+    assert [step.action for step in plan.steps] == ["open_website", "type_into_visible"]
+    assert plan.steps[0].url == "https://www.amazon.com/"
+    assert plan.steps[1].text == "Hello"
+    assert "Hello" not in captured[0]
+
+
+def test_named_site_must_resolve_to_one_validated_website_action(monkeypatch):
+    monkeypatch.setattr(desktop_commands, "generate_tutor_reply",
+                        lambda *_: '{"action":"open_website","url":"https://example.com"}')
+    with pytest.raises(HTTPException, match="did not match the site name"):
+        desktop_commands.interpret_desktop_command("Open Amazon")
+
+    monkeypatch.setattr(desktop_commands, "generate_tutor_reply",
+                        lambda *_: '{"action":"open_app","app_id":"notepad"}')
+    with pytest.raises(HTTPException, match="resolve the specific website"):
+        desktop_commands.interpret_desktop_command("Open Amazon")
+
+
 def test_calculator_plan_preserves_and_validates_the_exact_arithmetic(monkeypatch):
     monkeypatch.setattr(desktop_commands, "generate_tutor_reply",
                         lambda *_: '{"action":"calculate","text":"250 * 18"}')

@@ -144,6 +144,10 @@ OPEN_DESTINATION = re.compile(
     r"(?:[\w-]+\.)+[a-z]{2,}(?::\d{1,5})?(?:/[^\s,;\"']*)?)",
     re.I,
 )
+OPEN_NAMED_WEBSITE = re.compile(
+    r"^\s*(?:please\s+)?open\s+(?P<destination>[\w][\w .'-]{0,78}?)"
+    r"(?=\s+and\s+(?:type|enter|write|search)\b|\s+then\b|[,!?;.]|$)", re.I,
+)
 SPOKEN_SITES = {
     "google": "https://www.google.com/",
     "youtube": "https://www.youtube.com/",
@@ -194,6 +198,38 @@ def _requested_website(text: str) -> str | None:
         return normalize_public_http_url(candidate)
     except UnsafePublicURL as exc:
         raise HTTPException(422, str(exc)) from exc
+
+
+def _requested_website_name(text: str, targets: list[DesktopTarget] | None = None) -> str | None:
+    """Extract an explicit, non-aliased public website name for Gemini resolution.
+
+    The exact resolved URL is shown in the browser preview and Windows approval.
+    It is still validated as a public HTTP(S) destination before it can be planned.
+    """
+    if _requested_website(text):
+        return None
+    match = OPEN_NAMED_WEBSITE.search(text)
+    if not match:
+        return None
+    name = re.sub(r"\s+", " ", match.group("destination")).strip(" .-'\t")
+    if not name or name.casefold() in {
+        "website", "web site", "site", "a website", "the website", "a site", "the site",
+        "browser", "internet", "calculator", "notepad", "chrome", "edge",
+    }:
+        return None
+    if re.search(r"\bapproved\s+QA\b", name, re.I):
+        return None
+    if any(target.kind in {"button", "link", "window"} and name.casefold() in target.name.casefold()
+           for target in (targets or [])):
+        return None
+    return name[:80]
+
+
+def _website_name_matches_url(name: str, url: str) -> bool:
+    host = (urlsplit(url).hostname or "").casefold().removeprefix("www.")
+    words = [word for word in re.findall(r"[a-z0-9]+", name.casefold())
+             if word not in {"a", "an", "the", "website", "site", "web"}]
+    return bool(words) and all(word in host for word in words)
 
 
 def _is_inferred_web_field(name: str, destination: str | None) -> bool:
@@ -311,6 +347,7 @@ def interpret_desktop_command(
     if SENSITIVE.search(text):
         raise HTTPException(422, "Sensitive fields cannot be dictated or sent to Gemini")
     requested_url = _requested_website(text)
+    requested_site_name = None
 
     type_match = LOCAL_TYPE_TEXT.fullmatch(text)
     if type_match and not (DICTATION.search(text) or DICTATION_UNQUOTED.search(text) or SEARCH_QUERY.search(text)):
@@ -318,6 +355,7 @@ def interpret_desktop_command(
         return DesktopAction(action="type", text=dictated)
 
     catalog = _target_catalog(targets or [])
+    requested_site_name = _requested_website_name(text, catalog)
     sites = approved_sites or {}
     def valid_local_site(site_id: str, value: str) -> bool:
         try:
@@ -342,7 +380,7 @@ def interpret_desktop_command(
     compound_type = OPEN_AND_TYPE.fullmatch(text)
     if compound_type:
         prefix = text[:compound_type.start("plain")].casefold()
-        if not (requested_url or re.search(r"\bopen\s+(?:notepad|calculator)\b", prefix, re.I)):
+        if not (requested_url or requested_site_name or re.search(r"\bopen\s+(?:notepad|calculator)\b", prefix, re.I)):
             raise HTTPException(422, "Name a supported app or public website before dictating text")
         dictated = _clean_dictation(compound_type.group("plain"))
         sanitized = text[:compound_type.start("plain")] + "[DICTATED TEXT REDACTED]"
@@ -401,9 +439,12 @@ def interpret_desktop_command(
         "Open Notepad with app_id notepad; open Chrome with app_id chrome; open Edge with app_id edge. "
         "For ChatGPT use https://chatgpt.com; for YouTube use https://www.youtube.com; for Google use https://www.google.com. "
         "For a spoken destination, use the exact URL in the request (domain-only defaults to HTTPS) and return open_website. "
+        "If the user names a specific public website without spelling its domain, resolve that name to its canonical HTTPS URL and return open_website; "
+        "if the name has multiple plausible destinations, return clarify. The exact URL will be shown for browser and Windows approval. "
         "For an explicit calculate/compute request, return calculate with text equal to the exact arithmetic expression; do not change numbers or operations. Convert spoken 'times'/'multiplied by' to *, 'divided by' to /, 'plus' to +, and 'minus' to -. "
-        "Common unambiguous spoken names are Google, YouTube, ChatGPT, GitHub, Wikipedia, Stack Overflow, and Mozilla Developer. "
-        "For a website not named by the user, clarify; never invent or substitute a destination. "
+        "Common spoken names include Google, YouTube, ChatGPT, GitHub, Wikipedia, Stack Overflow, and Mozilla Developer. "
+        "Resolve any other specific public website name the user explicitly gives to its canonical HTTPS URL; "
+        "if the intended website is ambiguous, clarify. Never invent or substitute a destination. "
         "For 'open a website and type [DICTATED TEXT REDACTED]', return a sequence with open_website first and type_into_visible second. "
         "Typing actions default to replacement; set text_mode:'append' only when the user explicitly says append. Never submit text unless the request explicitly includes a submit/search action. "
         "For a website search, return a sequence: open_website, type_into_visible into the visible Search field, then keyboard_shortcut ENTER. "
@@ -478,6 +519,23 @@ def interpret_desktop_command(
         action = action.model_copy(update={"action": "type_into", "target_id": dictated_target_id, "text": dictated})
     elif dictated_target_id and action.action in {"type_into", "search"} and action.target_id != dictated_target_id:
         raise HTTPException(422, "Gemini selected a different field than the one named for dictation")
+
+    # If the student named a website without providing its URL, bind the intent
+    # to the one public URL proposed in the reviewed plan. That URL is displayed
+    # before browser confirmation and again in the native Windows approval.
+    if requested_url is None and requested_site_name:
+        proposed_sites = [step for step in (action.steps if action.action == "sequence" else [action])
+                          if step.action == "open_website"]
+        if action.action not in {"clarify", "stop"} and len(proposed_sites) != 1:
+            raise HTTPException(422, "The plan must resolve the specific website named in the request")
+        if len(proposed_sites) == 1:
+            try:
+                proposed_url = normalize_public_http_url(proposed_sites[0].url or "")
+            except UnsafePublicURL as exc:
+                raise HTTPException(422, str(exc)) from exc
+            if not _website_name_matches_url(requested_site_name, proposed_url):
+                raise HTTPException(422, "Gemini's website URL did not match the site name; say the website's domain")
+            requested_url = proposed_url
 
     # Gemini sometimes understands "click" but omits the named DOM target.
     # Resolve explicit names from the page catalog locally; never execute an
