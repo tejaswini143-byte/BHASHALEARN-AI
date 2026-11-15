@@ -29,6 +29,14 @@ test("real HTTP student journey preserves the session when Gemini is unavailable
     failedAssetOrigins.push(url.hostname.toLowerCase());
   });
 
+  // This journey validates the UI's provider-outage recovery state. Keep the
+  // outage local so a developer's configured Gemini key is never billed by E2E.
+  await page.route("**/api/v1/tutor/sessions/*/chat", route => route.fulfill({
+    status: 503,
+    contentType: "application/json",
+    body: JSON.stringify({ detail: "Gemini AI provider is unavailable." }),
+  }));
+
   await page.goto("/register");
   await page.getByLabel("Your name").fill("RC Synthetic Student");
   await page.getByLabel("Email address").fill(studentEmail);
