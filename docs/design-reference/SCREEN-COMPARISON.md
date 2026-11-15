@@ -26,6 +26,7 @@ Reference source: [approved contact sheet](./bhashalearn-15-screens.png) and [in
 
 - Playwright browser tests: **5 passed, 0 failed**. They cover the house lesson stages/vocabulary/quiz/language switch, the existing reminder creation contract, the accessible local incoming-call dialog and snooze behavior, safe social-login demo state, and desktop/mobile rendering of all 15 routes with no uncaught browser errors.
 - Preserved regression suites retested after the new disclosures/selectors: assistant **1 passed**, visual lesson engine **5 passed**, Feature 4 lesson integration **2 passed**.
+- Mobile dashboard navigation regression: **1 passed**; Immersive Classroom, Future Me, and Learning Memories are available in the collapsed “Explore all features” section.
 - Full 95-test browser run in frontend-only mode: **74 passed, 13 failed, 8 skipped**. This was not a complete backend acceptance run: FastAPI on dedicated E2E port `8012` was unavailable, so HTTP/auth/register cases failed, and the first run included stale UI selectors. Those assistant, visual lesson, and Feature 4 UI cases were updated and their targeted suites subsequently passed; the full suite was not rerun after those updates.
 - Screenshots: **30** generated in `captures/`.
 - Frontend unit tests: **154 passed, 0 failed**.
