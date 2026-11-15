@@ -56,7 +56,116 @@ def test_opening_approved_apps_and_https_sites_is_structured(monkeypatch):
     monkeypatch.setattr(desktop_commands, "generate_tutor_reply",
                         lambda *_: '{"action":"open_website","url":"https://chatgpt.com"}')
     plan = desktop_commands.interpret_desktop_command("Open ChatGPT")
-    assert plan.action == "open_website" and plan.url == "https://chatgpt.com"
+    assert plan.action == "open_website" and plan.url == "https://chatgpt.com/"
+
+
+def test_named_public_website_not_in_alias_list_is_resolved_and_bound(monkeypatch):
+    monkeypatch.setattr(desktop_commands, "generate_tutor_reply",
+                        lambda *_: '{"action":"open_website","url":"https://www.amazon.com"}')
+    plan = desktop_commands.interpret_desktop_command("Open Amazon")
+    assert plan.action == "open_website"
+    assert plan.url == "https://www.amazon.com/"
+
+
+def test_arbitrary_named_site_and_dictation_stay_in_one_exact_sequence(monkeypatch):
+    captured = []
+    def fake(_instruction, history):
+        captured.append(history[0]["content"])
+        return ('{"action":"sequence","steps":[{"action":"open_website","url":"https://www.amazon.com"},'
+                '{"action":"type_into_visible","target_name":"Search","text":"[LOCAL_DICTATION]"}]}')
+    monkeypatch.setattr(desktop_commands, "generate_tutor_reply", fake)
+    plan = desktop_commands.interpret_desktop_command("Open Amazon and type Hello")
+    assert [step.action for step in plan.steps] == ["open_website", "type_into_visible"]
+    assert plan.steps[0].url == "https://www.amazon.com/"
+    assert plan.steps[1].text == "Hello"
+    assert "Hello" not in captured[0]
+
+
+def test_chatgpt_dictation_is_bound_to_its_message_composer_and_stays_local(monkeypatch):
+    captured = []
+
+    def fake(_instruction, history):
+        captured.append(history[0]["content"])
+        return ('{"action":"sequence","steps":[{"action":"open_website","url":"https://chatgpt.com/"},'
+                '{"action":"type_into_visible","target_name":"Message ChatGPT",'
+                '"text":"[LOCAL_DICTATION]"}]}')
+
+    monkeypatch.setattr(desktop_commands, "generate_tutor_reply", fake)
+    plan = desktop_commands.interpret_desktop_command("Open ChatGPT and type hello")
+    assert [step.action for step in plan.steps] == ["open_website", "type_into_visible"]
+    assert plan.steps[0].url == "https://chatgpt.com/"
+    assert plan.steps[1].target_name == "Message ChatGPT"
+    assert plan.steps[1].text == "hello"
+    assert "hello" not in captured[0]
+
+
+def test_named_site_must_resolve_to_one_validated_website_action(monkeypatch):
+    monkeypatch.setattr(desktop_commands, "generate_tutor_reply",
+                        lambda *_: '{"action":"open_website","url":"https://example.com"}')
+    with pytest.raises(HTTPException, match="did not match the site name"):
+        desktop_commands.interpret_desktop_command("Open Amazon")
+
+    monkeypatch.setattr(desktop_commands, "generate_tutor_reply",
+                        lambda *_: '{"action":"open_app","app_id":"notepad"}')
+    with pytest.raises(HTTPException, match="resolve the specific website"):
+        desktop_commands.interpret_desktop_command("Open Amazon")
+
+
+def test_calculator_plan_preserves_and_validates_the_exact_arithmetic(monkeypatch):
+    monkeypatch.setattr(desktop_commands, "generate_tutor_reply",
+                        lambda *_: '{"action":"calculate","text":"250 * 18"}')
+    plan = desktop_commands.interpret_desktop_command("Calculate 250 * 18")
+    assert plan.action == "calculate" and plan.text == "250 * 18"
+
+    monkeypatch.setattr(desktop_commands, "generate_tutor_reply",
+                        lambda *_: '{"action":"calculate","text":"4500"}')
+    with pytest.raises(HTTPException, match="changed the arithmetic expression"):
+        desktop_commands.interpret_desktop_command("Calculate 250 * 18")
+
+
+def test_calculator_plan_normalizes_spoken_times_without_changing_the_expression(monkeypatch):
+    monkeypatch.setattr(desktop_commands, "generate_tutor_reply",
+                        lambda *_: '{"action":"calculate","text":"250 * 18"}')
+    plan = desktop_commands.interpret_desktop_command("Calculate 250 times 18")
+    assert plan.action == "calculate"
+    assert plan.text == "250 * 18"
+
+    monkeypatch.setattr(desktop_commands, "generate_tutor_reply",
+                        lambda *_: '{"action":"calculate","text":"4500"}')
+    with pytest.raises(HTTPException, match="changed the arithmetic expression"):
+        desktop_commands.interpret_desktop_command("Calculate 250 times 18")
+
+
+def test_open_calculator_and_calculate_compound_plan_preserves_reviewed_expression(monkeypatch):
+    monkeypatch.setattr(desktop_commands, "generate_tutor_reply", lambda *_: (
+        '{"action":"sequence","steps":[{"action":"open_app","app_id":"calculator"},'
+        '{"action":"calculate","text":"250 * 18"}]}'
+    ))
+    plan = desktop_commands.interpret_desktop_command(
+        "Open Calculator and calculate 250 multiplied by 18."
+    )
+    assert [step.action for step in plan.steps] == ["open_app", "calculate"]
+    assert plan.steps[0].app_id == "calculator"
+    assert plan.steps[1].text == "250 * 18"
+
+    monkeypatch.setattr(desktop_commands, "generate_tutor_reply", lambda *_: (
+        '{"action":"sequence","steps":[{"action":"open_app","app_id":"calculator"},'
+        '{"action":"calculate","text":"250 * 19"}]}'
+    ))
+    with pytest.raises(HTTPException, match="changed the arithmetic expression"):
+        desktop_commands.interpret_desktop_command(
+            "Open Calculator and calculate 250 multiplied by 18."
+        )
+
+
+def test_malformed_compound_calculation_is_rejected(monkeypatch):
+    monkeypatch.setattr(desktop_commands, "generate_tutor_reply", lambda *_: (
+        '{"action":"calculate","text":"250 *"}'
+    ))
+    with pytest.raises(HTTPException):
+        desktop_commands.interpret_desktop_command(
+            "Open Calculator and calculate 250 multiplied by."
+        )
 
 
 def test_compound_notepad_dictation_stays_local_and_is_planned_as_sequence(monkeypatch):

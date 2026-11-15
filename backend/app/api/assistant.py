@@ -1550,7 +1550,7 @@ def activity(student: Student = Depends(current_student), db: Session = Depends(
 
 
 class DesktopIntentRequest(BaseModel):
-    transcript: str = Field(min_length=1, max_length=300)
+    transcript: str = Field(min_length=1, max_length=1400)
     targets: list[DesktopTarget] = Field(default_factory=list, max_length=40)
     approved_sites: dict[str, str] = Field(default_factory=dict, max_length=5)
 

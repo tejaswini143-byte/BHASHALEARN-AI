@@ -1,6 +1,13 @@
 from types import SimpleNamespace
 
+import pytest
+
 from scripts import windows_automation
+
+
+@pytest.mark.parametrize("browser", ["chrome", "edge"])
+def test_browser_contenteditable_document_is_a_typable_semantic_target(browser):
+    assert windows_automation._control_kind("Document", browser) == "text"
 
 
 def test_target_action_keeps_the_validated_snapshot_id(monkeypatch):
@@ -54,3 +61,471 @@ def test_switch_window_waits_for_foreground_activation(monkeypatch):
         cancel_check=lambda: None,
     )
     assert result == {"ok": True, "action": "switch_window", "target": "QA window"}
+
+
+@pytest.mark.parametrize(("display", "verified"), [("Display is 4,500", True), ("Display is 4,501", False)])
+def test_calculator_reports_success_only_after_uia_result_matches(display, verified, monkeypatch):
+    result_display = SimpleNamespace(element_info=SimpleNamespace(
+        automation_id="CalculatorResults", name=display), is_visible=lambda: True)
+    wrapper = SimpleNamespace(set_focus=lambda: None, descendants=lambda: [result_display])
+    entry = {"app_id": "calculator", "handle": 42, "id": "w-2a", "wrapper": wrapper}
+    monkeypatch.setattr(windows_automation, "_windows", lambda: [entry])
+    monkeypatch.setattr(windows_automation, "_foreground_handle", lambda: 42)
+    monkeypatch.setattr(windows_automation.pyautogui, "hotkey", lambda *args: None)
+    monkeypatch.setattr(windows_automation.pyautogui, "write", lambda *args, **kwargs: None)
+    monkeypatch.setattr(windows_automation.pyautogui, "press", lambda *args: None)
+    if verified:
+        result = windows_automation.execute_action({"action": "calculate", "text": "250*18"},
+                                                   type_text=lambda _: None, cancel_check=lambda: None)
+        assert result == {"ok": True, "action": "calculate", "verified": True,
+                          "verified_result": "4500", "verified_window": "w-2a"}
+    else:
+        with pytest.raises(RuntimeError, match="expected verified result"):
+            windows_automation.execute_action({"action": "calculate", "text": "250*18"},
+                                              type_text=lambda _: None, cancel_check=lambda: None)
+
+
+@pytest.mark.parametrize("outcome", ["existing", "new", "stopped"])
+def test_notepad_verifies_only_a_new_window_and_respects_stop(monkeypatch, tmp_path, outcome):
+    focused = []
+    launched = []
+    executable = tmp_path / "notepad.exe"
+    executable.touch()
+    existing = {"handle": 42, "id": "w-2a", "app_id": "notepad",
+                "wrapper": SimpleNamespace(set_focus=lambda: focused.append(42))}
+    new = {"handle": 43, "id": "w-2b", "app_id": "notepad",
+           "wrapper": SimpleNamespace(set_focus=lambda: focused.append(43))}
+    monkeypatch.setattr(windows_automation.shutil, "which", lambda _: str(executable))
+    monkeypatch.setattr(windows_automation.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(windows_automation.subprocess, "Popen", lambda args, **_: launched.append(args))
+    monkeypatch.setattr(windows_automation, "_windows",
+                        lambda: [existing, new] if launched and outcome != "existing" else [existing])
+    ticks = iter([0, 0, 11])
+    monkeypatch.setattr(windows_automation.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(windows_automation.time, "sleep", lambda _: None)
+
+    def cancel_check():
+        if launched and outcome == "stopped":
+            raise RuntimeError("Emergency Stop")
+
+    def execute():
+        return windows_automation.execute_action({"action": "open_app", "app_id": "notepad"},
+                                                 type_text=lambda _: None, cancel_check=cancel_check)
+
+    if outcome == "new":
+        assert execute()["verified_window"] == "w-2b"
+        assert focused == [43]
+    else:
+        error = "Emergency Stop" if outcome == "stopped" else "No new Notepad window was verified"
+        with pytest.raises(RuntimeError, match=error):
+            execute()
+        assert focused == []
+    assert len(launched) == 1
+
+
+@pytest.mark.parametrize("url", sorted(windows_automation.APPROVED_LINKS))
+def test_public_link_dispatch_uses_verified_navigation_result(monkeypatch, url):
+    opened = []
+    def navigate(value, **_):
+        opened.append(value)
+        return {"requested_url": value, "verified_url": value, "verified_window": "w-42", "redirected": False}
+    monkeypatch.setattr(windows_automation, "_navigate_and_verify", navigate)
+    result = windows_automation.execute_action({"action": "open_named_link", "url": url},
+                                               type_text=lambda _: None, cancel_check=lambda: None)
+    assert opened == [url]
+    assert result == {"ok": True, "action": "open_named_link", "requested_url": url,
+                      "verified_url": url, "verified_window": "w-42", "redirected": False}
+
+
+@pytest.mark.parametrize("url", ["file:///C:/Windows/win.ini", "http://127.0.0.1/", "https://user:pass@example.com/"])
+def test_nonpublic_link_never_dispatches(monkeypatch, url):
+    def unexpected_open(*args, **kwargs):
+        pytest.fail("An unapproved destination reached the browser")
+
+    monkeypatch.setattr(windows_automation.webbrowser, "open", unexpected_open)
+    with pytest.raises(RuntimeError):
+        windows_automation.execute_action({"action": "open_named_link", "url": url},
+                                          type_text=lambda _: None, cancel_check=lambda: None)
+
+
+@pytest.mark.parametrize("browser_error", [False, True])
+def test_approved_link_reports_browser_dispatch_failure(monkeypatch, browser_error):
+    def open_link(*args, **kwargs):
+        if browser_error:
+            raise OSError("Shell handler failed")
+        return False
+
+    monkeypatch.setattr("scripts.public_urls.socket.getaddrinfo", lambda *args, **kwargs: [
+        (2, 1, 6, "", ("93.184.216.34", 443)),
+    ])
+    monkeypatch.setattr(windows_automation, "_foreground_browser_entry", lambda: None)
+    monkeypatch.setattr(windows_automation.webbrowser, "open", open_link)
+    with pytest.raises(RuntimeError, match="could not send"):
+        windows_automation.execute_action({"action": "open_named_link", "url": "https://chatgpt.com/"},
+                                          type_text=lambda _: None, cancel_check=lambda: None)
+
+
+def test_browser_navigation_requires_stable_visible_address_bar(monkeypatch):
+    monkeypatch.setattr("scripts.public_urls.socket.getaddrinfo", lambda *args, **kwargs: [
+        (2, 1, 6, "", ("93.184.216.34", 443)),
+    ])
+    entry = {"id": "w-42", "app_id": "edge", "handle": 42}
+    monkeypatch.setattr(windows_automation, "_foreground_browser_entry", lambda: entry)
+    monkeypatch.setattr(windows_automation, "_read_browser_address", lambda _: "https://github.com/")
+    dispatched = []
+    monkeypatch.setattr(windows_automation.webbrowser, "open", lambda url, **_: dispatched.append(url) or True)
+    monkeypatch.setattr(windows_automation.time, "sleep", lambda _: None)
+    result = windows_automation._navigate_and_verify("github.com", cancel_check=lambda: None)
+    assert dispatched == ["https://github.com/"]
+    assert result["verified_url"] == "https://github.com/"
+    assert result["verified_window"] == "w-42"
+
+
+def test_browser_navigation_rejects_private_address_bar_redirect(monkeypatch):
+    monkeypatch.setattr("scripts.public_urls.socket.getaddrinfo", lambda *args, **kwargs: [
+        (2, 1, 6, "", ("93.184.216.34", 443)),
+    ])
+    monkeypatch.setattr(windows_automation, "_foreground_browser_entry",
+                        lambda: {"id": "w-42", "app_id": "edge", "handle": 42})
+    monkeypatch.setattr(windows_automation, "_read_browser_address", lambda _: "http://127.0.0.1/")
+    monkeypatch.setattr(windows_automation.webbrowser, "open", lambda *_args, **_kwargs: True)
+    with pytest.raises(RuntimeError, match="Private and reserved"):
+        windows_automation._navigate_and_verify("https://github.com", cancel_check=lambda: None)
+
+
+@pytest.mark.parametrize("write_verifies", [True, False])
+def test_browser_text_entry_requires_exact_ui_value_and_never_submits(write_verifies, monkeypatch):
+    from scripts.public_urls import socket
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *args, **kwargs: [
+        (2, 1, 6, "", ("93.184.216.34", 443)),
+    ])
+    field_value = SimpleNamespace(CurrentValue="replace me", CurrentIsReadOnly=False)
+    info = SimpleNamespace(element=SimpleNamespace(CurrentIsPassword=False))
+    focused = {"value": False}
+    def set_focus(): focused["value"] = True
+    def has_focus(): return focused["value"]
+    wrapper = SimpleNamespace(iface_value=field_value, is_enabled=lambda: True, element_info=info,
+                               set_focus=set_focus, has_keyboard_focus=has_focus)
+    browser = {"id": "w-42", "app_id": "edge", "handle": 42}
+    snapshot = {"snapshot_id": "fresh", "active_window_id": "w-42", "active_app": "Microsoft Edge",
+                "targets": [{"id": "field", "name": "Search", "kind": "search"}]}
+    monkeypatch.setattr(windows_automation, "get_snapshot", lambda: snapshot)
+    monkeypatch.setattr(windows_automation, "_windows", lambda: [browser])
+    monkeypatch.setattr(windows_automation, "_foreground_handle", lambda: 42)
+    monkeypatch.setattr(windows_automation, "_cached_target", lambda *_: {"kind": "search", "handle": 42, "wrapper": wrapper})
+    monkeypatch.setattr(windows_automation, "_read_browser_address", lambda _: "https://chatgpt.com/")
+    shortcut_calls, pressed = [], []
+    def send_hotkey(*keys):
+        shortcut_calls.append(keys)
+        if keys == ("ctrl", "a"):
+            field_value.CurrentValue = ""
+    monkeypatch.setattr(windows_automation.pyautogui, "hotkey", send_hotkey)
+    monkeypatch.setattr(windows_automation.pyautogui, "press", lambda key: pressed.append(key))
+    def type_char(char):
+        if write_verifies:
+            field_value.CurrentValue = (field_value.CurrentValue if shortcut_calls else "") + char
+    if write_verifies:
+        result = windows_automation.execute_action(
+            {"action": "type_into_visible", "target_name": "Search", "text": "safe query", "text_mode": "replace"},
+            type_text=type_char, cancel_check=lambda: None,
+            sequence_context={"browser_window_id": "w-42", "verified_url": "https://chatgpt.com/"})
+        assert result == {"ok": True, "action": "type_into_visible", "target": "Search",
+                         "typed_characters": 10, "verified": True, "submitted": False,
+                         "verified_window": "w-42", "verified_url": "https://chatgpt.com/"}
+        assert shortcut_calls == [("ctrl", "a")]
+        assert pressed == []
+    else:
+        with pytest.raises(RuntimeError, match="exact text entry"):
+            windows_automation.execute_action(
+                {"action": "type_into_visible", "target_name": "Search", "text": "safe query", "text_mode": "replace"},
+                type_text=lambda _: None, cancel_check=lambda: None,
+                sequence_context={"browser_window_id": "w-42", "verified_url": "https://chatgpt.com/"})
+
+
+def test_browser_contenteditable_uses_text_pattern_when_value_pattern_is_unavailable(monkeypatch):
+    from scripts.public_urls import socket
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *args, **kwargs: [
+        (2, 1, 6, "", ("93.184.216.34", 443)),
+    ])
+    stored = {"text": "old draft"}
+    text_pattern = SimpleNamespace(DocumentRange=SimpleNamespace(
+        GetText=lambda limit: stored["text"][:limit]))
+    class ContentEditable:
+        @property
+        def iface_value(self):
+            raise RuntimeError("ValuePattern is unavailable for this contenteditable")
+
+        @property
+        def iface_text(self):
+            return text_pattern
+
+        is_enabled = lambda self: True
+        set_focus = lambda self: None
+        has_keyboard_focus = lambda self: True
+        element_info = SimpleNamespace(element=SimpleNamespace(CurrentIsPassword=False))
+
+    wrapper = ContentEditable()
+    browser = {"id": "w-42", "app_id": "chrome", "handle": 42}
+    snapshot = {"snapshot_id": "fresh", "active_window_id": "w-42", "active_app": "Google Chrome",
+                "targets": [{"id": "field", "name": "Message ChatGPT", "kind": "text"}]}
+    monkeypatch.setattr(windows_automation, "get_snapshot", lambda: snapshot)
+    monkeypatch.setattr(windows_automation, "_windows", lambda: [browser])
+    monkeypatch.setattr(windows_automation, "_foreground_handle", lambda: 42)
+    monkeypatch.setattr(windows_automation, "_cached_target", lambda *_: {
+        "kind": "text", "handle": 42, "wrapper": wrapper})
+    monkeypatch.setattr(windows_automation, "_read_browser_address", lambda _: "https://chatgpt.com/")
+    submitted = []
+
+    def hotkey(*keys):
+        if keys == ("ctrl", "a"):
+            stored["text"] = ""
+
+    monkeypatch.setattr(windows_automation.pyautogui, "hotkey", hotkey)
+    monkeypatch.setattr(windows_automation.pyautogui, "press", lambda key: submitted.append(key))
+
+    def type_char(char):
+        stored["text"] += char
+
+    result = windows_automation.execute_action(
+        {"action": "type_into_visible", "target_name": "Message ChatGPT", "text": "hello", "text_mode": "replace"},
+        type_text=type_char, cancel_check=lambda: None,
+        sequence_context={"browser_window_id": "w-42", "verified_url": "https://chatgpt.com/"})
+
+    assert result == {"ok": True, "action": "type_into_visible", "target": "Message ChatGPT",
+                     "typed_characters": 5, "verified": True, "submitted": False,
+                     "verified_window": "w-42", "verified_url": "https://chatgpt.com/"}
+    assert stored["text"] == "hello"
+    assert submitted == []
+
+
+def test_chatgpt_submit_clicks_one_adjacent_send_button_once_and_consumes_verified_draft(monkeypatch):
+    from scripts.public_urls import socket
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *args, **kwargs: [
+        (2, 1, 6, "", ("104.18.32.47", 443)),
+    ])
+    value = {"text": "Hello, explain artificial intelligence"}
+    focused = {"value": False}
+    calls = []
+    rect = SimpleNamespace(left=100, top=100, right=600, bottom=170)
+    class FieldValue:
+        CurrentIsReadOnly = False
+
+        @property
+        def CurrentValue(self):
+            return value["text"]
+
+    field_value = FieldValue()
+    info = SimpleNamespace(element=SimpleNamespace(CurrentIsPassword=False))
+    composer = SimpleNamespace(
+        iface_value=field_value, element_info=info, rectangle=lambda: rect,
+        set_focus=lambda: focused.update(value=True), has_keyboard_focus=lambda: focused["value"],
+    )
+    button_rect = SimpleNamespace(left=540, top=125, right=585, bottom=160)
+    submitted = {"value": False}
+    invoke = SimpleNamespace(Invoke=lambda: (calls.append("send"), value.update(text=""), submitted.update(value=True)))
+    send = SimpleNamespace(
+        element_info=SimpleNamespace(control_type="Button", name="Send", automation_id="send-button"),
+        rectangle=lambda: button_rect, is_visible=lambda: True, is_enabled=lambda: True,
+        iface_invoke=invoke,
+    )
+    message = SimpleNamespace(
+        element_info=SimpleNamespace(control_type="Text", name=value["text"]),
+        is_visible=lambda: submitted["value"],
+    )
+    window = SimpleNamespace(set_focus=lambda: None, descendants=lambda: [send, message])
+    entry = {"id": "w-2a", "handle": 42, "app_id": "chrome", "wrapper": window}
+    snapshot = {"snapshot_id": "fresh", "active_window_id": "w-2a", "active_app": "Google Chrome",
+                "targets": [{"id": "composer", "name": "Message ChatGPT", "kind": "text"}]}
+    monkeypatch.setattr(windows_automation, "_windows", lambda: [entry])
+    monkeypatch.setattr(windows_automation, "_foreground_handle", lambda: 42)
+    monkeypatch.setattr(windows_automation, "_read_browser_address", lambda _: "https://chatgpt.com/")
+    monkeypatch.setattr(windows_automation, "get_snapshot", lambda: snapshot)
+    monkeypatch.setattr(windows_automation, "_cached_target", lambda *_: {
+        "kind": "text", "handle": 42, "wrapper": composer})
+    windows_automation.clear_verified_browser_drafts()
+    with windows_automation._cache_lock:
+        windows_automation._verified_browser_drafts[42] = {
+            "text": value["text"], "target_name": "Message ChatGPT",
+            "url": "https://chatgpt.com/", "window_id": "w-2a",
+            "created_at": windows_automation.time.monotonic(),
+        }
+
+    result = windows_automation.execute_action(
+        {"action": "submit_visible", "target_name": "Message ChatGPT",
+         "text": value["text"], "url": "https://chatgpt.com/"},
+        active_window_id="w-2a", type_text=lambda _: None, cancel_check=lambda: None)
+
+    assert result == {"ok": True, "action": "submit_visible", "submitted": True,
+                      "verified": True, "target": "Message ChatGPT",
+                      "verified_window": "w-2a", "url": "https://chatgpt.com/"}
+    assert calls == ["send"]
+    assert value["text"] == ""
+    with windows_automation._cache_lock:
+        assert windows_automation._verified_browser_drafts == {}
+
+
+def test_chatgpt_submit_rejects_changed_composer_without_clicking(monkeypatch):
+    windows_automation.clear_verified_browser_drafts()
+    with windows_automation._cache_lock:
+        windows_automation._verified_browser_drafts[42] = {
+            "text": "old verified text", "target_name": "Message ChatGPT",
+            "url": "https://chatgpt.com/", "window_id": "w-2a",
+            "created_at": windows_automation.time.monotonic(),
+        }
+    with pytest.raises(RuntimeError, match="no fresh verified typing record"):
+        windows_automation.execute_action(
+            {"action": "submit_visible", "target_name": "Message ChatGPT",
+             "text": "different text", "url": "https://chatgpt.com/"},
+            active_window_id="w-2a", type_text=lambda _: None, cancel_check=lambda: None)
+    windows_automation.clear_verified_browser_drafts()
+
+
+@pytest.mark.parametrize("outcome", ["move", "edge", "click", "duplicate", "changed", "wrong_window", "obscured",
+                                     "renamed_after_move", "resized_after_move", "disabled_after_move", "left_qa_tab"])
+def test_qa_pointer_is_bounded_to_the_approved_window(monkeypatch, outcome):
+    bounds = SimpleNamespace(left=100, top=100, right=600, bottom=600)
+    rect = SimpleNamespace(left=200, top=200, right=300, bottom=260)
+    moved = False
+    button = SimpleNamespace(
+        element_info=SimpleNamespace(name="Changed" if outcome == "changed" else "Search"),
+        rectangle=lambda: rect, is_visible=lambda: True,
+        is_enabled=lambda: not (moved and outcome == "disabled_after_move"),
+    )
+    window = SimpleNamespace(
+        rectangle=lambda: bounds, window_text=lambda: "Another tab" if moved and outcome == "left_qa_tab" else "BHASHALEARN Desktop Control QA",
+        descendants=lambda **_: [button, button] if outcome == "duplicate" else [button],
+    )
+    entries = {
+        "window": {"kind": "window", "app_id": "edge", "handle": 42, "wrapper": window},
+        "button": {"kind": "button", "handle": 42, "wrapper": button, "label": "Search",
+                   "rect": [200, 200, 300, 260]},
+    }
+    monkeypatch.setattr(windows_automation, "_cached_target", lambda _, target_id: entries[target_id])
+    monkeypatch.setattr(windows_automation, "_foreground_handle", lambda: 7 if outcome == "wrong_window" else 42)
+    monkeypatch.setattr(windows_automation, "Desktop", lambda **_: SimpleNamespace(
+        from_point=lambda *_: SimpleNamespace(element_info=None) if outcome == "obscured" else button,
+    ))
+    position = SimpleNamespace(x=580 if outcome == "edge" else 200, y=200)
+    clicks = []
+    monkeypatch.setattr(windows_automation.pyautogui, "position", lambda: position)
+
+    def move(x, y, **_):
+        nonlocal moved
+        position.x, position.y = x, y
+        moved = True
+        if outcome == "renamed_after_move":
+            button.element_info.name = "Changed"
+        if outcome == "resized_after_move":
+            rect.right += 5
+
+    monkeypatch.setattr(windows_automation.pyautogui, "moveTo", move)
+    monkeypatch.setattr(windows_automation.pyautogui, "click", lambda x, y: clicks.append((x, y)))
+    payload = {"action": "move_qa_pointer", "direction": "right"} if outcome in {"move", "edge"} else {
+        "action": "click_qa_control", "target_id": "button", "target_name": "Search",
+    }
+    if outcome in {"move", "edge", "click"}:
+        result = windows_automation.execute_action(payload, snapshot_id="snap", active_window_id="window",
+                                                   type_text=lambda _: None, cancel_check=lambda: None)
+        assert result["cursor"] == {"move": [280, 200], "edge": [591, 200], "click": [250, 230]}[outcome]
+    else:
+        with pytest.raises(RuntimeError):
+            windows_automation.execute_action(payload, snapshot_id="snap", active_window_id="window",
+                                               type_text=lambda _: None, cancel_check=lambda: None)
+    assert clicks == ([(250, 230)] if outcome == "click" else [])
+
+
+@pytest.mark.parametrize("outcome", ["success", "duplicate", "disabled", "password", "readonly", "switched", "mismatch", "stopped", "unavailable", "write_error"])
+def test_qa_dictation_writes_only_the_approved_field(monkeypatch, outcome):
+    writes = []
+    field_value = SimpleNamespace(CurrentIsReadOnly=outcome == "readonly", CurrentValue="before")
+    def set_value(value):
+        writes.append(value)
+        if outcome == "write_error":
+            raise OSError("UI Automation provider disconnected")
+        if outcome != "mismatch":
+            field_value.CurrentValue = value
+    field_value.SetValue = set_value
+    info = SimpleNamespace(name="Permitted text field",
+                           element=SimpleNamespace(CurrentIsPassword=outcome == "password"))
+    field = SimpleNamespace(element_info=info, iface_value=None if outcome == "unavailable" else field_value,
+                            is_visible=lambda: True, is_enabled=lambda: outcome != "disabled")
+    window = SimpleNamespace(window_text=lambda: "BHASHALEARN Desktop Control QA",
+                             descendants=lambda **_: [field, field] if outcome == "duplicate" else [field])
+    entries = {
+        "window": {"kind": "window", "app_id": "edge", "handle": 42, "wrapper": window},
+        "field": {"kind": "text", "handle": 42, "wrapper": field, "label": "Permitted text field"},
+    }
+    monkeypatch.setattr(windows_automation, "_cached_target", lambda _, target: entries[target])
+    foreground = iter([42, 9] if outcome == "switched" else [42, 42])
+    monkeypatch.setattr(windows_automation, "_foreground_handle", lambda: next(foreground))
+    value = "Hello, నమస్కారం!"
+    payload = {"action": "type_qa_text", "target_id": "field", "target_name": "Permitted text field", "text": value}
+    checks = 0
+    def check_stop():
+        nonlocal checks
+        checks += 1
+        if outcome == "stopped" and checks > 1:
+            raise RuntimeError("Emergency Stop")
+    def execute():
+        return windows_automation.execute_action(payload, snapshot_id="snap", active_window_id="window",
+                                                 type_text=lambda _: pytest.fail("Global typing must not be used"),
+                                                 cancel_check=check_stop)
+    if outcome == "success":
+        assert execute()["typed_characters"] == len(value)
+        assert field_value.CurrentValue == value
+    else:
+        with pytest.raises(RuntimeError):
+            execute()
+    assert writes == ([value] if outcome in {"success", "mismatch", "write_error"} else [])
+
+
+@pytest.mark.parametrize("outcome", ["success", "already_filled", "invalid_value", "wrong_id", "readonly", "partial", "stop", "switched_during_lookup"])
+def test_demo_autofill_binds_and_verifies_both_fields(monkeypatch, outcome):
+    writes = []
+    edits = []
+    fields = []
+    entries = {}
+    for index, (label, text) in enumerate(windows_automation.DEMO_FORM_VALUES.items()):
+        value = SimpleNamespace(CurrentValue=text if outcome == "already_filled" else "",
+                                CurrentIsReadOnly=index == 1 and outcome == "readonly")
+
+        def write(new_value, index=index, value=value):
+            if index == 1 and outcome == "partial":
+                raise OSError("write failed")
+            writes.append(new_value)
+            value.CurrentValue = new_value
+
+        value.SetValue = write
+        element = SimpleNamespace(CurrentAutomationId="wrong" if index == 1 and outcome == "wrong_id"
+                                  else windows_automation.DEMO_FORM_IDS[label], CurrentIsPassword=False)
+        edit = SimpleNamespace(element_info=SimpleNamespace(name=label, element=element),
+                               is_visible=lambda: True, is_enabled=lambda: True, iface_value=value)
+        edits.append(edit)
+        entries[str(index)] = {"kind": "text", "handle": 42, "label": label, "wrapper": edit}
+        fields.append({"label": label, "target_id": str(index), "value": text})
+    if outcome == "invalid_value":
+        fields[1]["value"] = "another@example.test"
+
+    window = SimpleNamespace(window_text=lambda: "BHASHALEARN Desktop Control QA", descendants=lambda **_: edits)
+    entries["window"] = {"kind": "window", "handle": 42, "app_id": "edge", "wrapper": window}
+    monkeypatch.setattr(windows_automation, "_cached_target", lambda _, target: entries[target])
+    foreground = iter([42, 7]) if outcome == "switched_during_lookup" else None
+    monkeypatch.setattr(windows_automation, "_foreground_handle", lambda: next(foreground) if foreground else 42)
+
+    def cancel_check():
+        if outcome == "stop" and writes:
+            raise RuntimeError("Emergency Stop")
+
+    def execute():
+        return windows_automation.execute_action({"action": "fill_qa_demo_form", "fields": fields},
+                                                 snapshot_id="snap", active_window_id="window",
+                                                 type_text=lambda _: pytest.fail("Global typing must not be used"),
+                                                 cancel_check=cancel_check)
+    if outcome in {"success", "already_filled"}:
+        assert execute()["verified_fields"] == 2
+        assert [edit.iface_value.CurrentValue for edit in edits] == [field["value"] for field in fields]
+    else:
+        with pytest.raises(RuntimeError):
+            execute()
+    assert writes == ([field["value"] for field in fields] if outcome == "success" else
+                      [fields[0]["value"]] if outcome in {"partial", "stop"} else [])
