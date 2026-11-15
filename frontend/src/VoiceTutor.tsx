@@ -74,7 +74,7 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
   const [selected, setSelected] = useState("");
   const [language, setLanguage] = useState<Language>("mixed");
   const [preferences, setPreferences] = useState<Preferences>(DEFAULT_LEARNING_PREFERENCES);
-  const [topic, setTopic] = useState("");
+  const [topic, setTopic] = useState(() => (params.get("topic") ?? "").slice(0, 200));
   const [draft, setDraft] = useState("");
   const pendingNavigation = matchVoiceNavigationCommand(draft);
   const [messages, setMessages] = useState<Message[]>([]);
