@@ -1,30 +1,38 @@
-# Feature 2 — Deadline Reminders
+# Feature 2 — Deadline reminders and voice
 
-The feature package is isolated under `backend/` and `frontend/`. Use a separate Python environment and PostgreSQL database; the default development ports are API `8001` and Vite `5174`.
-
-## Current baseline and integration boundary
-
-This branch is based on `origin/main` at `039bdfb`, whose repository contains only the Prisma and Timbre POCs. It has no product backend, login implementation, Prisma schema, React app, or existing design-system components. Consequently this feature package does not claim to be merged into the app shell. The API requires the host app to issue an HS256 bearer token with a UUID `sub` for a row in `students`; replace the isolated `Student` mapping and token secret with the host application's auth dependency/schema before deployment. Never use the development JWT secret in production.
+This branch is a standalone Feature 2 package based on the incomplete `origin/main` application baseline. Its API, database, and demo authentication are separate from BHASHALEARN production login. Do not merge it directly into the product app until following the integration mapping below is applied against the current application architecture.
 
 ## Local setup
 
-1. Copy `backend/.env.example` to `backend/.env`, set a private long JWT secret and a dedicated PostgreSQL database on port 55432.
-2. Create a Python virtual environment in `backend/.venv`, install `backend/requirements.txt`, then run migrations from `backend` with `alembic -c alembic.ini upgrade head`.
-3. Run the API with `uvicorn app.main:app --app-dir backend --port 8001` from the repository root.
-4. Set `VITE_API_URL=http://127.0.0.1:8001/api` in `frontend/.env.local`, install the frontend lockfile/dependencies, and run Vite on port 5174. The app reads `accessToken` from localStorage; the host login should supply it.
+Use Python 3.13 or later, PostgreSQL, and Node.js. Create an isolated Python environment in `backend/.venv`, install `backend/requirements.txt`, copy `backend/.env.example` to `backend/.env`, and set a dedicated PostgreSQL database, a long random `JWT_SECRET`, and provider credentials. Apply migrations from `backend` with `alembic upgrade head`. Run the API on port 8001 and the Vite frontend on port 5174. Never reuse the Feature 1 database or its running services.
 
-PostgreSQL stores deadlines, student preferences, durable scheduled jobs, and event history. The worker claims due rows using `FOR UPDATE SKIP LOCKED`, so multiple workers avoid duplicate claims. Due browser reminders become visible as `in_progress` and the UI polls every ten seconds. A process restart recovers timed-out sessions and applies a bounded retry count.
+The current Windows validation environment has Python 3.13.17 in an isolated environment, but no accessible PostgreSQL service or running Docker daemon. Backend tests use disposable SQLite databases; migration reversibility was validated on an isolated SQLite file. This is not PostgreSQL migration evidence.
 
-## Provider status
+## Implemented paths
 
-- Prisma v3 and Timbre v2.5 are currently REST/file adapters in `pocs/`; they do not provide a validated real-time LiveKit audio interface. The POC adapters are reused by no streaming claim in this branch.
-- Gemini is used for text transcript intent interpretation when `GEMINI_API_KEY` is configured. Deterministic fallback intents support basic English/Telugu acknowledgments, completion, and a 30-minute snooze.
-- Browser speech capture and playback use browser Web Speech APIs. This is a browser conversation path, not a LiveKit Agents session, and support depends on the browser.
-- Outbound SIP is gated by student consent, verified phone, trunk, approved caller ID and `ALLOW_TEST_CALLS`. A number verification flow and actual dialing are not yet implemented. No phone calls are placed.
+- Demo register/login issues short-lived bearer tokens for the isolated `students` table. The frontend labels this as demo authentication and does not claim production login integration.
+- Deadline create/edit/cancel, assignment/exam types, timezone-aware due times, reminder preferences, history, acknowledgment, completion, snooze, and rescheduling are backed by authenticated API routes.
+- A durable database poller claims reminders transactionally with `SKIP LOCKED` on PostgreSQL, records events, retries transient failures with bounded exponential backoff, and recovers stale claims after process restarts. Browser delivery is persisted as a durable event for the authenticated dashboard; the dashboard polls and announces due items. This is at-least-once delivery with client-side reminder-ID speech de-duplication.
+- Browser sessions can request a short-lived participant token and agent dispatch. The LiveKit worker uses a Google Gemini LLM plugin, Gnani Prisma REST STT through LiveKit's non-streaming STT interface plus VAD turn segmentation, and Gnani Timbre REST TTS through LiveKit's non-streaming TTS interface. It understands English and Telugu intents and persists tool actions only against the session owner's reminder.
+- The browser voice client has explicit microphone start/stop and server-side session cleanup. A text and browser speech fallback is available when LiveKit configuration is absent.
+- Outbound telephony is disabled by default. An explicit authenticated dispatch endpoint can create a LiveKit room, dispatch the agent, and create a SIP participant only after checking calling hours, per-student rate limits, explicit active consent, a stored verified phone, the `VERIFIED_TEST_NUMBERS` allowlist, approved caller ID, trunk, and `ALLOW_TEST_CALLS=true`. It has idempotent call records, a history endpoint, and signed LiveKit webhook reconciliation for ringing/answered/ended/no-answer. Mocked SIP dispatch tests pass. This branch does not implement OTP delivery/phone verification, and LiveKit webhooks do not establish a live carrier outcome in this environment. No calls have been placed; live SIP remains blocked.
 
-## Known integration blockers
+## Environment-specific validation
 
-- Replace the isolated student model/token expectation with the real BHASHALEARN login, database schema, and dashboard shell when that code is available in this worktree.
-- Implement and validate a LiveKit Agents worker and Gnani request/response adapters for its media interfaces; both Gnani providers exposed here are REST, not streaming.
-- Add phone verification, a verified test-number allowlist, SIP dispatch plus webhook status reconciliation, and authorized test-call evidence before enabling dialing.
-- Configure the product voice preference endpoint and wire controls to persist language, voice, consent, and verified phone settings.
+Backend: `backend/.venv/Scripts/python.exe -m pytest -q` from the repository root. Alembic: set `DATABASE_URL` to an isolated disposable database and run `alembic upgrade head`, `alembic downgrade base`, then `alembic upgrade head` from `backend`. Frontend: `npm test` and `npm run build` from `frontend`.
+
+## Integration mapping for the current product app
+
+Feature 1's current application architecture was inspected read-only from its separate acceptance worktree. That code must remain untouched while integrating this branch.
+
+| Feature 2 standalone piece | Product integration target | Required change |
+| --- | --- | --- |
+| `Student` and `/api/auth/*` demo auth | Existing `Student` model and `current_student` dependency in `backend/app/api/auth.py` | Remove demo register/login; use the host JWT/password dependency and map the authenticated product student's string UUID to reminder ownership. |
+| `backend/app/models.py` and migrations `0001`, `0002` | Product SQLAlchemy models/migrations and existing assistant deadline/job records | Reconcile with product `assistant_deadlines`, `assistant_jobs`, and local-call history; do not create duplicate deadline tables. Generate a reviewed migration against the product's real head revision. |
+| `/api/*` routes in `backend/app/api.py` and `voice_api.py` | Product `/api/v1/assistant/*` router layout | Mount under the existing versioned assistant router, apply `current_student`, and preserve existing ownership/role checks. |
+| Standalone `frontend/src/main.tsx` and `LiveKitReminder.tsx` | Existing authenticated React/Vite dashboard and `DeadlineCallAssistant.tsx` | Port components/styles into the product shell; replace local demo token lookup with the host auth client and reuse existing design components. |
+| `livekit_adapters.py` and existing Gnani POCs | Existing product provider adapter/configuration modules | Consolidate credentials/config and reuse the product's adapter lifecycle; retain explicit turn-based/non-streaming capabilities until providers offer verified streaming APIs. |
+| `settings.py` environment names | Product `BHASHALEARN_` settings convention | Map database, Gemini, Gnani, LiveKit, and SIP keys to central settings/secrets; never expose service keys to Vite. |
+| Scheduler lifespan in `main.py` | Existing product worker/scheduler process | Run as a dedicated worker or integrate into the product durable job runner; keep DB locking, outbox events, retries, and uniqueness constraints. |
+
+Do not merge this isolated foundation as-is. First port the feature into the current product auth, schema, migration head, API version, frontend shell, and worker lifecycle; then run cross-branch migration and end-to-end tests in a dedicated integration environment.

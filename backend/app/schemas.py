@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -10,6 +10,7 @@ class DeadlineIn(BaseModel):
     kind: Literal["assignment", "exam"] = "assignment"
     due_at: datetime
     timezone: str = "Asia/Kolkata"
+    reminder_minutes_before: int = Field(default=1440, ge=1, le=10080)
     notes: str | None = None
 
     @field_validator("due_at")
@@ -35,6 +36,14 @@ class DeadlineOut(DeadlineIn):
     completed_at: datetime | None = None
     cancelled_at: datetime | None = None
 
+    @field_validator("due_at", mode="before")
+    @classmethod
+    def normalize_database_datetime(cls, value):
+        # SQLite omits timezone metadata on round-trip; database timestamps are normalized UTC.
+        if isinstance(value, datetime) and (value.tzinfo is None or value.utcoffset() is None):
+            return value.replace(tzinfo=timezone.utc)
+        return value
+
 
 class ReminderOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -50,6 +59,7 @@ class ReminderOut(BaseModel):
 class PreferencesIn(BaseModel):
     timezone: str = "Asia/Kolkata"
     language: Literal["te-IN", "en-IN", "auto"] = "te-IN"
+    reminders_enabled: bool = True
     voice_enabled: bool = True
     call_enabled: bool = False
     consent: bool = False
@@ -59,4 +69,8 @@ class ReminderAction(BaseModel):
     action: Literal["acknowledge", "completed", "snooze", "reschedule", "cancel"]
     until: datetime | None = None
     detail: str | None = None
+
+
+class VoiceSessionIn(BaseModel):
+    language: Literal["te-IN", "en-IN", "mixed"] = "te-IN"
 

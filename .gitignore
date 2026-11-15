@@ -19,3 +19,7 @@ node_modules/
 dist/
 *.db
 *.tsbuildinfo
+frontend/test-results/
+frontend/playwright-report/
+tools/python313/
+tools/python-*.exe

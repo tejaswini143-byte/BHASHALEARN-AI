@@ -46,7 +46,7 @@ def owned_deadline(db: Session, did: uuid.UUID, sid: uuid.UUID) -> Deadline:
 
 
 def schedule(db: Session, deadline: Deadline, sid: uuid.UUID) -> Reminder:
-    when = deadline.due_at - timedelta(hours=24)
+    when = deadline.due_at - timedelta(minutes=deadline.reminder_minutes_before)
     if when < datetime.now(timezone.utc):
         when = datetime.now(timezone.utc) + timedelta(seconds=5)
     key = f"deadline:{deadline.id}:at:{when.isoformat()}:browser"
@@ -154,6 +154,7 @@ def preferences(body: PreferencesIn, sid: uuid.UUID = Depends(student_id), db: S
         row = ReminderPreference(student_id=sid)
         db.add(row)
     row.timezone, row.language = body.timezone, body.language
+    row.reminders_enabled = body.reminders_enabled
     row.voice_enabled, row.call_enabled = body.voice_enabled, body.call_enabled
     row.call_consent_at = datetime.now(timezone.utc) if body.consent else None
     if not body.consent:
@@ -162,7 +163,7 @@ def preferences(body: PreferencesIn, sid: uuid.UUID = Depends(student_id), db: S
     else:
         row.opted_out_at = None
     db.commit()
-    return {"timezone": row.timezone, "language": row.language, "voice_enabled": row.voice_enabled,
+    return {"timezone": row.timezone, "language": row.language, "reminders_enabled": row.reminders_enabled, "voice_enabled": row.voice_enabled,
             "call_enabled": row.call_enabled, "consent": row.call_consent_at is not None}
 
 
@@ -215,8 +216,8 @@ def voice_turn(rid: uuid.UUID, body: dict, sid: uuid.UUID = Depends(student_id),
 def get_preferences(sid: uuid.UUID = Depends(student_id), db: Session = Depends(db_session)):
     row = db.get(ReminderPreference, sid)
     if not row:
-        return {"timezone": "Asia/Kolkata", "language": "te-IN", "voice_enabled": True, "call_enabled": False, "consent": False}
-    return {"timezone": row.timezone, "language": row.language, "voice_enabled": row.voice_enabled,
+        return {"timezone": "Asia/Kolkata", "language": "te-IN", "reminders_enabled": True, "voice_enabled": True, "call_enabled": False, "consent": False}
+    return {"timezone": row.timezone, "language": row.language, "reminders_enabled": row.reminders_enabled, "voice_enabled": row.voice_enabled,
             "call_enabled": row.call_enabled, "consent": row.call_consent_at is not None}
 
 
