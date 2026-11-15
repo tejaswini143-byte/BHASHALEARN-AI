@@ -23,6 +23,9 @@ test("desktop commands use the approved QA page and semantic targets only", asyn
   assert.match(helper, /"5173"/);
   assert.match(helper, /"5184"/);
   assert.match(helper, /"5185"/);
+  assert.match(helper, /"5210"/);
+  assert.match(helper, /"5211"/);
+  assert.match(helper, /"5212"/);
   assert.match(helper, /"5202"/);
   assert.match(helper, /"5203"/);
   assert.match(helper, /desktop-control-test\.html/);
