@@ -36,6 +36,7 @@ test("student builds a roadmap and completes a milestone", async ({ page }) => {
     else if (url.pathname.endsWith("/skills")) body = { skills: { "digital-literacy": { name: "Digital literacy", prerequisites: [] } }, profile: [] };
     else if (url.pathname.endsWith("/goals") && method === "GET") body = [];
     else if (url.pathname.endsWith("/goals") && method === "POST") body = { id: "goal-1", career_key: "software-developer", career_title: "Software developer", education_level: "beginner", interests: ["apps"], weekly_minutes: 300, preferred_language: "mixed" };
+    else if (url.pathname.endsWith("/mentor") && method === "POST") body = { answer: "Your first milestone is complete. Use the next recommended lesson and record 45 minutes this week.", provider: "gemini", roadmap_version: 1, disclaimer: "Learning guidance only." };
     else if (url.pathname.endsWith("/saved-resources") && method === "GET") body = [];
     else if (url.pathname.endsWith("/saved-resources") && method === "POST") body = { id: "saved-1", resource_url: route.request().postDataJSON().resource_url, title: "Getting started", kind: "official documentation", free: true, created_at: "2026-11-13T00:00:00Z" };
     else if (url.pathname.endsWith("/versions") && method === "GET") body = [{ version_number: 1, change_reason: "generated", created_at: "2026-11-13T00:00:00Z" }];
@@ -72,4 +73,7 @@ test("student builds a roadmap and completes a milestone", async ({ page }) => {
   await page.getByLabel("Minutes studied this week").fill("45");
   await page.getByRole("button", { name: "Save study time" }).click();
   await expect(page.getByText(/Current log: 45 min/)).toBeVisible();
+  await page.getByLabel("Career mentor question").fill("What should I do next?");
+  await page.getByRole("button", { name: "Ask mentor" }).click();
+  await expect(page.getByRole("region", { name: "AI career mentor" })).toContainText("milestone is complete");
 });

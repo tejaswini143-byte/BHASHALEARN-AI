@@ -14,7 +14,7 @@ from backend.app.db.models import (CareerGoal, CareerLessonCompletion, CareerMil
     LearningProgress, Student, StudentSkillProfile)
 from backend.app.db.session import get_db
 from backend.app.services.career_roadmap import CAREERS, CAREER_TELUGU, LANGUAGES, LEVELS, SKILLS, CatalogItem, build_plan, skill_gaps
-from backend.app.services.career_ai import analyze_skill_gaps
+from backend.app.services.career_ai import analyze_skill_gaps, mentor_reply
 
 router = APIRouter(prefix="/career", tags=["career roadmap"])
 
@@ -128,6 +128,27 @@ class StudyWeekUpdate(BaseModel):
             raise ValueError("week_start must be a Monday")
         if value > date.today():
             raise ValueError("week_start cannot be in the future")
+        return value
+
+
+class MentorQuestion(BaseModel):
+    question: str = Field(min_length=2, max_length=1200)
+    language: str = "mixed"
+
+    @field_validator("language")
+    @classmethod
+    def valid_mentor_language(cls, value: str) -> str:
+        value = value.strip().lower()
+        if value not in LANGUAGES:
+            raise ValueError("Language must be English, Telugu, or mixed")
+        return value
+
+    @field_validator("question")
+    @classmethod
+    def clean_question(cls, value: str) -> str:
+        value = value.strip()
+        if len(value) < 2:
+            raise ValueError("Question must contain at least two non-space characters")
         return value
 
 def _owned_goal(goal_id: str, student: Student, db: Session) -> CareerGoal:
@@ -446,6 +467,15 @@ def analyze_goal(goal_id: str, student: Student = Depends(current_student), db: 
 def get_goal_analysis(goal_id: str, student: Student = Depends(current_student), db: Session = Depends(get_db)):
     goal = _owned_goal(goal_id, student, db)
     return json.loads(goal.analysis_json) if goal.analysis_json else None
+
+
+@router.post("/goals/{goal_id}/mentor")
+def ask_career_mentor(goal_id: str, payload: MentorQuestion,
+                      student: Student = Depends(current_student), db: Session = Depends(get_db)):
+    goal = _owned_goal(goal_id, student, db)
+    roadmap = json.loads(goal.roadmap_json) if goal.roadmap_json else _build(goal, student.id, db)
+    return mentor_reply(goal=_goal_json(goal), profile=_profile(student.id, db), roadmap=roadmap,
+                        question=payload.question, language=payload.language)
 
 
 @router.get("/goals/{goal_id}/saved-resources")

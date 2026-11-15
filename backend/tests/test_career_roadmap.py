@@ -199,6 +199,33 @@ def test_gemini_skill_analysis_is_schema_validated_and_student_scoped(client, mo
     assert client.post(f"/api/v1/career/goals/{goal['id']}/analysis").status_code == 401
 
 
+def test_future_seeker_mentor_receives_owned_roadmap_and_supports_telugu(client, monkeypatch):
+    headers = auth(client, "career-mentor@example.com")
+    goal = create_goal(client, headers, preferred_language="telugu").json()
+    plan = client.post(f"/api/v1/career/goals/{goal['id']}/roadmap", headers=headers).json()
+    client.put("/api/v1/career/skills", headers=headers,
+               json=[{"skill_key": "python", "proficiency": "beginner"}])
+    captured = {}
+
+    def mock_mentor(**kwargs):
+        captured.update(kwargs)
+        return {"answer": "Start with the first Python practice.", "provider": "gemini",
+                "roadmap_version": kwargs["roadmap"]["version_number"], "disclaimer": "Guidance only."}
+
+    monkeypatch.setattr("backend.app.api.career.mentor_reply", mock_mentor)
+    path = f"/api/v1/career/goals/{goal['id']}/mentor"
+    response = client.post(path, headers=headers,
+                           json={"question": "What should I practise next?", "language": "telugu"})
+    assert response.status_code == 200
+    assert captured["goal"]["career_key"] == "software-developer"
+    assert captured["profile"] == [{"skill_key": "python", "proficiency": "beginner"}]
+    assert captured["roadmap"]["version_number"] == plan["version_number"]
+    assert captured["language"] == "telugu"
+    other = auth(client, "career-mentor-other@example.com")
+    assert client.post(path, headers=other, json={"question": "Help me", "language": "english"}).status_code == 404
+    assert client.post(path, headers=headers, json={"question": "x", "language": "french"}).status_code == 422
+
+
 def test_skill_gap_states_separate_reported_from_assessed():
     rows = skill_gaps(["digital-literacy", "programming-basics", "python"],
                       [{"skill_key": "programming-basics", "proficiency": "advanced"}, {"skill_key": "python", "proficiency": "unknown"}],
