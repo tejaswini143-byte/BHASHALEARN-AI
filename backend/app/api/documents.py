@@ -14,7 +14,7 @@ from backend.app.db.models import Document, DocumentPage, Student
 from backend.app.db.session import get_db
 from backend.app.services.document_index import IndexingError, index_document, index_status, search_documents
 from backend.app.services.embeddings import EmbeddingError, GeminiEmbeddingProvider
-from backend.app.services.documents import DocumentCleanupError, DocumentInputError, PrivateDocumentStorage, extract_pdf_pages, validate_filename
+from backend.app.services.documents import DocumentCleanupError, DocumentInputError, PrivateDocumentStorage, extract_pdf_pages, extract_docx_pages, validate_filename
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -143,17 +143,24 @@ async def upload_document(
                 if size > settings.document_max_upload_bytes:
                     limit = settings.document_max_upload_bytes
                     label = f"{limit / (1024 * 1024):g} MB" if limit >= 1024 * 1024 else f"{max(1, limit // 1024)} KB"
-                    raise DocumentInputError("file_too_large", f"PDFs may be at most {label}.", 413)
+                    raise DocumentInputError("file_too_large", f"Documents may be at most {label}.", 413)
                 target.write(chunk)
         if size == 0:
             raise DocumentInputError("empty_upload", "The selected file is empty.")
-        pages, processing_status = extract_pdf_pages(
-            temp_path,
-            max_pages=settings.document_max_pages,
-            max_characters=settings.document_max_extracted_characters,
-        )
+        suffix = Path(filename).suffix.lower()
+        if suffix == ".pdf":
+            pages, processing_status = extract_pdf_pages(
+                temp_path, max_pages=settings.document_max_pages,
+                max_characters=settings.document_max_extracted_characters,
+            )
+            mime_type = "application/pdf"
+        else:
+            pages, processing_status = extract_docx_pages(
+                temp_path, max_characters=settings.document_max_extracted_characters,
+            )
+            mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         document_id = str(uuid4())
-        storage_key = storage.key_for(document_id)
+        storage_key = storage.key_for(document_id, suffix)
         storage.finalize(temp_path, storage_key)
         finalized = True
         document = Document(
@@ -161,7 +168,7 @@ async def upload_document(
             student_id=student.id,
             original_filename=filename,
             storage_key=storage_key,
-            mime_type="application/pdf",
+            mime_type=mime_type,
             file_size_bytes=size,
             page_count=len(pages),
             processing_status=processing_status,

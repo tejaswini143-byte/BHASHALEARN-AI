@@ -69,8 +69,9 @@ test("teacher route shows only rigged assets and integrates the lesson board", a
   assert.ok(app.includes('path="/teacher"'));
   assert.ok(component.includes("<Canvas"));
   assert.ok(component.includes("WebGL preview unavailable"));
-  assert.ok(component.includes("NO HUMAN AVATAR"));
-  assert.ok(component.includes("Realistic teacher asset not configured"));
+  assert.ok(component.includes("LOADING AVATAR"));
+  assert.ok(component.includes("Loading the licensed classroom teacher"));
+  assert.ok(component.includes("loadBundledAvatar"));
   assert.ok(component.includes("Interactive lesson board"));
   assert.ok(component.includes("tp-stage-board"));
   assert.ok(component.includes("Open live AI tutor and microphone"));
@@ -81,4 +82,30 @@ test("teacher route shows only rigged assets and integrates the lesson board", a
   assert.ok(component.includes("licensed rigged character asset"));
   assert.ok(component.includes("getSharedSessionContext(sessionId)"));
   assert.ok(component.includes("useSyncExternalStore(immersiveVoiceBridge.subscribeFrames"));
+});
+
+
+test("avatar timing rejects overlapping and non-finite end times", () => {
+  assert.throws(() => core.validateVisemeTimeline([
+    { atMs: 0, durationMs: 120, viseme: "aa" },
+    { atMs: 100, durationMs: 50, viseme: "ee" },
+  ]), /Invalid viseme timeline/);
+  assert.throws(() => core.validateVisemeTimeline([
+    { atMs: Number.MAX_SAFE_INTEGER, durationMs: 100, viseme: "aa" },
+  ]), /Invalid viseme timeline/);
+  assert.deepEqual(core.validateVisemeTimeline([
+    { atMs: 0, durationMs: 120, viseme: "aa" },
+    { atMs: 120, durationMs: 50, viseme: "ee" },
+  ]).map(frame => frame.viseme), ["aa", "ee"]);
+});
+
+
+test("realistic teacher rejects unrigged GLB assets instead of showing a static model", async () => {
+  const [source, loader] = await Promise.all([
+    readFile(new URL("../src/TeacherPreview.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/avatarAsset.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(source, /loadLocalAvatar\(file\)/);
+  assert.match(loader, /no rigged character/i);
+  assert.match(loader, /disposeAvatar\(model\)/);
 });

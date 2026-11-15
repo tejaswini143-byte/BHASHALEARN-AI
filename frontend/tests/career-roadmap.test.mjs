@@ -14,13 +14,13 @@ const sample = (overrides = {}) => ({
 });
 
 test("career roadmap completion percentage handles empty and completed plans", () => {
-  assert.equal(model.percentComplete(sample()), 100);
+  assert.equal(model.percentComplete(sample()), 0);
   assert.equal(model.percentComplete(sample({ progress: { completed_milestones: 1, total_milestones: 4 } })), 25);
   assert.equal(model.percentComplete(sample({ progress: { completed_milestones: 8, total_milestones: 4 } })), 100);
 });
 
 test("skill gap labels localize without translating technical keys", () => {
   assert.equal(model.gapLabel("self_reported", "english"), "Self-reported");
-  assert.equal(model.gapLabel("already_demonstrated", "telugu"), "???????? ?????????????");
+  assert.equal(model.gapLabel("already_demonstrated", "telugu"), "నైపుణ్యం నిరూపించబడింది");
   assert.equal(model.gapLabel("new-status", "telugu"), "new-status");
 });

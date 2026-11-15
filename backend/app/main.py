@@ -20,10 +20,13 @@ from .api.session_context import router as session_context_router
 from .api.documents import router as documents_router
 from .api.missions import router as missions_router
 from .api.assistant import router as assistant_router
+from .api.assistant_livekit import router as assistant_livekit_router
 from .api.analytics import router as analytics_router
 from .api.knowledge import router as knowledge_router
 from .api.research import router as research_router
 from .api.career import router as career_router
+from .api.visual_lessons import router as visual_lessons_router
+from .api.future_seeker import router as future_seeker_router
 from .config import Settings, get_settings
 from .db.session import get_engine, get_session_factory
 from .services.assistant_worker import run_due_jobs
@@ -79,11 +82,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(session_context_router, prefix=config.api_prefix)
     app.include_router(documents_router, prefix=config.api_prefix)
     app.include_router(missions_router, prefix=config.api_prefix)
+    app.include_router(assistant_livekit_router, prefix=config.api_prefix)
     app.include_router(assistant_router, prefix=config.api_prefix)
     app.include_router(analytics_router, prefix=config.api_prefix)
     app.include_router(knowledge_router, prefix=config.api_prefix)
     app.include_router(research_router, prefix=config.api_prefix)
     app.include_router(career_router, prefix=config.api_prefix)
+    app.include_router(future_seeker_router, prefix=config.api_prefix)
+    app.include_router(visual_lessons_router, prefix=config.api_prefix)
 
     @app.get("/health", tags=["health"])
     def health() -> dict[str, str]:

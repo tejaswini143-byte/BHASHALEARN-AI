@@ -16,13 +16,13 @@ test("authenticated student uploads, indexes, searches, reindexes, and deletes a
   try {
     await signIn(page, email, password);
     await openDocuments(page);
-    await page.getByLabel("Choose PDF file").setInputFiles({
+    await page.getByLabel("Choose PDF or DOCX file").setInputFiles({
       name: `adv02-synthetic-${suffix}.pdf`,
       mimeType: "application/pdf",
       buffer: makeTwoPagePdf("Telugu fractions lesson: one half is 1/2", "Practice fractions with Telugu number words"),
     });
     const uploaded = page.waitForResponse(response => response.url().includes("/api/v1/documents") && response.request().method() === "POST");
-    await page.getByRole("button", { name: "Upload PDF" }).click();
+    await page.getByRole("button", { name: "Upload document" }).click();
     const uploadResponse = await uploaded;
     expect(uploadResponse.status()).toBe(201);
     documentId = (await uploadResponse.json() as { id: string }).id;

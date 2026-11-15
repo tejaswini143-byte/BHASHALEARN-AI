@@ -21,9 +21,9 @@ test("student uploads a PDF, selects it, and asks a cited document question", as
   } }));
 
   await page.goto("/documents");
-  await page.getByLabel("Choose PDF file").setInputFiles({ name: "fractions.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4 synthetic test file") });
-  await page.getByRole("button", { name: "Upload PDF" }).click();
-  await expect(page.getByRole("status").filter({ hasText: "PDF uploaded" })).toBeVisible();
+  await page.getByLabel("Choose PDF or DOCX file").setInputFiles({ name: "fractions.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4 synthetic test file") });
+  await page.getByRole("button", { name: "Upload document" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Document uploaded and text extracted successfully." })).toBeVisible();
 
   await page.goto("/knowledge-studio");
   await page.getByLabel(/fractions\.pdf/).check();

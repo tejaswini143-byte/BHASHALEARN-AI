@@ -25,27 +25,21 @@ test("HoloOS command center exposes Immersive Classroom, Future Me, and Learning
   await page.goto("/dashboard");
   await expect(page.getByRole("heading", { name: /good to see you, preview/i })).toBeVisible();
 
-  const menu = page.locator(".cc-menu");
-  await menu.focus();
-  await page.keyboard.press("Enter");
-  await expect(menu).toHaveAttribute("aria-expanded", "true");
-
   for (const [name, href] of [
     [/Immersive AI classroom/, "/immersive"],
     [/Future Me simulator/, "/future-me"],
     [/Learning memories/, "/memories"],
   ] as const) {
+    await page.locator(".cc-all-features > summary").click();
     const link = page.getByRole("link", { name }).first();
     await expect(link).toHaveAttribute("href", href);
     await link.click();
     await expect(page).toHaveURL(new RegExp(`${href.replaceAll("/", "\\/")}(?:$|[?#])`));
     await page.goto("/dashboard");
     await expect(page.getByRole("heading", { name: /good to see you, preview/i })).toBeVisible();
-    if (href !== "/memories") {
-      await page.getByRole("button", { name: "Open dashboard navigation" }).click();
-    }
   }
 
+  const menu = page.locator(".cc-menu");
   await page.getByRole("button", { name: "Open dashboard navigation" }).focus();
   await page.keyboard.press("Enter");
   await page.keyboard.press("Escape");

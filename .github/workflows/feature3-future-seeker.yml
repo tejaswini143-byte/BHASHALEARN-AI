@@ -1,0 +1,118 @@
+name: Feature 3 Future Seeker regression
+
+on:
+  push:
+    branches:
+      - feature/feature3-future-seeker
+  pull_request:
+    branches:
+      - integration/release-candidate-20261109
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - "docs/FEATURE3-CODEX-DESKTOP-HANDOFF.md"
+      - ".github/workflows/feature3-future-seeker.yml"
+      - ".gitignore"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: feature3-future-seeker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend regression and SQLite migrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      PYTHONPATH: backend
+      BHASHALEARN_DATABASE_URL: "sqlite+pysqlite:///:memory:"
+      BHASHALEARN_JWT_SECRET_KEY: "feature3-ci-only-secret-not-for-production-123456"
+      BHASHALEARN_GEMINI_API_KEY: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        run: python -m pip install -r backend/requirements.txt
+      - name: Upgrade and downgrade isolated SQLite migration database
+        env:
+          BHASHALEARN_DATABASE_URL: "sqlite+pysqlite:///./feature3-migration-ci.sqlite3"
+        run: |
+          python -m alembic -c backend/alembic.ini upgrade head
+          python -m alembic -c backend/alembic.ini downgrade 0019_explicit_call_microphone_auth
+          python -m alembic -c backend/alembic.ini upgrade head
+      - name: Run backend and Feature 2 regression suite
+        run: python -m pytest -q backend/tests --ignore=backend/tests/test_desktop_companion.py --ignore=backend/tests/test_windows_automation.py
+
+  windows-contracts:
+    name: Windows companion contracts
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      PYTHONPATH: backend
+      BHASHALEARN_GEMINI_API_KEY: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install backend dependencies and desktop contract packages
+        run: |
+          python -m pip install -r backend/requirements.txt
+          python -m pip install pyautogui pygetwindow pywinauto
+      - name: Test Windows automation contracts without desktop execution
+        run: python -m pytest -q backend/tests/test_desktop_companion.py backend/tests/test_windows_automation.py
+
+  frontend:
+    name: Frontend tests, mocked browser flow, and production build
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install locked frontend dependencies
+        run: npm ci
+      - name: Run frontend regression suite
+        run: npm test
+      - name: Install Chromium for mocked UI tests
+        run: npx playwright install --with-deps chromium
+      - name: Verify Future Seeker flow with mocked APIs only
+        env:
+          BHASHALEARN_E2E_START_SERVERS: "1"
+          BHASHALEARN_E2E_MOCK_API: "1"
+          BHASHALEARN_E2E_BACKEND_PORT: "8033"
+          BHASHALEARN_E2E_FRONTEND_PORT: "5183"
+        run: npm run test:e2e -- e2e/career-roadmap.spec.ts
+      - name: Build production frontend
+        run: npm run build
+
+  hygiene:
+    name: Repository hygiene
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check whitespace and prohibited artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          if git ls-files | grep -Ei '(^|/)(\.env($|\.)|.*\.(wav|mp3|flac|ogg|sqlite|sqlite3|db)$)' | grep -vE '(^|/)(\.env\.example|\.env\.sample)$'; then
+            echo "Tracked credentials, audio, or database artifacts detected."
+            exit 1
+          fi
+          echo "No prohibited tracked artifacts detected."

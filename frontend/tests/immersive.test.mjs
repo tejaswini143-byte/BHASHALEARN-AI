@@ -73,3 +73,13 @@ test("immersive classroom renders the existing authenticated voice tutor and sha
   assert.ok(teacher.includes("immersiveVoiceBridge.getFrame().viseme"));
   assert.ok(tutor.includes("navigator.mediaDevices?.getUserMedia"), "microphone access remains behind its explicit control");
 });
+
+
+test("bundled rigged avatar loads while lesson controls remain available", async () => {
+  const scene = await readFile(resolve(sourceDir, "ImmersiveClassroom.tsx"), "utf8");
+  assert.match(scene, /loadBundledAvatar\(\)/);
+  assert.match(scene, /AvatarSample_B · Pixiv sample VRM/);
+  assert.match(scene, /role="status"/);
+  assert.match(scene, /Interactive lesson board/);
+  assert.match(scene, /<VoiceTutor/);
+});

@@ -2,7 +2,7 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint, Integer, Float, Index, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint, Integer, Float, Index, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON, TypeDecorator
 from pgvector.sqlalchemy import Vector
@@ -39,6 +39,17 @@ class Student(Base):
     password_hash: Mapped[str | None] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     sessions: Mapped[list["LearningSession"]] = relationship(back_populates="student", cascade="all, delete-orphan")
+
+
+class PasswordResetToken(Base):
+    """Hashed, one-use password reset token with a short lifetime."""
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    student_id: Mapped[str] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), index=True, nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class Course(Base):
@@ -199,14 +210,56 @@ class CareerGoal(Base):
     career_key: Mapped[str] = mapped_column(String(64), nullable=False)
     custom_goal: Mapped[str | None] = mapped_column(String(160))
     education_level: Mapped[str] = mapped_column(String(32), nullable=False)
+    field_of_study: Mapped[str | None] = mapped_column(String(120))
+    experience_summary: Mapped[str | None] = mapped_column(Text)
+    resume_profile_json: Mapped[str | None] = mapped_column(Text)
     interests_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     weekly_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    daily_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=120)
+    study_days_per_week: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    learning_format: Mapped[str] = mapped_column(String(24), nullable=False, default="mixed")
+    timeframe_weeks: Mapped[int | None] = mapped_column(Integer)
+    constraints_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     preferred_language: Mapped[str] = mapped_column(String(16), nullable=False)
     target_date: Mapped[str | None] = mapped_column(String(10))
     active: Mapped[bool] = mapped_column(default=True, nullable=False)
     roadmap_json: Mapped[str | None] = mapped_column(Text)
+    analysis_json: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+
+class CareerRoadmapVersion(Base):
+    """Immutable, student-owned snapshots retained when a roadmap is revised."""
+    __tablename__ = "career_roadmap_versions"
+    __table_args__ = (
+        UniqueConstraint("student_id", "goal_id", "version_number", name="uq_career_roadmap_version_owner_goal"),
+        Index("ix_career_roadmap_versions_owner_goal", "student_id", "goal_id", "version_number"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    student_id: Mapped[str] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), nullable=False)
+    goal_id: Mapped[str] = mapped_column(ForeignKey("career_goals.id", ondelete="CASCADE"), nullable=False)
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    roadmap_json: Mapped[str] = mapped_column(Text, nullable=False)
+    change_reason: Mapped[str] = mapped_column(String(64), nullable=False, default="generated")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
+class CareerSavedResource(Base):
+    """A student's saved resource from the curated catalog for one career goal."""
+    __tablename__ = "career_saved_resources"
+    __table_args__ = (
+        UniqueConstraint("student_id", "goal_id", "resource_url", name="uq_career_saved_resource_owner_goal_url"),
+        Index("ix_career_saved_resources_owner_goal", "student_id", "goal_id"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    student_id: Mapped[str] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), nullable=False)
+    goal_id: Mapped[str] = mapped_column(ForeignKey("career_goals.id", ondelete="CASCADE"), nullable=False)
+    resource_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    kind: Mapped[str] = mapped_column(String(80), nullable=False)
+    free: Mapped[bool | None] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
 
 class StudentSkillProfile(Base):
@@ -318,6 +371,23 @@ class SessionVisualState(Base):
     visual_key: Mapped[str] = mapped_column(String(80), nullable=False)
     start_node: Mapped[str | None] = mapped_column(String(1))
     end_node: Mapped[str | None] = mapped_column(String(1))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+
+class VisualLessonSessionState(Base):
+    """Student-owned visual lesson snapshot and resumable interaction state."""
+    __tablename__ = "visual_lesson_session_states"
+
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("learning_sessions.id", ondelete="CASCADE"), primary_key=True
+    )
+    lesson_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    lesson_json: Mapped[str] = mapped_column(Text, nullable=False)
+    current_step: Mapped[int] = mapped_column(Integer, default=-1, nullable=False)
+    paused: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    completed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    interactions_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
+    quiz_responses_json: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
 
@@ -652,6 +722,8 @@ class AssistantCallAttempt(Base):
     destination: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[str] = mapped_column(String(24), nullable=False)
     provider_sid: Mapped[str | None] = mapped_column(String(64), unique=True)
+    livekit_session_id: Mapped[str | None] = mapped_column(ForeignKey("assistant_livekit_sessions.id", ondelete="SET NULL"))
+    participant_identity: Mapped[str | None] = mapped_column(String(128), unique=True)
     callback_sequence: Mapped[int] = mapped_column(Integer, default=-1, nullable=False)
     failure_code: Mapped[str | None] = mapped_column(String(64))
     provider_status: Mapped[str | None] = mapped_column(String(32))
@@ -686,6 +758,23 @@ class AssistantLocalCall(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
 
+class AssistantLiveKitSession(Base):
+    """Authenticated browser LiveKit room tied to a BHASHALEARN deadline."""
+    __tablename__ = "assistant_livekit_sessions"
+    __table_args__ = (
+        UniqueConstraint("room_name", name="uq_assistant_livekit_room"),
+        Index("ix_assistant_livekit_owner_created", "student_id", "created_at"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    student_id: Mapped[str] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), nullable=False)
+    deadline_id: Mapped[str] = mapped_column(ForeignKey("assistant_deadlines.id", ondelete="CASCADE"), nullable=False)
+    room_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    language: Mapped[str] = mapped_column(String(16), default="mixed", nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="creating", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class AssistantCalendarEvent(Base):
     __tablename__ = "assistant_calendar_events"
     __table_args__ = (
@@ -702,3 +791,16 @@ class AssistantCalendarEvent(Base):
     timezone_name: Mapped[str] = mapped_column(String(80), nullable=False)
     dedupe_key: Mapped[str] = mapped_column(String(64), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+
+class FutureSeekerReflection(Base):
+    """Student-owned, opt-in illustrative career reflection (never verified proficiency)."""
+    __tablename__ = "future_seeker_reflections"
+    __table_args__ = (Index("ix_future_seeker_owner_created", "student_id", "created_at"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    student_id: Mapped[str] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), nullable=False)
+    career_id: Mapped[str] = mapped_column(String(40), nullable=False)
+    completed_steps: Mapped[int] = mapped_column(Integer, nullable=False)
+    observed_skills_json: Mapped[str] = mapped_column(Text, nullable=False)
+    source: Mapped[str] = mapped_column(String(32), default="illustrative-simulation", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)

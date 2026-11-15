@@ -30,10 +30,14 @@ export class AvatarSyncController {
   }
 
   begin(audio: SyncAudio, language: SyncLanguage): number {
+    // Validate before changing the active playback generation or state.
+    if (!["english", "telugu", "mixed"].includes(language)) throw new Error("Invalid sync language");
+    const timeline = audio.visemes?.length ? validateVisemeTimeline(audio.visemes) : [];
+    const phonemes = audio.phonemes?.length ? validatePhonemeTimeline(audio.phonemes) : [];
     this.generation += 1;
     this.language = language;
-    this.timeline = audio.visemes?.length ? validateVisemeTimeline(audio.visemes) : [];
-    this.phonemes = audio.phonemes?.length ? validatePhonemeTimeline(audio.phonemes) : [];
+    this.timeline = timeline;
+    this.phonemes = phonemes;
     this.mode = this.timeline.length ? "timestamped-visemes" : this.phonemes.length ? "timestamped-phonemes-approximate" : "audio-driven-approximate";
     this.state = "idle";
     this.publish(0, "sil");
@@ -84,12 +88,13 @@ export class AvatarSyncController {
 }
 
 function validatePhonemeTimeline(timeline: PhonemeFrame[]): PhonemeFrame[] {
-  let previousAt = -1;
+  let previousEnd = 0;
   for (const cue of timeline) {
-    if (!Number.isFinite(cue.atMs) || cue.atMs < 0 || cue.atMs < previousAt || !Number.isFinite(cue.durationMs) || cue.durationMs <= 0 || typeof cue.phoneme !== "string" || !cue.phoneme.trim()) {
+    if (!Number.isFinite(cue.atMs) || cue.atMs < 0 || cue.atMs < previousEnd || !Number.isFinite(cue.durationMs) || cue.durationMs <= 0 || typeof cue.phoneme !== "string" || !cue.phoneme.trim()) {
       throw new Error("Invalid phoneme timeline");
     }
-    previousAt = cue.atMs;
+    previousEnd = cue.atMs + cue.durationMs;
+    if (!Number.isSafeInteger(previousEnd)) throw new Error("Invalid phoneme timeline");
   }
   return timeline.map(cue => ({ ...cue }));
 }

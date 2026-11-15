@@ -2,18 +2,18 @@ import {Link} from "react-router-dom";
 import {EMPTY_INTEGRATIONS,type DashboardIntegrations} from "./contracts";
 const items=[
  {name:"Courses and learning paths",detail:"Browse lessons and save your progress",path:"/courses",icon:"▤"},
- {name:"Immersive AI classroom",detail:"Explore spatial lessons",path:"/immersive",icon:"?"},
- {name:"Voice learning",detail:"Practice aloud",path:"/voice",icon:"?"},
- {name:"Visual lessons",detail:"Learn with diagrams",path:"/visual",icon:"?"},
- {name:"Adaptive quizzes",detail:"Practice and assess",path:"/quizzes",icon:"?"},
- {name:"Progress analytics",detail:"Review your mastery",path:"/progress-analytics",icon:"?"},
- {name:"Mission Mode",detail:"Challenges and XP",path:"/missions",icon:"?"},
- {name:"Future Me simulator",detail:"Try career scenarios",path:"/future-me",icon:"?"},
- {name:"Learning memories",detail:"Your saved learning notes",path:"/memories",icon:"?"},
- {name:"Career roadmap",detail:"Plan learning milestones",path:"/career",icon:"?"},
- {name:"AI personal assistant",detail:"Manage deadlines and approved integrations",path:"/assistant",icon:"?"},
- {name:"Learning documents",detail:"Your uploaded materials",path:"/documents",icon:"?"},
- {name:"Browser research",detail:"Explore with cited sources",path:"/research",icon:"?"}
+ {name:"Immersive AI classroom",detail:"Explore spatial lessons",path:"/immersive",icon:"◉"},
+ {name:"Voice learning",detail:"Practice aloud",path:"/voice",icon:"♩"},
+ {name:"Visual lessons",detail:"Learn with diagrams",path:"/visual",icon:"▧"},
+ {name:"Adaptive quizzes",detail:"Practice and assess",path:"/quizzes",icon:"✓"},
+ {name:"Progress analytics",detail:"Review your mastery",path:"/progress-analytics",icon:"▥"},
+ {name:"Mission Mode",detail:"Challenges and XP",path:"/missions",icon:"✦"},
+ {name:"Future Me simulator",detail:"Try career scenarios",path:"/future-me",icon:"◇"},
+ {name:"Learning memories",detail:"Your saved learning notes",path:"/memories",icon:"▣"},
+ {name:"Career roadmap",detail:"Plan learning milestones",path:"/career",icon:"↗"},
+ {name:"AI personal assistant",detail:"Manage deadlines and approved integrations",path:"/assistant",icon:"♧"},
+ {name:"Learning documents",detail:"Your uploaded materials",path:"/documents",icon:"▧"},
+ {name:"Browser research",detail:"Explore with cited sources",path:"/research",icon:"⌕"}
 ];
 export function FeatureNavigation({integrations=EMPTY_INTEGRATIONS,compact=false,onNavigate}:{integrations?:DashboardIntegrations;compact?:boolean;onNavigate?:()=>void}){
  const optional:Record<string,{href:string}|undefined>={"Adaptive quizzes":integrations.adaptiveQuizzes,"Progress analytics":integrations.analytics,"Immersive AI classroom":integrations.holographicTeacher,"Voice learning":integrations.multilingualVoice,"Career roadmap":integrations.careerRoadmap};

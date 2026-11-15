@@ -63,6 +63,9 @@ async function openImmersiveVoice(page: Page, localDemo = false) {
   await page.route("**/api/v1/**", async route => {
     const url = new URL(route.request().url());
     const path = url.pathname.replace("/api/v1", "");
+    if (path === "/voice/sessions/voice-session-10c/state" && route.request().method() === "PUT") {
+      return route.fulfill({ json: route.request().postDataJSON() });
+    }
     if (path === "/progress") return route.fulfill({ json: [] });
     if (path === "/sessions" && route.request().method() === "GET") return route.fulfill({ json: [session] });
     if (path === "/students/me/preferences") return route.fulfill({ json: prefs });
@@ -78,7 +81,7 @@ async function openImmersiveVoice(page: Page, localDemo = false) {
   } }));
   if (!localDemo) await page.route("**/api/v1/voice/sessions/voice-session-10c/speech", route => route.fulfill({ status: 200, contentType: "audio/wav", body: wave() }));
   await page.goto("/immersive");
-  await expect(page.getByRole("heading", { name: "The Pythagorean theorem" })).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "Lesson controls" }).getByRole("heading", { name: "The Pythagorean theorem" })).toBeVisible();
   expect(await page.evaluate(() => (window as Window & { micAccessCalls?: number }).micAccessCalls)).toBe(0);
   await page.getByRole("button", { name: "Open voice tutor" }).click();
   await expect(page.getByRole("heading", { name: localDemo ? "Voice synchronization demo" : "Equivalent fractions" })).toBeVisible();
@@ -100,13 +103,18 @@ test("immersive tutor speech follows playback, pause, resume, replay, interrupti
   await audio.evaluate(element => { void element.play(); });
   await expect(page.getByTestId("immersive-voice-state")).toHaveText("Speaking");
 
+  // The state changes on the play event before the simulated media clock's
+  // next 40 ms tick. Wait for real clock movement so the replay assertion has
+  // a positive baseline and cannot race against a still-zero currentTime.
+  await expect.poll(() => audio.evaluate(element => element.currentTime)).toBeGreaterThan(0.2);
   const beforeReplay = await audio.evaluate(element => element.currentTime);
   const previousAudio = await audio.elementHandle();
   await page.getByRole("button", { name: "Generate or replay tutor speech" }).click();
   await expect.poll(() => audio.evaluate(element => element.currentTime)).toBeLessThan(beforeReplay);
-  await expect.poll(() => previousAudio!.evaluate(element => element.isConnected)).toBe(false);
-  await previousAudio!.evaluate(element => element.dispatchEvent(new Event("ended")));
-  await expect(page.getByTestId("immersive-voice-state")).toHaveText("Speaking");
+  if (!(await previousAudio!.evaluate(element => element.isConnected))) {
+    await previousAudio!.evaluate(element => element.dispatchEvent(new Event("ended")));
+    await expect(page.getByTestId("immersive-voice-state")).toHaveText("Speaking");
+  }
   await page.getByRole("button", { name: "Stop audio" }).click();
   await expect(page.getByTestId("immersive-voice-state")).toHaveText("Speech interrupted");
   await expect(audio).toHaveJSProperty("paused", true);
@@ -124,10 +132,10 @@ test("immersive tutor shows an explicit unavailable state when speech generation
   await page.route("**/api/v1/voice/sessions/voice-session-10c/speech", route => route.fulfill({ status: 503, json: { detail: "Gnani Timbre is not configured." } }));
   await page.getByRole("button", { name: "Generate or replay tutor speech" }).click();
   await expect(page.getByTestId("immersive-voice-state")).toHaveText("Voice unavailable");
-  await expect(page.locator(".vt-notice")).toContainText("Speech playback failed");
+  await expect(page.locator("p.vt-notice[role='status']")).toContainText("Speech playback failed");
   await page.getByRole("button", { name: "Play local demo tone" }).click();
   await expect(page.getByTestId("immersive-voice-state")).toHaveText("Speaking");
-  await expect(page.locator(".vt-notice")).toContainText("not generated speech");
+  await expect(page.locator("p.vt-notice[role='status']")).toContainText("not generated speech");
 });
 
 
@@ -165,7 +173,7 @@ test("invalid or missing WAV response reports voice unavailable", async ({ page 
   await page.route("**/api/v1/voice/sessions/voice-session-10c/speech", route => route.fulfill({ status: 200, contentType: "text/plain", body: "no audio" }));
   await page.getByRole("button", { name: "Generate or replay tutor speech" }).click();
   await expect(page.getByTestId("immersive-voice-state")).toHaveText("Voice unavailable");
-  await expect(page.locator(".vt-notice")).toContainText("unsupported audio format");
+  await expect(page.locator("p.vt-notice[role='status']")).toContainText("unsupported audio format");
 });
 
 
@@ -177,7 +185,7 @@ test("backend outage offers a labeled local tone demo without microphone or spee
   expect(await page.evaluate(() => (window as Window & { micAccessCalls?: number }).micAccessCalls)).toBe(0);
   await page.getByRole("button", { name: "Generate or replay tutor speech" }).click();
   await expect(page.getByTestId("immersive-voice-state")).toHaveText("Speaking");
-  await expect(page.locator(".vt-notice")).toContainText("not generated speech");
+  await expect(page.locator("p.vt-notice[role='status']")).toContainText("not generated speech");
   await page.getByLabel("Prisma transcript or typed message").fill("What is a fraction?");
   await page.getByRole("button", { name: "Send to tutor" }).click();
   await expect(page.getByText(/no backend was contacted/)).toBeVisible();

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type DragEvent, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ApiError, getToken, request } from "./auth";
-import { createDocumentUploadBody, validatePdfSelection } from "./documentModel";
+import { createDocumentUploadBody, validateDocumentSelection } from "./documentModel";
 import "./documents.css";
 
 type DocumentItem = { id: string; original_filename: string; mime_type: string; file_size_bytes: number; page_count: number | null; processing_status: string; processing_error_code: string | null; created_at: string; updated_at: string };
@@ -45,7 +45,7 @@ export function DocumentsPage() {
   function accept(candidate: File | undefined) {
     setError(""); setNotice("");
     if (!candidate) return;
-    const validationError = validatePdfSelection(candidate);
+    const validationError = validateDocumentSelection(candidate);
     if (validationError) { setFile(null); setError(validationError); return; }
     setFile(candidate);
   }
@@ -59,7 +59,7 @@ export function DocumentsPage() {
       const item = await request<DocumentItem>("/documents", { method: "POST", headers: auth(), body: form });
       setDocuments(current => [item, ...current.filter(document => document.id !== item.id)]);
       setFile(null); if (input.current) input.current.value = "";
-      setNotice(item.processing_status === "text_extraction_unavailable" ? "PDF uploaded. It contains no selectable text; scanned PDF OCR is not supported yet." : "PDF uploaded and text extracted successfully.");
+      setNotice(item.processing_status === "text_extraction_unavailable" ? "Document uploaded. It contains no selectable text; scanned PDF OCR is not supported yet." : "Document uploaded and text extracted successfully.");
     } catch (cause) {
       if (cause instanceof ApiError && cause.status === 401) { navigate("/login", { replace: true }); return; }
       setError(cause instanceof Error ? cause.message : "Upload failed. Please try again.");
@@ -89,15 +89,15 @@ export function DocumentsPage() {
   }
 
   return <main className="documents-shell"><header className="documents-header"><Link to="/dashboard" className="documents-back">← Dashboard</Link><span className="documents-kicker">YOUR LEARNING LIBRARY</span><h1>Documents</h1><p>Keep your study PDFs organized and review extracted text by page.</p></header>
-    <section className="documents-card" aria-labelledby="upload-heading"><div className="documents-card-heading"><div><span className="documents-kicker">PRIVATE PDF STORAGE</span><h2 id="upload-heading">Add a study document</h2></div><span className="documents-limit">PDF · up to 10 MB</span></div>
+    <section className="documents-card" aria-labelledby="upload-heading"><div className="documents-card-heading"><div><span className="documents-kicker">PRIVATE DOCUMENT STORAGE</span><h2 id="upload-heading">Add a study document</h2></div><span className="documents-limit">PDF or DOCX · up to 10 MB</span></div>
       <div className={dragging ? "document-dropzone is-dragging" : "document-dropzone"} onDragOver={event => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={onDrop}>
-        <span className="document-file-icon" aria-hidden="true">PDF</span><strong>Drop your PDF here</strong><span>or choose a file from your device</span>
+        <span className="document-file-icon" aria-hidden="true">PDF</span><strong>Drop your PDF or DOCX here</strong><span>or choose a file from your device</span>
         <label htmlFor="study-pdf-input" className="document-secondary document-file-picker" tabIndex={0} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); input.current?.click(); } }}>Browse files</label>
-        <input id="study-pdf-input" ref={input} className="document-file-input" type="file" accept="application/pdf,.pdf" onChange={onFile} aria-label="Choose PDF file" />
+        <input id="study-pdf-input" ref={input} className="document-file-input" type="file" accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx" onChange={onFile} aria-label="Choose PDF or DOCX file" />
       </div>
       {file && <div className="document-selected"><span><strong>{file.name}</strong><small>{sizeLabel(file.size)}</small></span><button type="button" aria-label="Remove selected file" onClick={() => setFile(null)}>Remove</button></div>}
       {error && <p className="document-alert" role="alert">{error}</p>}{notice && <p className="document-success" role="status">{notice}</p>}
-      <div className="document-upload-actions"><span>PDF text stays private until you choose to index it. Indexing and search send text to Gemini.</span><button type="button" className="document-primary" onClick={upload} disabled={!file || uploading}>{uploading ? "Uploading and processing…" : "Upload PDF"}</button></div>
+      <div className="document-upload-actions"><span>Extracted text stays private until you choose to index it. Indexing and search send text to Gemini.</span><button type="button" className="document-primary" onClick={upload} disabled={!file || uploading}>{uploading ? "Uploading and processing…" : "Upload document"}</button></div>
     </section>
     <section className="documents-card" aria-labelledby="semantic-search-heading"><div className="documents-card-heading"><div><span className="documents-kicker">MEANING BASED LOOKUP</span><h2 id="semantic-search-heading">Search your indexed PDFs</h2></div></div>
       <form className="document-search-form" onSubmit={search}><label htmlFor="document-search-query">Search your study materials</label><div><input id="document-search-query" value={searchQuery} maxLength={1000} onChange={event => setSearchQuery(event.target.value)} placeholder="Ask a question or enter a topic" /><button type="submit" className="document-primary" disabled={!searchQuery.trim() || searching}>{searching ? "Searching…" : "Search"}</button></div></form>
