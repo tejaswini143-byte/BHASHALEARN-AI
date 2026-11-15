@@ -298,11 +298,10 @@ test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
     await expect(confirm).toHaveCount(0);
   });
 
-  test("approved link previews its exact URL and unknown links never reach the companion", async ({ page }) => {
+  test("a public website URL is planned by Gemini, previewed exactly, and requires both approvals", async ({ page }) => {
     const origin = "http://127.0.0.1:18765";
     const requests: string[] = [];
-    let dropExecutionResponse = false;
-    const action = { action: "open_named_link", url: "https://www.youtube.com/" };
+    const action = { action: "open_website", url: "https://example.org/path?q=one" };
     const cors = {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -322,54 +321,84 @@ test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
       }
       if (path === "/desktop/execute") {
         expect(request.postDataJSON()).toMatchObject({ action, confirmation_token: "mock-link-ticket" });
-        if (dropExecutionResponse) return route.abort();
-        return route.fulfill({ headers: cors, json: { ok: true, ...action } });
+        return route.fulfill({ headers: cors, json: { ok: true, ...action,
+          requested_url: action.url, verified_url: action.url, verified_window: "mock-browser-window", redirected: false } });
       }
       return route.abort();
     });
     await page.route("**/api/v1/assistant/voice/speech", route => route.fulfill({ status: 204 }));
     await page.route("**/api/v1/assistant/desktop/interpret", route => {
       requests.push("gemini");
-      return route.abort();
+      return route.fulfill({ json: { action } });
     });
-    await mockVoiceBrowser(page, { transcript: "Open You Tube." });
+    await mockVoiceBrowser(page, { transcript: "Open https://example.org/path?q=one" });
     await startRecording(page);
     await stopRecording(page);
     await page.getByRole("button", { name: "Send reviewed recording to Prisma" }).click();
     const transcriptBox = page.getByLabel("Prisma transcript or typed message");
-    await expect(transcriptBox).toHaveValue("Open You Tube.");
+    await expect(transcriptBox).toHaveValue("Open https://example.org/path?q=one");
     const panel = page.getByRole("region", { name: "Windows desktop control" });
-    const prepare = panel.getByRole("button", { name: "Prepare link action" });
+    const prepare = panel.getByRole("button", { name: "Interpret with Gemini" });
     const confirm = panel.getByRole("button", { name: "Confirm and execute" });
     await panel.getByRole("button", { name: "Connect to local companion" }).click();
     await panel.getByRole("button", { name: "Enable control" }).click();
     await expect(prepare).toBeDisabled();
     await panel.getByRole("button", { name: "I reviewed this transcript" }).click();
     await prepare.click();
-    await expect(panel.getByText("open https://www.youtube.com/", { exact: true })).toBeVisible();
-    expect(requests).toEqual([]);
-    await transcriptBox.fill("Open the website Example.");
-    await expect(confirm).toHaveCount(0);
-    await panel.getByRole("button", { name: "I reviewed this transcript" }).click();
-    await prepare.click();
-    await expect(panel.getByRole("status", { name: "Clarification needed" })).toContainText("Choose an approved link");
-    await expect(confirm).toHaveCount(0);
-    expect(requests).toEqual([]);
-
-    await transcriptBox.fill("Open You Tube.");
-    await panel.getByRole("button", { name: "I reviewed this transcript" }).click();
-    await prepare.click();
-    dropExecutionResponse = true;
+    await expect(panel.getByText("open https://example.org/path?q=one", { exact: true })).toBeVisible();
+    expect(requests).toEqual(["gemini"]);
     await confirm.click();
-    await expect(panel.getByRole("status")).toContainText("Check whether the link opened before retrying");
+    await expect(panel.getByRole("status")).toContainText("Completed: completed open_website");
     await expect(confirm).toHaveCount(0);
-    expect(requests.splice(0)).toEqual(["/desktop/confirm", "/desktop/execute"]);
+    expect(requests).toEqual(["gemini", "/desktop/confirm", "/desktop/execute"]);
+  });
 
-    dropExecutionResponse = false;
-    await prepare.click();
-    await confirm.click();
-    await expect(panel.getByRole("status")).toContainText("sent https://www.youtube.com/ to the default browser");
-    expect(requests).toEqual(["/desktop/confirm", "/desktop/execute"]);
+  test("website typing preview binds exact text and verifies without submitting", async ({ page }) => {
+    const origin = "http://127.0.0.1:18765";
+    const text = "feature one safe query";
+    const action = { action: "sequence", steps: [
+      { action: "open_website", url: "https://chatgpt.com/" },
+      { action: "type_into_visible", target_name: "Message ChatGPT", text, text_mode: "replace" },
+    ] };
+    const requests: string[] = [];
+    const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Authorization, Content-Type" };
+    await page.route(`${origin}/**`, async route => {
+      const request = route.request();
+      if (request.method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
+      const path = new URL(request.url()).pathname;
+      if (path === "/pair") return route.fulfill({ headers: cors, json: { token: "mock-pairing" } });
+      if (path === "/health") return route.fulfill({ headers: cors, json: { active: false } });
+      if (path === "/activate") return route.fulfill({ headers: cors, json: { active: true } });
+      requests.push(path);
+      if (path === "/desktop/confirm") {
+        expect(request.postDataJSON().action).toEqual(action);
+        return route.fulfill({ headers: cors, json: { confirmation_token: "mock-sequence-ticket" } });
+      }
+      if (path === "/desktop/execute") return route.fulfill({ headers: cors, json: { ok: true, action: "sequence", steps: [
+        { ok: true, action: "open_website", requested_url: "https://chatgpt.com/", verified_url: "https://chatgpt.com/", verified_window: "browser-window", redirected: false },
+        { ok: true, action: "type_into_visible", target: "Message ChatGPT", typed_characters: [...text].length, verified: true, submitted: false },
+      ] } });
+      return route.abort();
+    });
+    await page.route("**/api/v1/assistant/voice/speech", route => route.fulfill({ status: 204 }));
+    await page.route("**/api/v1/assistant/desktop/interpret", route => {
+      requests.push("gemini");
+      return route.fulfill({ json: { action } });
+    });
+    await mockVoiceBrowser(page, { transcript: `Open ChatGPT and type ${text}` });
+    await startRecording(page);
+    await stopRecording(page);
+    await page.getByRole("button", { name: "Send reviewed recording to Prisma" }).click();
+    const panel = page.getByRole("region", { name: "Windows desktop control" });
+    await panel.getByRole("button", { name: "Connect to local companion" }).click();
+    await panel.getByRole("button", { name: "Enable control" }).click();
+    await panel.getByRole("button", { name: "I reviewed this transcript" }).click();
+    await panel.getByRole("button", { name: "Interpret with Gemini" }).click();
+    await expect(panel.getByText(`type replace into Message ChatGPT: ${JSON.stringify(text)} (do not submit)`, { exact: true })).toBeVisible();
+    await panel.getByRole("button", { name: "Confirm and execute" }).click();
+    await expect(panel.getByRole("status")).toContainText("Completed: completed 2 approved desktop steps");
+    expect(requests).toEqual(["gemini", "/desktop/confirm", "/desktop/execute"]);
   });
 
   test("pointer plans reject duplicate names and a switched QA tab before native approval", async ({ page }) => {

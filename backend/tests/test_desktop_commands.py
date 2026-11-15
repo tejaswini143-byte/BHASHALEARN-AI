@@ -56,7 +56,19 @@ def test_opening_approved_apps_and_https_sites_is_structured(monkeypatch):
     monkeypatch.setattr(desktop_commands, "generate_tutor_reply",
                         lambda *_: '{"action":"open_website","url":"https://chatgpt.com"}')
     plan = desktop_commands.interpret_desktop_command("Open ChatGPT")
-    assert plan.action == "open_website" and plan.url == "https://chatgpt.com"
+    assert plan.action == "open_website" and plan.url == "https://chatgpt.com/"
+
+
+def test_calculator_plan_preserves_and_validates_the_exact_arithmetic(monkeypatch):
+    monkeypatch.setattr(desktop_commands, "generate_tutor_reply",
+                        lambda *_: '{"action":"calculate","text":"250 * 18"}')
+    plan = desktop_commands.interpret_desktop_command("Calculate 250 * 18")
+    assert plan.action == "calculate" and plan.text == "250 * 18"
+
+    monkeypatch.setattr(desktop_commands, "generate_tutor_reply",
+                        lambda *_: '{"action":"calculate","text":"4500"}')
+    with pytest.raises(HTTPException, match="changed the arithmetic expression"):
+        desktop_commands.interpret_desktop_command("Calculate 250 * 18")
 
 
 def test_compound_notepad_dictation_stays_local_and_is_planned_as_sequence(monkeypatch):

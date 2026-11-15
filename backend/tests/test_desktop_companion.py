@@ -11,6 +11,34 @@ import pytest
 from scripts import desktop_companion as companion
 
 
+def test_companion_validates_public_website_sequences_and_exact_approval_details():
+    plan = {"action": "sequence", "steps": [
+        {"action": "open_website", "url": "github.com"},
+        {"action": "type_into_visible", "target_name": "Search", "text": "safe phrase", "text_mode": "replace"},
+    ]}
+    companion._validate_execution_action(plan)
+    assert plan["steps"][0]["url"] == "https://github.com/"
+    description = companion._approval_description(plan)
+    assert "https://github.com/" in description
+    assert "safe phrase" in description
+    assert "do not submit" in description
+
+
+@pytest.mark.parametrize("url", ["file:///C:/Windows/win.ini", "http://127.0.0.1/", "https://example.com/?access_token=x"])
+def test_companion_rejects_nonpublic_or_secret_urls_before_native_approval(url):
+    with pytest.raises(ValueError):
+        companion._validate_execution_action({"action": "open_website", "url": url})
+
+
+def test_companion_rejects_nested_sequences_and_unrestricted_actions():
+    with pytest.raises(ValueError):
+        companion._validate_execution_action({"action": "sequence", "steps": [
+            {"action": "sequence", "steps": [{"action": "open_app", "app_id": "notepad"}]},
+        ]})
+    with pytest.raises(ValueError):
+        companion._validate_execution_action({"action": "shell", "command": "whoami"})
+
+
 @pytest.fixture
 def companion_server(monkeypatch):
     monkeypatch.setattr(companion, "TOKEN", "qa-test-token")

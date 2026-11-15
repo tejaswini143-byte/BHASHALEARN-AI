@@ -12,8 +12,13 @@ import time
 import secrets
 import tempfile
 import webbrowser
+from decimal import Decimal
 from pathlib import Path
 from urllib.parse import quote_plus, urlsplit
+try:
+    from scripts.calculator_math import evaluate_expression
+except ImportError:
+    from calculator_math import evaluate_expression
 
 import pyautogui
 # pywinauto's COM wrapper generator otherwise falls back to the profile's
@@ -27,9 +32,13 @@ try:
 except ImportError:
     pass
 from pywinauto import Desktop
+try:
+    from scripts.public_urls import UnsafePublicURL, normalize_public_http_url, verify_public_redirect
+except ImportError:
+    from public_urls import UnsafePublicURL, normalize_public_http_url, verify_public_redirect
 
 
-SUPPORTED_APPS = {"notepad": "Notepad", "chrome": "Google Chrome", "edge": "Microsoft Edge"}
+SUPPORTED_APPS = {"notepad": "Notepad", "chrome": "Google Chrome", "edge": "Microsoft Edge", "calculator": "Calculator"}
 APPROVED_LINKS = frozenset({"https://www.youtube.com/", "https://chatgpt.com/", "https://www.google.com/"})
 DEMO_FORM_VALUES = {"Demo form Name": "Demo Learner", "Demo form Email": "demo.learner@example.test"}
 DEMO_FORM_IDS = {"Demo form Name": "qa-demo-name", "Demo form Email": "qa-demo-email"}
@@ -52,7 +61,8 @@ def validate_demo_form(fields) -> None:
         seen_ids.add(target_id)
 
 
-PROCESS_APPS = {"notepad.exe": "notepad", "chrome.exe": "chrome", "msedge.exe": "edge"}
+PROCESS_APPS = {"notepad.exe": "notepad", "chrome.exe": "chrome", "msedge.exe": "edge",
+                "calculatorapp.exe": "calculator", "calculator.exe": "calculator"}
 SENSITIVE_LABEL = re.compile(r"password|passcode|one[- ]time code|\botp\b|credit card|cvv|bank account|social security|passport|\bssn\b", re.I)
 MAX_CONTROLS = 30
 SNAPSHOT_TTL = 90
@@ -235,13 +245,115 @@ def _foreground_handle() -> int:
     return int(ctypes.windll.user32.GetForegroundWindow())
 
 
+_ADDRESS_AUTOMATION_IDS = {"omnibox", "addresseditbox", "addressandsearchbox"}
+_ADDRESS_NAMES = {"address and search bar", "address bar", "address and search box", "search or enter address"}
+
+
+def _read_browser_address(entry: dict) -> str:
+    """Read only the active Chrome/Edge address control, never page text."""
+    if entry.get("app_id") not in {"chrome", "edge"}:
+        raise RuntimeError("The foreground application is not a supported browser.")
+    candidates = []
+    try:
+        controls = entry["wrapper"].descendants()
+    except Exception:
+        controls = []
+    for control in controls:
+        try:
+            info = control.element_info
+            control_type = str(info.control_type or "")
+            automation_id = str(getattr(info, "automation_id", "") or "").casefold()
+            name = str(info.name or "").strip().casefold()
+            if control_type not in {"Edit", "ComboBox"}:
+                continue
+            if automation_id not in _ADDRESS_AUTOMATION_IDS and name not in _ADDRESS_NAMES:
+                continue
+            if not control.is_visible() or not control.is_enabled() or control.is_password():
+                continue
+            value = str(control.iface_value.CurrentValue or "").strip()
+            if value:
+                candidates.append((automation_id in _ADDRESS_AUTOMATION_IDS, value))
+        except Exception:
+            continue
+    if not candidates:
+        raise RuntimeError("The browser address bar is not exposed through Windows UI Automation.")
+    preferred = [value for exact, value in candidates if exact]
+    values = preferred or [value for _, value in candidates]
+    if len(set(values)) != 1:
+        raise RuntimeError("Windows exposed more than one browser address control.")
+    return values[0]
+
+
+def _foreground_browser_entry() -> dict | None:
+    foreground = _foreground_handle()
+    return next((entry for entry in _windows()
+                 if entry["handle"] == foreground and entry["app_id"] in {"chrome", "edge"}), None)
+
+
+def _navigate_and_verify(url: str, *, cancel_check, timeout: float = 20.0) -> dict:
+    try:
+        requested = normalize_public_http_url(url, resolve_dns=True)
+    except UnsafePublicURL as exc:
+        raise RuntimeError(str(exc)) from exc
+    before = None
+    try:
+        entry = _foreground_browser_entry()
+        if entry:
+            before = _read_browser_address(entry)
+    except RuntimeError:
+        before = None
+    try:
+        dispatched = webbrowser.open(requested, new=2, autoraise=True)
+    except (OSError, webbrowser.Error):
+        dispatched = False
+    if not dispatched:
+        raise RuntimeError("Windows could not send the approved website to Chrome or Edge.")
+
+    deadline = time.monotonic() + timeout
+    last_url = None
+    stable_reads = 0
+    last_error = "The browser did not expose a verified public URL."
+    while time.monotonic() < deadline:
+        cancel_check()
+        entry = _foreground_browser_entry()
+        if not entry:
+            last_error = "Bring the approved Chrome or Edge window to the foreground to verify navigation."
+            time.sleep(0.25)
+            continue
+        try:
+            observed = _read_browser_address(entry)
+            if observed.casefold().startswith(("chrome-error:", "edge-error:", "about:", "file:")):
+                raise RuntimeError("The browser displayed an internal error page instead of the approved website.")
+            verified = verify_public_redirect(requested, observed)
+        except UnsafePublicURL as exc:
+            raise RuntimeError(str(exc)) from exc
+        except RuntimeError as exc:
+            last_error = str(exc)
+            time.sleep(0.25)
+            continue
+        if before is not None and observed == before and urlsplit(verified).hostname != urlsplit(requested).hostname:
+            time.sleep(0.25)
+            continue
+        if verified == last_url:
+            stable_reads += 1
+        else:
+            last_url = verified
+            stable_reads = 1
+        if stable_reads >= 2:
+            return {"ok": True, "requested_url": requested, "verified_url": verified,
+                    "verified_window": entry["id"], "redirected": verified != requested}
+        time.sleep(0.35)
+    raise RuntimeError(last_error)
+
+
 def _launch_app(app_id: str, *, cancel_check) -> dict:
     if app_id not in SUPPORTED_APPS:
-        raise RuntimeError("Only Notepad, Chrome, and Edge can be launched by voice.")
+        raise RuntimeError("Only Notepad, Chrome, Edge, and Calculator can be launched by voice.")
     paths = {
         "notepad": shutil.which("notepad.exe") or str(Path(os.environ.get("WINDIR", r"C:\Windows")) / "System32" / "notepad.exe"),
         "chrome": r"C:\Program Files\Google\Chrome\Application\chrome.exe",
         "edge": r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        "calculator": shutil.which("calc.exe") or str(Path(os.environ.get("WINDIR", r"C:\Windows")) / "System32" / "calc.exe"),
     }
     executable = paths[app_id]
     if not Path(executable).is_file():
@@ -277,6 +389,64 @@ def _launch_app(app_id: str, *, cancel_check) -> dict:
     raise RuntimeError(f"{SUPPORTED_APPS[app_id]} did not open a visible window within 10 seconds.")
 
 
+def _calculate_in_calculator(expression: str, *, type_text, cancel_check) -> dict:
+    try:
+        expected = evaluate_expression(expression)
+    except ValueError as exc:
+        raise RuntimeError(str(exc)) from exc
+    entry = next((item for item in _windows() if item["app_id"] == "calculator"), None)
+    if not entry:
+        _launch_app("calculator", cancel_check=cancel_check)
+        entry = next((item for item in _windows() if item["app_id"] == "calculator"), None)
+    if not entry:
+        raise RuntimeError("Calculator did not expose a visible window.")
+    cancel_check()
+    entry["wrapper"].set_focus()
+    if _foreground_handle() != entry["handle"]:
+        raise RuntimeError("Calculator did not become the foreground window.")
+    displays = []
+    for control in entry["wrapper"].descendants():
+        try:
+            if str(getattr(control.element_info, "automation_id", "") or "") == "CalculatorResults":
+                displays.append(control)
+        except Exception:
+            continue
+    if len(displays) != 1 or not displays[0].is_visible():
+        raise RuntimeError("Windows could not uniquely identify the Calculator result display.")
+    pyautogui.hotkey("ctrl", "a")
+    for char in expression:
+        cancel_check()
+        if char.isspace():
+            continue
+        if char == "×":
+            pyautogui.write("*")
+        elif char == "÷":
+            pyautogui.write("/")
+        else:
+            type_text(char)
+    cancel_check()
+    pyautogui.press("enter")
+    deadline = time.monotonic() + 5
+    observed_text = ""
+    while time.monotonic() < deadline:
+        cancel_check()
+        try:
+            observed_text = str(displays[0].element_info.name or "")
+        except Exception:
+            observed_text = ""
+        numbers = re.findall(r"-?\d[\d,]*(?:\.\d+)?", observed_text)
+        if numbers:
+            try:
+                observed = Decimal(numbers[-1].replace(",", ""))
+            except Exception:
+                observed = None
+            if observed == expected:
+                return {"ok": True, "action": "calculate", "verified": True,
+                        "verified_result": str(expected), "verified_window": entry["id"]}
+        time.sleep(0.15)
+    raise RuntimeError("Calculator did not display the expected verified result. Inspect it before retrying.")
+
+
 def execute_action(payload: dict, *, type_text, cancel_check, confirmed_close: bool = False,
                    sequence_context: dict | None = None, snapshot_id: str | None = None,
                    active_window_id: str | None = None, focus_target_id: str | None = None) -> dict:
@@ -303,43 +473,38 @@ def execute_action(payload: dict, *, type_text, cancel_check, confirmed_close: b
         result = _launch_app(payload.get("app_id"), cancel_check=cancel_check)
         context["launched_app"] = payload.get("app_id")
         return result
+    if action == "calculate":
+        return _calculate_in_calculator(payload.get("text", ""), type_text=type_text, cancel_check=cancel_check)
     if action == "open_named_link":
         url = payload.get("url")
-        if not isinstance(url, str) or url not in APPROVED_LINKS:
-            raise RuntimeError("Choose an approved link: YouTube, ChatGPT, or Google.")
-        cancel_check()
-        failure = "Windows could not send the approved link to the default browser. Check that a default browser is configured."
-        try:
-            dispatched = webbrowser.open(url, new=2, autoraise=True)
-        except (OSError, webbrowser.Error):
-            raise RuntimeError(failure) from None
-        if not dispatched:
-            raise RuntimeError(failure)
-        return {"ok": True, "action": action, "url": url}
+        if not isinstance(url, str):
+            raise RuntimeError("A public website URL is required.")
+        result = _navigate_and_verify(url, cancel_check=cancel_check)
+        context.update(browser_window_id=result["verified_window"], verified_url=result["verified_url"])
+        return {"ok": True, "action": action, **result}
     if action == "open_website":
         url = payload.get("url")
-        parsed = urlsplit(url or "")
-        if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
-            raise RuntimeError("Only a valid HTTPS website can be opened.")
-        if not webbrowser.open(url, new=2, autoraise=True):
-            raise RuntimeError("Windows could not open the website in the default browser.")
-        return {"ok": True, "action": action, "host": parsed.hostname}
+        if not isinstance(url, str):
+            raise RuntimeError("A public website URL is required.")
+        result = _navigate_and_verify(url, cancel_check=cancel_check)
+        context.update(browser_window_id=result["verified_window"], verified_url=result["verified_url"])
+        return {"ok": True, "action": action, **result}
     if action == "search_web":
         query = payload.get("text")
         if not isinstance(query, str) or not query.strip() or len(query) > 120:
             raise RuntimeError("Search text must be 1-120 characters.")
         url = "https://www.google.com/search?q=" + quote_plus(query.strip())
-        if not webbrowser.open(url, new=2, autoraise=True):
-            raise RuntimeError("Windows could not open the search in the default browser.")
-        return {"ok": True, "action": action, "destination": "Google search"}
+        result = _navigate_and_verify(url, cancel_check=cancel_check)
+        context.update(browser_window_id=result["verified_window"], verified_url=result["verified_url"])
+        return {"ok": True, "action": action, "destination": "Google search", **result}
     if action == "search_youtube":
         query = payload.get("text")
         if not isinstance(query, str) or not query.strip() or len(query) > 120:
             raise RuntimeError("Search text must be 1-120 characters.")
         url = "https://www.youtube.com/results?search_query=" + quote_plus(query.strip())
-        if not webbrowser.open(url, new=2, autoraise=True):
-            raise RuntimeError("Windows could not open the YouTube search in the default browser.")
-        return {"ok": True, "action": action, "destination": "YouTube search"}
+        result = _navigate_and_verify(url, cancel_check=cancel_check)
+        context.update(browser_window_id=result["verified_window"], verified_url=result["verified_url"])
+        return {"ok": True, "action": action, "destination": "YouTube search", **result}
     if action == "open_approved_site":
         site_id = payload.get("site_id")
         local_sites = {"qa_home": "http://127.0.0.1:5200/desktop-control-test.html",
@@ -358,12 +523,73 @@ def execute_action(payload: dict, *, type_text, cancel_check, confirmed_close: b
         while time.monotonic() < deadline:
             cancel_check()
             fresh = get_snapshot()
+            browser_window_id = context.get("browser_window_id")
+            if browser_window_id:
+                if fresh["active_window_id"] != browser_window_id or fresh["active_app"] not in {"Google Chrome", "Microsoft Edge"}:
+                    raise RuntimeError("The approved browser window lost focus before text entry.")
+                browser_entry = next((item for item in _windows() if item["id"] == browser_window_id), None)
+                if not browser_entry or _foreground_handle() != browser_entry["handle"]:
+                    raise RuntimeError("The approved browser window is no longer in the foreground.")
+                try:
+                    observed_url = verify_public_redirect(context["verified_url"], _read_browser_address(browser_entry))
+                except (UnsafePublicURL, RuntimeError) as exc:
+                    raise RuntimeError("The approved browser destination changed before text entry.") from exc
+                if observed_url != context["verified_url"]:
+                    raise RuntimeError("The browser navigated away from the approved destination.")
             candidates = [item for item in fresh["targets"] if item["kind"] != "window"
                           and requested.casefold() in item["name"].casefold()]
             if len(candidates) == 1:
                 target = candidates[0]
                 if action == "type_into_visible" and target["kind"] not in {"text", "search"}:
                     raise RuntimeError("The named visible control is not a text or search field.")
+                if action == "type_into_visible":
+                    text_value = payload.get("text")
+                    if not isinstance(text_value, str) or not 1 <= len(text_value) <= 1000 or any(ord(char) < 32 and char not in "\r\n\t" for char in text_value):
+                        raise RuntimeError("Text entry must be 1–1000 safe characters.")
+                    cached = _cached_target(fresh["snapshot_id"], target["id"])
+                    wrapper = cached["wrapper"]
+                    try:
+                        value_pattern = wrapper.iface_value
+                        if (not wrapper.is_enabled() or wrapper.element_info.element.CurrentIsPassword
+                                or value_pattern.CurrentIsReadOnly):
+                            raise RuntimeError("The selected field is not editable.")
+                        old_value = value_pattern.CurrentValue or ""
+                    except RuntimeError:
+                        raise
+                    except Exception:
+                        raise RuntimeError("Windows could not verify that the selected field is editable.") from None
+                    mode = payload.get("text_mode", "replace")
+                    if mode not in {"append", "replace"}:
+                        raise RuntimeError("Choose append or replace text mode.")
+                    wrapper.set_focus()
+                    if _foreground_handle() != cached["handle"] or not wrapper.has_keyboard_focus():
+                        raise RuntimeError("Windows could not confirm focus in the approved text field.")
+                    if mode == "replace":
+                        pyautogui.hotkey("ctrl", "a")
+                    elif old_value:
+                        pyautogui.hotkey("ctrl", "end")
+                    for char in text_value:
+                        cancel_check()
+                        if _foreground_handle() != cached["handle"]:
+                            raise RuntimeError("The approved browser or application lost foreground focus during text entry.")
+                        if char in "\r\n":
+                            if browser_window_id:
+                                pyautogui.hotkey("shift", "enter")
+                            else:
+                                pyautogui.press("enter")
+                        elif char == "\t":
+                            pyautogui.press("tab")
+                        else:
+                            type_text(char)
+                    try:
+                        final_value = value_pattern.CurrentValue or ""
+                    except Exception:
+                        raise RuntimeError("Windows could not verify the text entry. Inspect the field before retrying.") from None
+                    expected = text_value if mode == "replace" else old_value + text_value
+                    if final_value != expected:
+                        raise RuntimeError("Windows did not verify the exact text entry. Inspect the field before retrying.")
+                    return {"ok": True, "action": action, "target": target["name"],
+                            "typed_characters": len(text_value), "verified": True, "submitted": False}
                 mapped = {"click_visible": "click_target", "focus_visible": "focus_target",
                           "type_into_visible": "type_into"}[action]
                 result = execute_action({"action": mapped, "target_id": target["id"],
@@ -627,8 +853,11 @@ def execute_action(payload: dict, *, type_text, cancel_check, confirmed_close: b
 
     if action == "type":
         value = payload.get("text")
-        if not isinstance(value, str) or not value or len(value) > 120 or not value.isprintable():
-            raise RuntimeError("Text entry must be 1-120 printable characters.")
+        if not isinstance(value, str) or not value or len(value) > 1000 or any(ord(char) < 32 and char not in "\r\n\t" for char in value):
+            raise RuntimeError("Text entry must contain 1–1000 safe characters.")
+        editable = None
+        previous = ""
+        required_foreground = None
         if context.get("launched_app"):
             active_handle = _foreground_handle()
             active_entry = next((item for item in _windows() if item["handle"] == active_handle
@@ -646,7 +875,18 @@ def execute_action(payload: dict, *, type_text, cancel_check, confirmed_close: b
                 pass
             if len(edits) != 1:
                 raise RuntimeError("I could not uniquely identify the new app's editable document area.")
-            edits[0].set_focus()
+            editable = edits[0]
+            required_foreground = active_entry["handle"]
+            try:
+                pattern = editable.iface_value
+                if not editable.is_enabled() or editable.element_info.element.CurrentIsPassword or pattern.CurrentIsReadOnly:
+                    raise RuntimeError("The new app document is not editable.")
+                previous = pattern.CurrentValue or ""
+            except RuntimeError:
+                raise
+            except Exception:
+                raise RuntimeError("Windows could not verify the new app document is editable.") from None
+            editable.set_focus()
             focus_label = "newly opened " + SUPPORTED_APPS[context["launched_app"]]
         else:
             active_target = _cached_target(snapshot_id, active_window_id) if active_window_id else None
@@ -656,8 +896,29 @@ def execute_action(payload: dict, *, type_text, cancel_check, confirmed_close: b
             if not focus or focus["kind"] not in {"text", "search"}:
                 raise RuntimeError("Typing requires a currently selected text field from the UI Automation snapshot.")
             focus["wrapper"].set_focus()
+            required_foreground = active_target["handle"]
+            if _foreground_handle() != required_foreground or not focus["wrapper"].has_keyboard_focus():
+                raise RuntimeError("Windows could not confirm focus in the selected text field.")
             focus_label = focus["label"]
-        type_text(value)
+        for char in value:
+            cancel_check()
+            if required_foreground is not None and _foreground_handle() != required_foreground:
+                raise RuntimeError("The approved Notepad window lost foreground focus during text entry.")
+            if char in "\r\n":
+                pyautogui.press("enter")
+            elif char == "\t":
+                pyautogui.press("tab")
+            else:
+                type_text(char)
+        if editable is not None:
+            try:
+                observed = editable.iface_value.CurrentValue or ""
+            except Exception:
+                raise RuntimeError("Windows could not verify the Notepad text. Inspect the document before retrying.") from None
+            if observed != previous + value:
+                raise RuntimeError("Windows did not verify the exact Notepad text. Inspect the document before retrying.")
+            return {"ok": True, "action": "type", "target": focus_label,
+                    "typed_characters": len(value), "verified": True}
         return {"ok": True, "action": "type", "target": focus_label, "typed_characters": len(value)}
 
     if action == "scroll_up" or action == "scroll_down":

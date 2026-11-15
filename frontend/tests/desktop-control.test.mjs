@@ -127,12 +127,13 @@ test("a Prisma transcript must be explicitly reviewed before Gemini planning", a
   assert.doesNotMatch(panel, /Interpret each new Prisma transcript as a desktop command/);
 });
 
-test("target-independent app launches use a fresh snapshot without weakening target-bound checks", async () => {
+test("target-independent browser and app sequences avoid unrelated snapshots while target-bound checks remain", async () => {
   const panel = await read("../src/DesktopControlPanel.tsx");
   assert.match(panel, /function requiresBoundTargets\(step: Action\)/);
   assert.match(panel, /const needsBoundTargets = requiresBoundTargets\(approvedAction\)/);
-  assert.match(panel, /needsBoundTargets \? snapshot\.snapshot_id : currentSnapshot\.snapshot_id/);
-  assert.match(panel, /if \(needsBoundTargets && approvedAction\.action !== "type_qa_text" && !fillsDemoForm && \(currentSnapshot\.active_window_id/);
+  assert.match(panel, /const currentSnapshot = needsBoundTargets \? await companion\("\/desktop\/snapshot"\)/);
+  assert.match(panel, /\["open_app".*"type_into_visible"\]/);
+  assert.match(panel, /if \(needsBoundTargets && currentSnapshot && snapshot && approvedAction\.action !== "type_qa_text" && !fillsDemoForm && \(currentSnapshot\.active_window_id/);
 });
 
 test("disposable QA provides uniquely named, duplicate, search, typing, and sandbox targets", async () => {

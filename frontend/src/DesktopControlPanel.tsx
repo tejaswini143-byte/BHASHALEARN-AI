@@ -17,6 +17,7 @@ type FormField = { target_id: string; label: keyof typeof DEMO_FORM_VALUES; valu
 type Action = {
   action: string;
   text?: string | null;
+  text_mode?: "replace" | "append" | null;
   target_id?: string | null;
   site_id?: string | null;
   app_id?: string | null;
@@ -95,13 +96,6 @@ function bindNamedClickTargets(action: Action, transcript: string, targets: Arra
 const requestedBase = import.meta.env.VITE_DESKTOP_COMPANION_URL;
 const allowedCompanionBases = new Set(["http://127.0.0.1:18765", "http://127.0.0.1:18766", "http://127.0.0.1:18770", "http://127.0.0.1:18771"]);
 const base = requestedBase && allowedCompanionBases.has(requestedBase) ? requestedBase : "http://127.0.0.1:18765";
-const APPROVED_LINKS = new Map([
-  ["youtube", "https://www.youtube.com/"],
-  ["you tube", "https://www.youtube.com/"],
-  ["chatgpt", "https://chatgpt.com/"],
-  ["chat gpt", "https://chatgpt.com/"],
-  ["google", "https://www.google.com/"],
-]);
 
 function pointerCommand(transcript: string) {
   const command = transcript.toLowerCase().replace(/[.!?]$/, "").replace(/\s+/g, " ");
@@ -115,21 +109,23 @@ function pointerCommand(transcript: string) {
 function planLocalCommand(transcript: string, inQaPage: boolean): Action | null {
   const command = transcript.toLowerCase().replace(/[.!?]$/, "").replace(/\s+/g, " ");
   if (command === "open notepad") return { action: "open_app", app_id: "notepad" };
-
-  const approvedLink = command.match(/^open (?:(?:the )?(?:approved link|website|link) )?(.+)$/);
-  if (!approvedLink) return null;
-  const name = approvedLink[1];
-  const url = APPROVED_LINKS.get(name);
-  if (url) return { action: "open_named_link", url };
-  if (/^open (?:the )?(?:approved link|website|link) /.test(command)
-    || /^(?:https?:\/\/|www\.)/.test(name)
-    || (!inQaPage && /^[a-z0-9.-]+$/.test(name) && !["chrome", "edge"].includes(name))) {
-    return { action: "clarify", clarification: "Choose an approved link: YouTube, ChatGPT, or Google." };
-  }
+  // Website planning belongs to Gemini/backend validation. Keeping a local
+  // allowlist here blocked otherwise-safe public destinations before planning.
+  void inQaPage;
   return null;
 }
 const STOP_WORDS = /^(stop|emergency stop|desktop control stop|ఆపు|ఆపండి|అత్యవసరంగా ఆపు)$/iu;
 const wait = (ms: number) => new Promise(resolve => window.setTimeout(resolve, ms));
+
+function isVerifiedPublicUrl(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  try {
+    const url = new URL(value);
+    return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password
+      && url.hostname.includes(".") && !/(^|\.)(localhost|local|internal|intranet|home|lan|test|invalid|example|onion)$/i.test(url.hostname)
+      && !/^(127\.|10\.|192\.168\.|169\.254\.)/.test(url.hostname);
+  } catch { return false; }
+}
 
 export function DesktopControlPanel({ transcript, language = "mixed" }: { transcript: string; language?: "english" | "telugu" | "mixed" }) {
   const [pairing, setPairing] = useState("");
@@ -283,7 +279,9 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
     try {
       let targets = qaContext?.targets || [];
       let approved_sites = qaContext?.approved_sites || {};
-      if (pointer || dictation !== null || (autofill && qaContext) || (!autofill && !qaContext && !localPlan)) {
+      const needsExistingUi = /\b(click|focus|switch|close|minimize|maximize|scroll|copy|shortcut)\b/i.test(normalized)
+        || (!/^open\s+/i.test(normalized) && !/\b(?:type|write|enter)\b/i.test(normalized));
+      if (pointer || dictation !== null || (autofill && qaContext) || (!autofill && !qaContext && !localPlan && needsExistingUi)) {
         const snapshot = await companion("/desktop/snapshot") as DesktopSnapshot;
         desktopSnapshotRef.current = snapshot;
         targets = targetsForCommand(snapshot, normalized);
@@ -377,9 +375,11 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
     }
     if (step.action === "open_approved_site") return `open ${step.site_id === "qa_sandbox" ? "the QA sandbox" : "the desktop-control QA page"}`;
     if (step.action === "open_app") return `open ${step.app_id || "the selected app"}`;
+    if (step.action === "calculate") return `open Calculator and calculate ${step.text || "the reviewed expression"}`;
     if (step.action === "open_website" || step.action === "open_named_link") return `open ${step.url || "the selected website"}`;
     if (step.action === "search_web" || step.action === "search_youtube") return `search ${step.action === "search_youtube" ? "YouTube" : "Google"} for “${step.text || "…"}”`;
-    if (["click_visible", "focus_visible", "type_into_visible"].includes(step.action)) return `${step.action.replaceAll("_", " ")} ${step.target_name || "the named visible control"}`;
+    if (step.action === "type_into_visible") return `type ${step.text_mode || "replace"} into ${step.target_name || "the named visible control"}: ${JSON.stringify(step.text || "")} (do not submit)`;
+    if (["click_visible", "focus_visible"].includes(step.action)) return `${step.action.replaceAll("_", " ")} ${step.target_name || "the named visible control"}`;
     if (step.action === "keyboard_shortcut") return `press ${step.shortcut || "the selected shortcut"}`;
     return step.action.replaceAll("_", " ");
   }
@@ -390,7 +390,7 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
 
   function requiresBoundTargets(step: Action): boolean {
     if (step.action === "sequence") return (step.steps || []).some(requiresBoundTargets);
-    return !["open_app", "open_website", "search_web", "search_youtube", "open_approved_site", "navigate_back", "navigate_forward", "stop", "clarify"].includes(step.action);
+    return !["open_app", "open_website", "search_web", "search_youtube", "open_approved_site", "navigate_back", "navigate_forward", "stop", "clarify", "click_visible", "focus_visible", "type_into_visible"].includes(step.action);
   }
 
   function addWindowContext(step: Action, snapshot: DesktopSnapshot): Action {
@@ -544,38 +544,38 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
           snapshot_id: string; active_window_id: string | null; focus_target_id: string | null;
         }> = { confirmed_close: closeConfirmed, action: approvedAction };
         if (!localPlan) {
-          const snapshot = desktopSnapshotRef.current;
-          if (!snapshot) throw new Error("Refresh Windows UI Automation targets before executing this action.");
-          const currentSnapshot = await companion("/desktop/snapshot") as DesktopSnapshot;
           const needsBoundTargets = requiresBoundTargets(approvedAction);
-          if ((pointerCommand(normalized) || approvedAction.action === "type_qa_text" || fillsDemoForm) && currentSnapshot.pointer_qa_window !== true) {
+          const snapshot = desktopSnapshotRef.current;
+          if (needsBoundTargets && !snapshot) throw new Error("Refresh Windows UI Automation targets before executing this action.");
+          const currentSnapshot = needsBoundTargets ? await companion("/desktop/snapshot") as DesktopSnapshot : null;
+          if ((pointerCommand(normalized) || approvedAction.action === "type_qa_text" || fillsDemoForm) && currentSnapshot?.pointer_qa_window !== true) {
             throw new Error("The disposable desktop QA window is no longer active. Prepare the action again.");
           }
-          if (approvedAction.action === "type_qa_text") {
+          if (approvedAction.action === "type_qa_text" && currentSnapshot && snapshot) {
             const fields = currentSnapshot.targets.filter(target => target.kind === "text" && target.name === approvedAction.target_name);
             if (currentSnapshot.active_window_id !== snapshot.active_window_id
               || fields.length !== 1 || fields[0].id !== approvedAction.target_id) {
               throw new Error("The approved text field changed. Prepare the action again.");
             }
           }
-          if (fillsDemoForm && (currentSnapshot.active_window_id !== snapshot.active_window_id
+          if (fillsDemoForm && currentSnapshot && snapshot && (currentSnapshot.active_window_id !== snapshot.active_window_id
             || approvedAction.fields?.some(field => {
               const matches = currentSnapshot.targets.filter(target => target.kind === "text" && target.name === field.label);
               return matches.length !== 1 || matches[0].id !== field.target_id;
             }))) {
             throw new Error("The approved demo form changed. Prepare the action again.");
           }
-          if (needsBoundTargets && approvedAction.action !== "type_qa_text" && !fillsDemoForm && (currentSnapshot.active_window_id !== snapshot.active_window_id
+          if (needsBoundTargets && currentSnapshot && snapshot && approvedAction.action !== "type_qa_text" && !fillsDemoForm && (currentSnapshot.active_window_id !== snapshot.active_window_id
             || currentSnapshot.focused_target_id !== snapshot.focused_target_id
             || JSON.stringify(currentSnapshot.targets) !== JSON.stringify(snapshot.targets))) {
             throw new Error("The active window or its UI Automation targets changed after planning. Reinterpret the command.");
           }
           executionPayload = {
-            snapshot_id: needsBoundTargets ? snapshot.snapshot_id : currentSnapshot.snapshot_id,
-            active_window_id: needsBoundTargets ? snapshot.active_window_id : currentSnapshot.active_window_id,
-            focus_target_id: needsBoundTargets ? snapshot.focused_target_id : currentSnapshot.focused_target_id,
+            ...(needsBoundTargets && snapshot ? { snapshot_id: snapshot.snapshot_id,
+              active_window_id: snapshot.active_window_id,
+              focus_target_id: snapshot.focused_target_id } : {}),
             confirmed_close: closeConfirmed,
-            action: addWindowContext(approvedAction, snapshot),
+            action: needsBoundTargets && snapshot ? addWindowContext(approvedAction, snapshot) : approvedAction,
           };
         }
         assertExecutionActive(executionEpoch);
@@ -603,17 +603,31 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
         if (fillsDemoForm && (response.ok !== true || response.action !== approvedAction.action || response.verified_fields !== 2)) {
           throw new Error("The companion did not verify both demo fields. Inspect them before retrying.");
         }
+        const verifiedStep = (requested: Action, result: any): boolean => {
+          if (!result || result.ok !== true || result.action !== requested.action) return false;
+          if (requested.action === "sequence") return Array.isArray(result.steps)
+            && result.steps.length === requested.steps?.length
+            && result.steps.every((child: any, index: number) => verifiedStep(requested.steps![index], child));
+          if (requested.action === "open_website" || requested.action === "open_named_link") {
+            return isVerifiedPublicUrl(result.verified_url)
+              && typeof result.verified_window === "string";
+          }
+          if (requested.action === "type_into_visible") return result.verified === true && result.submitted === false
+            && result.typed_characters === [...(requested.text || "")].length;
+          if (requested.action === "calculate") return result.verified === true
+            && typeof result.verified_result === "string" && typeof result.verified_window === "string";
+          if (requested.action === "open_app") return result.app_id === requested.app_id && typeof result.verified_window === "string";
+          return true;
+        };
         if (response.ok !== true || response.action !== approvedAction.action
           || (localPlan?.action === "open_app" && (response.app_id !== "notepad"
             || typeof response.verified_window !== "string" || !response.verified_window.trim()))
-          || (approvedAction.action === "open_named_link" && response.url !== approvedAction.url)
+          || (approvedAction.action === "open_named_link" && response.requested_url !== approvedAction.url)
           || (pointerCommand(normalized) && (!Array.isArray(response.cursor)
             || response.cursor.length !== 2 || !response.cursor.every(Number.isInteger)))
           || (approvedAction.action === "type_qa_text" && (response.target !== approvedAction.target_name
             || response.typed_characters !== [...(approvedAction.text || "")].length))
-          || (response.action === "sequence" && (!Array.isArray(response.steps)
-            || response.steps.length !== approvedAction.steps?.length
-            || response.steps.some((step: { ok?: boolean } | null) => step?.ok !== true)))) {
+          || !verifiedStep(approvedAction, response)) {
           throw new Error("The companion did not confirm the approved action result.");
         }
         summary = fillsDemoForm ? "filled the demo Name and Email fields"

@@ -58,6 +58,28 @@ def test_switch_window_waits_for_foreground_activation(monkeypatch):
     assert result == {"ok": True, "action": "switch_window", "target": "QA window"}
 
 
+@pytest.mark.parametrize(("display", "verified"), [("Display is 4,500", True), ("Display is 4,501", False)])
+def test_calculator_reports_success_only_after_uia_result_matches(display, verified, monkeypatch):
+    result_display = SimpleNamespace(element_info=SimpleNamespace(
+        automation_id="CalculatorResults", name=display), is_visible=lambda: True)
+    wrapper = SimpleNamespace(set_focus=lambda: None, descendants=lambda: [result_display])
+    entry = {"app_id": "calculator", "handle": 42, "id": "w-2a", "wrapper": wrapper}
+    monkeypatch.setattr(windows_automation, "_windows", lambda: [entry])
+    monkeypatch.setattr(windows_automation, "_foreground_handle", lambda: 42)
+    monkeypatch.setattr(windows_automation.pyautogui, "hotkey", lambda *args: None)
+    monkeypatch.setattr(windows_automation.pyautogui, "write", lambda *args, **kwargs: None)
+    monkeypatch.setattr(windows_automation.pyautogui, "press", lambda *args: None)
+    if verified:
+        result = windows_automation.execute_action({"action": "calculate", "text": "250*18"},
+                                                   type_text=lambda _: None, cancel_check=lambda: None)
+        assert result == {"ok": True, "action": "calculate", "verified": True,
+                          "verified_result": "4500", "verified_window": "w-2a"}
+    else:
+        with pytest.raises(RuntimeError, match="expected verified result"):
+            windows_automation.execute_action({"action": "calculate", "text": "250*18"},
+                                              type_text=lambda _: None, cancel_check=lambda: None)
+
+
 @pytest.mark.parametrize("outcome", ["existing", "new", "stopped"])
 def test_notepad_verifies_only_a_new_window_and_respects_stop(monkeypatch, tmp_path, outcome):
     focused = []
@@ -97,22 +119,26 @@ def test_notepad_verifies_only_a_new_window_and_respects_stop(monkeypatch, tmp_p
 
 
 @pytest.mark.parametrize("url", sorted(windows_automation.APPROVED_LINKS))
-def test_approved_link_dispatches_exact_url(monkeypatch, url):
+def test_public_link_dispatch_uses_verified_navigation_result(monkeypatch, url):
     opened = []
-    monkeypatch.setattr(windows_automation.webbrowser, "open", lambda value, **_: opened.append(value) or True)
+    def navigate(value, **_):
+        opened.append(value)
+        return {"requested_url": value, "verified_url": value, "verified_window": "w-42", "redirected": False}
+    monkeypatch.setattr(windows_automation, "_navigate_and_verify", navigate)
     result = windows_automation.execute_action({"action": "open_named_link", "url": url},
                                                type_text=lambda _: None, cancel_check=lambda: None)
     assert opened == [url]
-    assert result == {"ok": True, "action": "open_named_link", "url": url}
+    assert result == {"ok": True, "action": "open_named_link", "requested_url": url,
+                      "verified_url": url, "verified_window": "w-42", "redirected": False}
 
 
-@pytest.mark.parametrize("url", ["https://www.youtube.com.example.org/", "https://www.youtube.com/results", ["https://www.youtube.com/"]])
-def test_unapproved_link_never_dispatches(monkeypatch, url):
+@pytest.mark.parametrize("url", ["file:///C:/Windows/win.ini", "http://127.0.0.1/", "https://user:pass@example.com/"])
+def test_nonpublic_link_never_dispatches(monkeypatch, url):
     def unexpected_open(*args, **kwargs):
         pytest.fail("An unapproved destination reached the browser")
 
     monkeypatch.setattr(windows_automation.webbrowser, "open", unexpected_open)
-    with pytest.raises(RuntimeError, match="Choose an approved link"):
+    with pytest.raises(RuntimeError):
         windows_automation.execute_action({"action": "open_named_link", "url": url},
                                           type_text=lambda _: None, cancel_check=lambda: None)
 
@@ -124,10 +150,42 @@ def test_approved_link_reports_browser_dispatch_failure(monkeypatch, browser_err
             raise OSError("Shell handler failed")
         return False
 
+    monkeypatch.setattr("scripts.public_urls.socket.getaddrinfo", lambda *args, **kwargs: [
+        (2, 1, 6, "", ("93.184.216.34", 443)),
+    ])
+    monkeypatch.setattr(windows_automation, "_foreground_browser_entry", lambda: None)
     monkeypatch.setattr(windows_automation.webbrowser, "open", open_link)
-    with pytest.raises(RuntimeError, match="Check that a default browser is configured"):
+    with pytest.raises(RuntimeError, match="could not send"):
         windows_automation.execute_action({"action": "open_named_link", "url": "https://chatgpt.com/"},
                                           type_text=lambda _: None, cancel_check=lambda: None)
+
+
+def test_browser_navigation_requires_stable_visible_address_bar(monkeypatch):
+    monkeypatch.setattr("scripts.public_urls.socket.getaddrinfo", lambda *args, **kwargs: [
+        (2, 1, 6, "", ("93.184.216.34", 443)),
+    ])
+    entry = {"id": "w-42", "app_id": "edge", "handle": 42}
+    monkeypatch.setattr(windows_automation, "_foreground_browser_entry", lambda: entry)
+    monkeypatch.setattr(windows_automation, "_read_browser_address", lambda _: "https://github.com/")
+    dispatched = []
+    monkeypatch.setattr(windows_automation.webbrowser, "open", lambda url, **_: dispatched.append(url) or True)
+    monkeypatch.setattr(windows_automation.time, "sleep", lambda _: None)
+    result = windows_automation._navigate_and_verify("github.com", cancel_check=lambda: None)
+    assert dispatched == ["https://github.com/"]
+    assert result["verified_url"] == "https://github.com/"
+    assert result["verified_window"] == "w-42"
+
+
+def test_browser_navigation_rejects_private_address_bar_redirect(monkeypatch):
+    monkeypatch.setattr("scripts.public_urls.socket.getaddrinfo", lambda *args, **kwargs: [
+        (2, 1, 6, "", ("93.184.216.34", 443)),
+    ])
+    monkeypatch.setattr(windows_automation, "_foreground_browser_entry",
+                        lambda: {"id": "w-42", "app_id": "edge", "handle": 42})
+    monkeypatch.setattr(windows_automation, "_read_browser_address", lambda _: "http://127.0.0.1/")
+    monkeypatch.setattr(windows_automation.webbrowser, "open", lambda *_args, **_kwargs: True)
+    with pytest.raises(RuntimeError, match="Private and reserved"):
+        windows_automation._navigate_and_verify("https://github.com", cancel_check=lambda: None)
 
 
 @pytest.mark.parametrize("outcome", ["move", "edge", "click", "duplicate", "changed", "wrong_window", "obscured",

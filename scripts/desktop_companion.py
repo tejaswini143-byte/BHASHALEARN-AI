@@ -30,8 +30,8 @@ except ImportError:  # Direct script entry point: scripts/ is sys.path[0].
     import windows_automation
 
 HOST, PORT = "127.0.0.1", int(os.getenv("BHASHALEARN_COMPANION_PORT", "18765"))
-ALLOWED_ORIGINS = {"http://127.0.0.1:5173", "http://localhost:5173", "http://127.0.0.1:5200", "http://localhost:5200", "http://127.0.0.1:5201", "http://localhost:5201", "http://127.0.0.1:5202", "http://localhost:5202", "http://127.0.0.1:5203", "http://localhost:5203", "http://127.0.0.1:15199", "http://localhost:15199", "http://127.0.0.1:5199", "http://localhost:5199", "http://127.0.0.1:5198", "http://localhost:5198", "http://127.0.0.1:5210", "http://localhost:5210", "http://127.0.0.1:5211", "http://localhost:5211"}
-ALLOWED_API_PORTS = {8027, 18027, 18029, 18030, 18031, 18034, 5198, 5199, 5200, 5201, 5202, 5203, 5210, 5211, 5173}
+ALLOWED_ORIGINS = {"http://127.0.0.1:5173", "http://localhost:5173", "http://127.0.0.1:5200", "http://localhost:5200", "http://127.0.0.1:5201", "http://localhost:5201", "http://127.0.0.1:5202", "http://localhost:5202", "http://127.0.0.1:5203", "http://localhost:5203", "http://127.0.0.1:15199", "http://localhost:15199", "http://127.0.0.1:5199", "http://localhost:5199", "http://127.0.0.1:5198", "http://localhost:5198", "http://127.0.0.1:5210", "http://localhost:5210", "http://127.0.0.1:5211", "http://localhost:5211", "http://127.0.0.1:5212", "http://localhost:5212"}
+ALLOWED_API_PORTS = {8027, 18027, 18029, 18030, 18031, 18034, 5198, 5199, 5200, 5201, 5202, 5203, 5210, 5211, 5212, 5173}
 TOKEN = os.getenv("BHASHALEARN_COMPANION_TOKEN") or secrets.token_urlsafe(32)
 SHOW_PAIRING_TOKEN = os.getenv("BHASHALEARN_SHOW_COMPANION_TOKEN", "").casefold() == "true"
 lock = threading.Lock()
@@ -58,6 +58,80 @@ def _confirmation_fingerprint(payload: dict) -> str:
     return json.dumps(relevant, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
+_VOICE_ACTIONS = {
+    "open_app", "open_website", "open_named_link", "search_web", "search_youtube",
+    "calculate",
+    "open_approved_site", "type", "type_into", "type_into_visible", "search",
+    "keyboard_shortcut", "click_visible", "focus_visible", "switch_window",
+    "minimize_window", "maximize_window", "close_window", "scroll_up", "scroll_down",
+    "move_qa_pointer", "click_qa_control", "type_qa_text", "fill_qa_demo_form",
+}
+
+
+def _validate_execution_action(action: dict, *, depth: int = 0) -> None:
+    """Apply an independent OS companion safety boundary before approval/ticketing."""
+    if not isinstance(action, dict) or depth > 1:
+        raise ValueError("The action plan shape is invalid.")
+    name = action.get("action")
+    if name == "sequence":
+        steps = action.get("steps")
+        if not isinstance(steps, list) or not 1 <= len(steps) <= 5:
+            raise ValueError("Only one to five approved desktop steps are supported.")
+        for step in steps:
+            _validate_execution_action(step, depth=depth + 1)
+        if depth == 0 and len(_approval_description(action)) > 3000:
+            raise ValueError("The approved sequence is too long to display completely in the Windows prompt.")
+        return
+    if name not in _VOICE_ACTIONS:
+        raise ValueError("That desktop action is not available through the companion.")
+    if name == "open_app" and action.get("app_id") not in {"notepad", "chrome", "edge", "calculator"}:
+        raise ValueError("Only Notepad, Chrome, Edge, and Calculator may be opened.")
+    if name in {"open_website", "open_named_link"}:
+        try:
+            action["url"] = windows_automation.normalize_public_http_url(action.get("url", ""))
+        except Exception as exc:
+            raise ValueError("A valid public HTTP(S) website is required.") from exc
+    if name in {"type", "type_into", "type_into_visible", "search", "search_web", "search_youtube", "calculate"}:
+        text = action.get("text")
+        if not isinstance(text, str) or not 1 <= len(text) <= 1000 or any(ord(ch) < 32 and ch not in "\r\n\t" for ch in text):
+            raise ValueError("Text entry must contain 1–1000 safe characters.")
+    if name == "type_into_visible" and action.get("text_mode") not in {None, "replace", "append"}:
+        raise ValueError("Text mode must be append or replace.")
+    if name == "calculate":
+        try:
+            windows_automation.evaluate_expression(action.get("text", ""))
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+    if name in {"click_visible", "focus_visible", "type_into_visible"}:
+        target = action.get("target_name")
+        if not isinstance(target, str) or not target.strip() or len(target) > 120:
+            raise ValueError("A visible control name is required.")
+    if name == "open_approved_site" and action.get("site_id") not in {"qa_home", "qa_sandbox"}:
+        raise ValueError("That local QA website is not approved.")
+    if depth == 0 and len(_approval_description(action)) > 3000:
+        raise ValueError("The approved action is too long to display completely in the Windows prompt.")
+
+
+def _approval_description(action: dict) -> str:
+    if action.get("action") == "sequence":
+        lines = [f"{index}. {_approval_description(step)}" for index, step in enumerate(action["steps"], 1)]
+        return "Approved sequence:\n" + "\n".join(lines)
+    name = action.get("action", "unknown")
+    if name == "open_app":
+        return f"Open {action.get('app_id', 'application')}"
+    if name == "calculate":
+        expression = action.get("text", "")
+        return f"Open Calculator and calculate {expression} = {windows_automation.evaluate_expression(expression)}"
+    if name in {"open_website", "open_named_link"}:
+        return f"Open website: {action.get('url', '')}"
+    if name == "type_into_visible":
+        text = json.dumps(action.get("text", ""), ensure_ascii=False)
+        return f"Type into {action.get('target_name', 'visible field')} (mode: {action.get('text_mode') or 'replace'}; do not submit):\n{text}"
+    if name in {"type", "type_into", "search"}:
+        return "Type the approved text (no submit):\n" + json.dumps(action.get("text", ""), ensure_ascii=False)
+    return name.replace("_", " ")
+
+
 def _require_native_execution_approval(action: dict) -> bool:
     """Fail closed unless the local Windows operator approves the exact action.
 
@@ -69,7 +143,7 @@ def _require_native_execution_approval(action: dict) -> bool:
     import ctypes
     action_name = str(action.get("action", "unknown"))[:80]
     app_name = str(action.get("app_id") or action.get("target_name") or "")[:80]
-    detail = f"{action_name}: {app_name}" if app_name else action_name
+    detail = _approval_description(action)
     if action_name == "move_qa_pointer":
         detail = f"Move the cursor {str(action.get('direction', ''))[:12]} in the disposable QA window."
     if action_name == "type_qa_text":
@@ -677,6 +751,10 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(payload, dict) or not isinstance(payload.get("action"), dict):
                 return self._send(422, {"error": "a validated action plan is required"})
             action = payload["action"]
+            try:
+                _validate_execution_action(action)
+            except ValueError as exc:
+                return self._send(422, {"error": str(exc)})
             if action.get("action") == "open_named_link":
                 url = action.get("url")
                 if not isinstance(url, str) or url not in windows_automation.APPROVED_LINKS:
