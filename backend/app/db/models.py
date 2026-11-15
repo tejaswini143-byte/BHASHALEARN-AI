@@ -652,6 +652,8 @@ class AssistantCallAttempt(Base):
     destination: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[str] = mapped_column(String(24), nullable=False)
     provider_sid: Mapped[str | None] = mapped_column(String(64), unique=True)
+    livekit_session_id: Mapped[str | None] = mapped_column(ForeignKey("assistant_livekit_sessions.id", ondelete="SET NULL"))
+    participant_identity: Mapped[str | None] = mapped_column(String(128), unique=True)
     callback_sequence: Mapped[int] = mapped_column(Integer, default=-1, nullable=False)
     failure_code: Mapped[str | None] = mapped_column(String(64))
     provider_status: Mapped[str | None] = mapped_column(String(32))
@@ -684,6 +686,23 @@ class AssistantLocalCall(Base):
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+
+class AssistantLiveKitSession(Base):
+    """Authenticated browser LiveKit room tied to a BHASHALEARN deadline."""
+    __tablename__ = "assistant_livekit_sessions"
+    __table_args__ = (
+        UniqueConstraint("room_name", name="uq_assistant_livekit_room"),
+        Index("ix_assistant_livekit_owner_created", "student_id", "created_at"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    student_id: Mapped[str] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), nullable=False)
+    deadline_id: Mapped[str] = mapped_column(ForeignKey("assistant_deadlines.id", ondelete="CASCADE"), nullable=False)
+    room_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    language: Mapped[str] = mapped_column(String(16), default="mixed", nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="creating", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class AssistantCalendarEvent(Base):

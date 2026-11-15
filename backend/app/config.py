@@ -46,6 +46,20 @@ class Settings(BaseSettings):
     google_oauth_redirect_uri: str = ""
     assistant_google_live_enabled: bool = False
     assistant_live_operations_enabled: bool = False
+    livekit_url: str = ""
+    livekit_api_key: str = ""
+    livekit_api_secret: str = ""
+    livekit_agent_name: str = "bhashalearn-deadline-reminder"
+    gnani_api_key: str = ""
+    gnani_stt_url: str = "https://api.vachana.ai/stt/v3"
+    gnani_tts_url: str = "https://api.vachana.ai/api/v1/tts/inference"
+    livekit_sip_outbound_trunk_id: str = ""
+    livekit_sip_caller_id: str = ""
+    livekit_verified_test_numbers: str = ""
+    livekit_calls_enabled: bool = False
+    livekit_call_start_hour: int = Field(default=9, ge=0, le=23)
+    livekit_call_end_hour: int = Field(default=20, ge=1, le=24)
+    livekit_max_calls_per_day: int = Field(default=3, ge=1, le=20)
     twilio_live_calls_enabled: bool = False
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""

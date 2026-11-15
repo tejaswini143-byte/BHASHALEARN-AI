@@ -341,6 +341,17 @@ def list_deadlines(student: Student = Depends(current_student), db: Session = De
     return [_deadline(r) for r in db.scalars(select(AssistantDeadline).where(AssistantDeadline.student_id == student.id).order_by(AssistantDeadline.due_at).limit(200)).all()]
 
 
+@router.delete("/deadlines/{deadline_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_deadline(deadline_id: str, student: Student = Depends(current_student), db: Session = Depends(get_db)):
+    row = _owned_deadline(db, student.id, deadline_id)
+    if row.status not in {"upcoming", "overdue", "canceled", "completed"}:
+        raise HTTPException(409, "Deadline cannot be deleted in its current state")
+    _audit(db, student.id, "deadline.deleted", "deadline", row.id, "deleted")
+    db.delete(row)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.patch("/deadlines/{deadline_id}", response_model=DeadlineView)
 def update_deadline(deadline_id: str, payload: DeadlineUpdate, student: Student = Depends(current_student), db: Session = Depends(get_db)):
     row = _owned_deadline(db, student.id, deadline_id)
