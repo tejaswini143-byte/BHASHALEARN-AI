@@ -126,7 +126,11 @@ def test_password_protected_pdf_is_rejected(client):
     assert response.status_code == 422
 
 
-def test_docx_upload_extracts_and_persists_private_text(client, env):
+def test_docx_upload_extracts_and_persists_private_text(client, env, monkeypatch):
+    # OOXML's ZIP package exceeds the small 4 KB fixture limit used by the PDF
+    # upload boundary cases, even for a one-paragraph resume.
+    monkeypatch.setenv("BHASHALEARN_DOCUMENT_MAX_UPLOAD_BYTES", "1048576")
+    get_settings.cache_clear()
     headers = auth(client, "resume-docx@example.com")
     response = upload(client, headers, docx_bytes("Tejaswini Pullagura", "Python and machine learning projects"),
                       "resume.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
@@ -136,7 +140,6 @@ def test_docx_upload_extracts_and_persists_private_text(client, env):
     pages = client.get(f"/api/v1/documents/{data['id']}/pages", headers=headers).json()
     assert "machine learning projects" in pages["items"][0]["extracted_text"]
     assert (env / "private-docs" / f"{data['id']}.docx").exists()
-    assert response.json()["detail"]["code"] == "encrypted_pdf"
 
 
 def test_missing_file_field_is_rejected(client):
