@@ -1,6 +1,8 @@
 """Career planner ownership, skill evidence, and deterministic dependency tests."""
 from datetime import date, timedelta
+from io import BytesIO
 import pytest
+import fitz
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -108,6 +110,160 @@ def test_validation_and_ownership_responses(client):
     assert custom.status_code == 201 and custom.json()["career_title"] == "Learn robotics foundations"
     assert client.put("/api/v1/career/skills", headers=headers, json=[{"skill_key": "not-real", "proficiency": "advanced"}]).status_code == 422
     assert client.post("/api/v1/career/goals/missing/roadmap", headers=headers).status_code == 404
+
+
+def test_future_seeker_profile_planning_capacity_and_version_history(client):
+    headers = auth(client, "future-seeker@example.com")
+    goal = create_goal(client, headers, field_of_study="Computer science", daily_minutes=60,
+                       study_days_per_week=5, weekly_minutes=300, learning_format="practice",
+                       timeframe_weeks=20, constraints=["shared computer"]).json()
+    assert goal["field_of_study"] == "Computer science"
+    assert goal["learning_format"] == "practice" and goal["timeframe_weeks"] == 20
+    first = client.post(f"/api/v1/career/goals/{goal['id']}/roadmap", headers=headers).json()
+    assert first["version_number"] == 1
+    assert len(first["weekly_plan"]) == 5
+    assert sum(day["minutes"] for day in first["weekly_plan"]) == 300
+    assert max(day["minutes"] for day in first["weekly_plan"]) <= 60
+    assert next(item for item in first["phases"] if item["skill_key"] == "python")["resources"][0]["url"].startswith("https://")
+
+    changed = {"career_key": "ai-engineer", "education_level": "beginner", "field_of_study": "Computer science",
+               "interests": ["AI"], "constraints": ["shared computer"], "weekly_minutes": 300,
+               "daily_minutes": 60, "study_days_per_week": 5, "learning_format": "practice",
+               "timeframe_weeks": 20, "preferred_language": "mixed", "target_date": None}
+    assert client.put(f"/api/v1/career/goals/{goal['id']}", headers=headers, json=changed).status_code == 409
+    changed["confirm_major_change"] = True
+    assert client.put(f"/api/v1/career/goals/{goal['id']}", headers=headers, json=changed).status_code == 200
+    second = client.post(f"/api/v1/career/goals/{goal['id']}/roadmap", headers=headers).json()
+    assert second["version_number"] == 2 and second["career_title"] == "AI engineer"
+    history = client.get(f"/api/v1/career/goals/{goal['id']}/versions", headers=headers).json()
+    assert [item["version_number"] for item in history] == [2, 1]
+    assert client.get(f"/api/v1/career/goals/{goal['id']}/versions/1", headers=headers).json()["career_title"] == "Software developer"
+    other = auth(client, "future-seeker-other@example.com")
+    assert client.get(f"/api/v1/career/goals/{goal['id']}/versions", headers=other).status_code == 404
+    assert client.get(f"/api/v1/career/goals/{goal['id']}/versions/1", headers=other).status_code == 404
+
+
+def test_weekly_plan_respects_selected_days_and_daily_capacity(client):
+    headers = auth(client, "capacity@example.com")
+    goal = create_goal(client, headers, weekly_minutes=180, daily_minutes=60,
+                       study_days_per_week=3, timeframe_weeks=8).json()
+    plan = client.post(f"/api/v1/career/goals/{goal['id']}/roadmap", headers=headers).json()
+    assert [day["day"] for day in plan["weekly_plan"]] == ["Monday", "Tuesday", "Wednesday"]
+    assert sum(day["minutes"] for day in plan["weekly_plan"]) == 180
+    assert all(day["minutes"] <= 60 for day in plan["weekly_plan"])
+
+
+def test_assessment_history_is_authenticated_and_student_scoped(client):
+    headers = auth(client, "career-history@example.com")
+    goal = create_goal(client, headers).json()
+    assert client.get(f"/api/v1/career/goals/{goal['id']}/assessments", headers=headers).json() == []
+    assert client.get(f"/api/v1/career/goals/{goal['id']}/assessments").status_code == 401
+
+
+def test_saved_resources_are_curated_idempotent_and_student_scoped(client):
+    owner, other = auth(client, "saved-resource-owner@example.com"), auth(client, "saved-resource-other@example.com")
+    goal = create_goal(client, owner).json()
+    plan = client.post(f"/api/v1/career/goals/{goal['id']}/roadmap", headers=owner).json()
+    resource_url = next(phase["resources"][0]["url"] for phase in plan["phases"] if phase["resources"])
+    path = f"/api/v1/career/goals/{goal['id']}/saved-resources"
+    assert client.post(path, headers=owner, json={"resource_url": "https://untrusted.example/course"}).status_code == 404
+    saved = client.post(path, headers=owner, json={"resource_url": resource_url})
+    assert saved.status_code == 201
+    assert client.post(path, headers=owner, json={"resource_url": resource_url}).json()["id"] == saved.json()["id"]
+    assert client.get(path, headers=owner).json() == [saved.json()]
+    assert client.get(path, headers=other).status_code == 404
+    assert client.delete(f"{path}/{saved.json()['id']}", headers=other).status_code == 404
+    assert client.delete(f"{path}/{saved.json()['id']}", headers=owner).status_code == 204
+    assert client.get(path, headers=owner).json() == []
+
+
+def test_gemini_skill_analysis_is_schema_validated_and_student_scoped(client, monkeypatch):
+    from backend.app.services import career_ai
+    headers = auth(client, "career-analysis@example.com")
+    goal = create_goal(client, headers).json()
+    valid = {"summary_en": "Start with foundations, then practise each new concept.",
+             "summary_te": "తెలుగులో దశలవారీగా నేర్చుకొని సాధన చేయండి.",
+             "advice": [{"skill_key": key, "priority": 2, "estimated_hours": 8,
+                         "explanation_en": f"Build a solid foundation in {key} before moving on.",
+                         "explanation_te": f"{key} నైపుణ్యాన్ని సాధనతో అభివృద్ధి చేయండి.",
+                         "next_step_en": f"Practise one small {key} exercise.",
+                         "next_step_te": f"{key} పై చిన్న సాధన చేయండి."}
+                        for key in ["digital-literacy", "programming-basics", "python", "problem-solving", "version-control", "communication", "portfolio", "interview-prep"]]}
+    monkeypatch.setattr(career_ai, "generate_tutor_reply", lambda *_: __import__("json").dumps(valid, ensure_ascii=False))
+    result = client.post(f"/api/v1/career/goals/{goal['id']}/analysis", headers=headers)
+    assert result.status_code == 200 and result.json()["provider"] == "gemini"
+    assert len(result.json()["advice"]) == 8
+    assert client.get(f"/api/v1/career/goals/{goal['id']}/analysis", headers=headers).json() == result.json()
+    other = auth(client, "career-analysis-other@example.com")
+    assert client.get(f"/api/v1/career/goals/{goal['id']}/analysis", headers=other).status_code == 404
+    valid["advice"][-1]["skill_key"] = "python"
+    assert client.post(f"/api/v1/career/goals/{goal['id']}/analysis", headers=headers).status_code == 502
+    assert client.post(f"/api/v1/career/goals/{goal['id']}/analysis").status_code == 401
+
+
+def test_future_seeker_mentor_receives_owned_roadmap_and_supports_telugu(client, monkeypatch):
+    headers = auth(client, "career-mentor@example.com")
+    goal = create_goal(client, headers, preferred_language="telugu").json()
+    plan = client.post(f"/api/v1/career/goals/{goal['id']}/roadmap", headers=headers).json()
+    client.put("/api/v1/career/skills", headers=headers,
+               json=[{"skill_key": "python", "proficiency": "beginner"}])
+    captured = {}
+
+    def mock_mentor(**kwargs):
+        captured.update(kwargs)
+        return {"answer": "Start with the first Python practice.", "provider": "gemini",
+                "roadmap_version": kwargs["roadmap"]["version_number"], "disclaimer": "Guidance only."}
+
+    monkeypatch.setattr("backend.app.api.career.mentor_reply", mock_mentor)
+    path = f"/api/v1/career/goals/{goal['id']}/mentor"
+    response = client.post(path, headers=headers,
+                           json={"question": "What should I practise next?", "language": "telugu"})
+    assert response.status_code == 200
+    assert captured["goal"]["career_key"] == "software-developer"
+    assert captured["profile"] == [{"skill_key": "python", "proficiency": "beginner"}]
+    assert captured["roadmap"]["version_number"] == plan["version_number"]
+    assert captured["language"] == "telugu"
+    other = auth(client, "career-mentor-other@example.com")
+    assert client.post(path, headers=other, json={"question": "Help me", "language": "english"}).status_code == 404
+    assert client.post(path, headers=headers, json={"question": "x", "language": "french"}).status_code == 422
+
+
+def test_experience_profile_persists_and_readiness_explains_its_evidence(client):
+    headers = auth(client, "career-experience@example.com")
+    goal = create_goal(client, headers, experience_summary="Built two Python class projects").json()
+    assert goal["experience_summary"] == "Built two Python class projects"
+    plan = client.post(f"/api/v1/career/goals/{goal['id']}/roadmap", headers=headers).json()
+    assert 0 <= plan["readiness"]["score"] <= 100
+    assert "not job readiness" in plan["readiness"]["basis"]
+    assert plan["readiness"]["scored_skills"]
+    assert client.get(f"/api/v1/career/goals", headers=headers).json()[0]["experience_summary"] == "Built two Python class projects"
+
+
+def test_resume_gemini_extraction_requires_review_and_persists_only_owner_profile(client, monkeypatch):
+    headers = auth(client, "career-resume@example.com")
+    goal = create_goal(client, headers).json()
+    pdf = fitz.open(); page = pdf.new_page(); page.insert_text((72, 72), "Python and machine learning projects")
+    content = pdf.tobytes(); pdf.close()
+    uploaded = client.post("/api/v1/documents", headers=headers,
+        files={"file": ("resume.pdf", BytesIO(content), "application/pdf")})
+    assert uploaded.status_code == 201
+    other = auth(client, "career-resume-other@example.com")
+    path = f"/api/v1/career/goals/{goal['id']}/resume/extract"
+    assert client.post(path, headers=other, json={"document_id": uploaded.json()["id"]}).status_code == 404
+    monkeypatch.setattr("backend.app.api.career.analyze_resume", lambda _text: {
+        "is_resume": True, "experience_summary": "Built two Python projects", "field_of_study": "Computer Science",
+        "skills": [{"skill_key": "python", "proficiency": "beginner", "evidence": "Python projects"}],
+    })
+    extracted = client.post(path, headers=headers, json={"document_id": uploaded.json()["id"]})
+    assert extracted.status_code == 200
+    assert extracted.json()["status"] == "awaiting_review"
+    review_path = f"/api/v1/career/goals/{goal['id']}/resume/profile"
+    saved = client.put(review_path, headers=headers, json={"skills": [{"skill_key": "python", "proficiency": "beginner"}]})
+    assert saved.status_code == 200
+    assert saved.json()["profile"]["status"] == "reviewed"
+    assert saved.json()["skills"] == [{"skill_key": "python", "proficiency": "beginner"}]
+    assert client.get("/api/v1/career/goals", headers=headers).json()[0]["experience_summary"] == "Built two Python projects"
+    assert client.put(review_path, headers=other, json={"skills": []}).status_code == 404
 
 
 def test_skill_gap_states_separate_reported_from_assessed():

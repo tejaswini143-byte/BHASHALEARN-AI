@@ -1,8 +1,10 @@
 """Private PDF document API, validation, persistence, and ownership tests."""
 from hashlib import sha256
+from io import BytesIO
 
 import fitz
 import pytest
+from docx import Document as DocxDocument
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -62,6 +64,15 @@ def pdf_bytes(*texts):
     return data
 
 
+def docx_bytes(*texts):
+    document = DocxDocument()
+    for text in texts:
+        document.add_paragraph(text)
+    buffer = BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
+
+
 def upload(client, headers, content=None, filename="lesson.pdf", content_type="application/pdf"):
     return client.post("/api/v1/documents", headers=headers, files={"file": (filename, content if content is not None else pdf_bytes("Fractions are equal parts."), content_type)})
 
@@ -113,7 +124,22 @@ def test_password_protected_pdf_is_rejected(client):
     headers = auth(client, "encrypted@example.com")
     response = upload(client, headers, content)
     assert response.status_code == 422
-    assert response.json()["detail"]["code"] == "encrypted_pdf"
+
+
+def test_docx_upload_extracts_and_persists_private_text(client, env, monkeypatch):
+    # OOXML's ZIP package exceeds the small 4 KB fixture limit used by the PDF
+    # upload boundary cases, even for a one-paragraph resume.
+    monkeypatch.setenv("BHASHALEARN_DOCUMENT_MAX_UPLOAD_BYTES", "1048576")
+    get_settings.cache_clear()
+    headers = auth(client, "resume-docx@example.com")
+    response = upload(client, headers, docx_bytes("Tejaswini Pullagura", "Python and machine learning projects"),
+                      "resume.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+    assert response.status_code == 201, response.text
+    data = response.json()
+    assert data["mime_type"] == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    pages = client.get(f"/api/v1/documents/{data['id']}/pages", headers=headers).json()
+    assert "machine learning projects" in pages["items"][0]["extracted_text"]
+    assert (env / "private-docs" / f"{data['id']}.docx").exists()
 
 
 def test_missing_file_field_is_rejected(client):

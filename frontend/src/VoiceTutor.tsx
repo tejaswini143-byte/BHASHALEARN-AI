@@ -69,6 +69,7 @@ async function readAudioResponse(response: Response): Promise<Blob> {
 export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { immersive?: boolean; forceDemo?: boolean; onClose?: () => void } = {}) {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
+  const careerGoalId = params.get("careerGoalId");
   const [student, setStudent] = useState<Student | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [selected, setSelected] = useState("");
@@ -183,8 +184,15 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
       getCurrentStudent(token),
       request<Session[]>("/sessions?limit=100", { headers: { Authorization: "Bearer " + token } }),
       request<Preferences>("/students/me/preferences", { headers: { Authorization: "Bearer " + token } }),
-    ]).then(([profile, list, prefs]) => {
+    ]).then(async ([profile, list, prefs]) => {
       if (!active) return;
+      if (careerGoalId && list.length === 0) {
+        const goals = await request<{ id: string; career_title: string; preferred_language: Language }[]>("/career/goals", { headers: { Authorization: "Bearer " + token } });
+        const goal = goals.find(item => item.id === careerGoalId);
+        if (!goal) throw new Error("Career goal is unavailable.");
+        const created = await request<Session>("/sessions", { method: "POST", headers: { Authorization: "Bearer " + token }, body: JSON.stringify({ topic: `Career mentor · ${goal.career_title}`, language: goal.preferred_language }) });
+        list = [created]; setParams({ careerGoalId, session: created.id });
+      }
       setStudent(profile); setSessions(list); setPreferences(prefs); setLanguage(prefs.preferred_language);
       const requested = params.get("session");
       if (requested && list.some(item => item.id === requested)) setSelected(requested);
@@ -197,7 +205,7 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
       else handleError(cause);
     }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [forceDemo, handleError, immersive, signOut]);
+  }, [careerGoalId, forceDemo, handleError, immersive, signOut]);
 
   useEffect(() => {
     selectedRef.current = selected;
@@ -612,10 +620,14 @@ export function VoiceTutor({ immersive = false, forceDemo = false, onClose }: { 
     setMessages(items => [...items, optimistic]);
     const requestStartedAt = performance.now();
     try {
-      const result = await request<TutorReply>(`/tutor/sessions/${encodeURIComponent(sessionId)}/chat`, { method: "POST", headers: headers(), body: JSON.stringify({ message, language }) });
+      const result = careerGoalId
+        ? await request<{ answer: string; language?: string }>(`/career/goals/${encodeURIComponent(careerGoalId)}/mentor`, { method: "POST", headers: headers(), body: JSON.stringify({ question: message, language }) })
+        : await request<TutorReply>(`/tutor/sessions/${encodeURIComponent(sessionId)}/chat`, { method: "POST", headers: headers(), body: JSON.stringify({ message, language }) });
+      const reply = "answer" in result ? result.answer : result.reply;
+      const replyLanguage = result.language ?? language;
       setReplyLatencyMs(Math.round(performance.now() - requestStartedAt));
-      if (selectedRef.current === sessionId) setMessages(items => [...items, { id: "reply-" + Date.now(), role: "assistant", content: result.reply, created_at: new Date().toISOString(), language: result.language as Language }]);
-      if (autoSpeak && selectedRef.current === sessionId) await generateSpeech(result.reply, sessionId, result.language as Language);
+      if (selectedRef.current === sessionId) setMessages(items => [...items, { id: "reply-" + Date.now(), role: "assistant", content: reply, created_at: new Date().toISOString(), language: replyLanguage as Language }]);
+      if (autoSpeak && selectedRef.current === sessionId) await generateSpeech(reply, sessionId, replyLanguage as Language);
       if (selectedRef.current === sessionId && !demoMode) {
         void saveVoiceState({
           student_question: checkpoint ? message : null,

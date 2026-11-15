@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import re
 import time
+from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
 
 import fitz
+from docx import Document as DocxDocument
 
 
 class DocumentInputError(ValueError):
@@ -47,8 +49,8 @@ def validate_filename(filename: str | None, maximum: int) -> str:
         raise DocumentInputError("invalid_filename", f"Filename must contain 1 to {maximum} characters.")
     if Path(value).name != value or "/" in value or "\\" in value or value in {".", ".."}:
         raise DocumentInputError("invalid_filename", "Filename must not contain a path.")
-    if not value.lower().endswith(".pdf"):
-        raise DocumentInputError("unsupported_file_type", "Choose a PDF file.")
+    if Path(value).suffix.lower() not in {".pdf", ".docx"}:
+        raise DocumentInputError("unsupported_file_type", "Choose a PDF or DOCX file.")
     return value
 
 
@@ -86,6 +88,25 @@ def extract_pdf_pages(path: Path, *, max_pages: int, max_characters: int) -> tup
         pdf.close()
 
 
+def extract_docx_pages(path: Path, *, max_characters: int) -> tuple[list[str], str]:
+    """Extract bounded paragraph and table text from an OOXML Word document."""
+    try:
+        content = path.read_bytes()
+        if content[:4] != b"PK\x03\x04":
+            raise DocumentInputError("invalid_docx_signature", "The file is not a valid DOCX document.")
+        document = DocxDocument(BytesIO(content))
+        paragraphs = [paragraph.text for paragraph in document.paragraphs]
+        paragraphs.extend(cell.text for table in document.tables for row in table.rows for cell in row.cells)
+        text = normalize_extracted_text("\n".join(paragraphs))
+    except DocumentInputError:
+        raise
+    except Exception as exc:
+        raise DocumentInputError("corrupted_docx", "The DOCX document is corrupted or cannot be opened.") from exc
+    if len(text) > max_characters:
+        raise DocumentInputError("extracted_text_too_large", "The extracted DOCX text exceeds the processing limit.", 413)
+    return [text], "processed" if text else "text_extraction_unavailable"
+
+
 class PrivateDocumentStorage:
     """Opaque UUID-keyed storage rooted outside public frontend assets."""
     def __init__(self, root: str | Path):
@@ -101,12 +122,14 @@ class PrivateDocumentStorage:
             raise ValueError("Invalid temporary upload path")
         _unlink_with_retry(resolved)
 
-    def key_for(self, document_id: str) -> str:
-        return f"{document_id}.pdf"
+    def key_for(self, document_id: str, suffix: str = ".pdf") -> str:
+        if suffix not in {".pdf", ".docx"}:
+            raise ValueError("Unsupported private document suffix")
+        return f"{document_id}{suffix}"
 
     def finalize(self, temp_path: Path, storage_key: str) -> Path:
         target = (self.root / storage_key).resolve()
-        if target.parent != self.root or not re.fullmatch(r"[0-9a-fA-F-]{36}\.pdf", storage_key):
+        if target.parent != self.root or not re.fullmatch(r"[0-9a-fA-F-]{36}\.(?:pdf|docx)", storage_key):
             raise ValueError("Invalid private storage key")
         temp_resolved = temp_path.resolve()
         if temp_resolved.parent != self.root:
@@ -132,7 +155,7 @@ class PrivateDocumentStorage:
         return target
 
     def delete(self, storage_key: str) -> None:
-        if not re.fullmatch(r"[0-9a-fA-F-]{36}\.pdf", storage_key):
+        if not re.fullmatch(r"[0-9a-fA-F-]{36}\.(?:pdf|docx)", storage_key):
             raise ValueError("Invalid private storage key")
         target = (self.root / storage_key).resolve()
         if target.parent != self.root:
