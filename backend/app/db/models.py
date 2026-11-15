@@ -41,6 +41,17 @@ class Student(Base):
     sessions: Mapped[list["LearningSession"]] = relationship(back_populates="student", cascade="all, delete-orphan")
 
 
+class PasswordResetToken(Base):
+    """Hashed, one-use password reset token with a short lifetime."""
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    student_id: Mapped[str] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), index=True, nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class Course(Base):
     __tablename__ = "courses"
 

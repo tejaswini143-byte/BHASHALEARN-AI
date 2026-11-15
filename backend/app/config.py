@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     database_url: str = ""  # Require BHASHALEARN_DATABASE_URL for database access.
     jwt_secret_key: str = ""
     access_token_expire_minutes: int = 30
+    smtp_host: str = ""
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from_email: str = ""
+    app_public_base_url: str = ""
     gemini_api_key: str = ""
     gemini_model: str = "gemini-3.5-flash-lite"
     gemini_embedding_api_key: str = ""

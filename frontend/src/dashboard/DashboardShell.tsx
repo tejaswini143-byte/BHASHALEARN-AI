@@ -27,11 +27,14 @@ export function DashboardShell({ student, onSignOut, children }: { student: Stud
       <Link to="/dashboard" className="cc-brand" onClick={closeMenu}>✦ BHASHA<strong>LEARN</strong> AI</Link>
       <nav id="dashboard-navigation" className="cc-nav" aria-label="Dashboard navigation">
         <a href="#overview" aria-current="page" onClick={closeMenu}>Overview</a>
-        <a href="#timeline" onClick={closeMenu}>Learning timeline</a>
+        <a href="#timeline" onClick={closeMenu}>Recent activity</a>
         <a href="#mastery" onClick={closeMenu}>Mastery</a>
         <a href="#features" onClick={closeMenu}>Learning tools</a>
         <Link to="/knowledge-studio" onClick={closeMenu}>Knowledge Studio</Link>
         <Link to="/courses" onClick={closeMenu}>Courses</Link>
+        <Link to="/timeline" onClick={closeMenu}>Learning timeline</Link>
+        <Link to="/certificate" onClick={closeMenu}>Certificates</Link>
+        <Link to="/settings" onClick={closeMenu}>Settings</Link>
         <Link to="/memories" onClick={closeMenu}>Learning memories</Link>
       </nav>
       <FeatureNavigation compact onNavigate={closeMenu} />
