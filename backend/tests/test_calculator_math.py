@@ -10,6 +10,11 @@ def test_calculator_math_evaluates_bounded_arithmetic():
     assert evaluate_expression("(20 + 5) * 18") == Decimal("450")
 
 
+def test_calculator_math_preserves_decimal_results():
+    assert evaluate_expression("12.5 * 4") == Decimal("50.0")
+    assert evaluate_expression("9.6 / 3") == Decimal("3.2")
+
+
 @pytest.mark.parametrize(("spoken", "expected"), [
     ("250 times 18", "250*18"),
     ("250 multiplied by 18", "250*18"),

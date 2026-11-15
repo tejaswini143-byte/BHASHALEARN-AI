@@ -123,7 +123,10 @@ SENSITIVE = re.compile(
     r"social security|passport|government id|ssn)\b", re.I,
 )
 LOCAL_TYPE_TEXT = re.compile(r"^(?:type|enter text|టైప్ చేయి|టైప్)\s+([\s\S]+)$", re.I)
-CALCULATION = re.compile(r"^\s*(?:calculate|compute)\s+(?P<expression>.+?)\s*[.!?]*\s*$", re.I)
+CALCULATION = re.compile(
+    r"^\s*(?:(?:please\s+)?open\s+calculator\s+and\s+)?"
+    r"(?:calculate|compute)\s+(?P<expression>.+?)\s*[.!?]*\s*$", re.I,
+)
 DICTATION = re.compile(
     r"\b(?:type|enter|write)\s+(?:the following\s+)?[\"'](?P<quoted>[^\"']{1,120})[\"']\s+"
     r"(?:in|into|to)\s+(?:the\s+)?(?P<target>.+?)\s+(?:field|box)\b", re.I,
@@ -146,7 +149,7 @@ OPEN_DESTINATION = re.compile(
 )
 OPEN_NAMED_WEBSITE = re.compile(
     r"^\s*(?:please\s+)?open\s+(?P<destination>[\w][\w .'-]{0,78}?)"
-    r"(?=\s+and\s+(?:type|enter|write|search)\b|\s+then\b|[,!?;.]|$)", re.I,
+    r"(?=\s+and\s+(?:type|enter|write|search|calculate|compute)\b|\s+then\b|[,!?;.]|$)", re.I,
 )
 SPOKEN_SITES = {
     "google": "https://www.google.com/",

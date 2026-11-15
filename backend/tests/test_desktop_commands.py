@@ -118,6 +118,38 @@ def test_calculator_plan_normalizes_spoken_times_without_changing_the_expression
         desktop_commands.interpret_desktop_command("Calculate 250 times 18")
 
 
+def test_open_calculator_and_calculate_compound_plan_preserves_reviewed_expression(monkeypatch):
+    monkeypatch.setattr(desktop_commands, "generate_tutor_reply", lambda *_: (
+        '{"action":"sequence","steps":[{"action":"open_app","app_id":"calculator"},'
+        '{"action":"calculate","text":"250 * 18"}]}'
+    ))
+    plan = desktop_commands.interpret_desktop_command(
+        "Open Calculator and calculate 250 multiplied by 18."
+    )
+    assert [step.action for step in plan.steps] == ["open_app", "calculate"]
+    assert plan.steps[0].app_id == "calculator"
+    assert plan.steps[1].text == "250 * 18"
+
+    monkeypatch.setattr(desktop_commands, "generate_tutor_reply", lambda *_: (
+        '{"action":"sequence","steps":[{"action":"open_app","app_id":"calculator"},'
+        '{"action":"calculate","text":"250 * 19"}]}'
+    ))
+    with pytest.raises(HTTPException, match="changed the arithmetic expression"):
+        desktop_commands.interpret_desktop_command(
+            "Open Calculator and calculate 250 multiplied by 18."
+        )
+
+
+def test_malformed_compound_calculation_is_rejected(monkeypatch):
+    monkeypatch.setattr(desktop_commands, "generate_tutor_reply", lambda *_: (
+        '{"action":"calculate","text":"250 *"}'
+    ))
+    with pytest.raises(HTTPException):
+        desktop_commands.interpret_desktop_command(
+            "Open Calculator and calculate 250 multiplied by."
+        )
+
+
 def test_compound_notepad_dictation_stays_local_and_is_planned_as_sequence(monkeypatch):
     captured = []
     def fake(_instruction, history):
