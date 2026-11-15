@@ -5,6 +5,11 @@ import pytest
 from scripts import windows_automation
 
 
+@pytest.mark.parametrize("browser", ["chrome", "edge"])
+def test_browser_contenteditable_document_is_a_typable_semantic_target(browser):
+    assert windows_automation._control_kind("Document", browser) == "text"
+
+
 def test_target_action_keeps_the_validated_snapshot_id(monkeypatch):
     calls = []
     target = {
@@ -234,6 +239,61 @@ def test_browser_text_entry_requires_exact_ui_value_and_never_submits(write_veri
                 {"action": "type_into_visible", "target_name": "Search", "text": "safe query", "text_mode": "replace"},
                 type_text=lambda _: None, cancel_check=lambda: None,
                 sequence_context={"browser_window_id": "w-42", "verified_url": "https://chatgpt.com/"})
+
+
+def test_browser_contenteditable_uses_text_pattern_when_value_pattern_is_unavailable(monkeypatch):
+    from scripts.public_urls import socket
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *args, **kwargs: [
+        (2, 1, 6, "", ("93.184.216.34", 443)),
+    ])
+    stored = {"text": "old draft"}
+    text_pattern = SimpleNamespace(DocumentRange=SimpleNamespace(
+        GetText=lambda limit: stored["text"][:limit]))
+    class ContentEditable:
+        @property
+        def iface_value(self):
+            raise RuntimeError("ValuePattern is unavailable for this contenteditable")
+
+        @property
+        def iface_text(self):
+            return text_pattern
+
+        is_enabled = lambda self: True
+        set_focus = lambda self: None
+        has_keyboard_focus = lambda self: True
+        element_info = SimpleNamespace(element=SimpleNamespace(CurrentIsPassword=False))
+
+    wrapper = ContentEditable()
+    browser = {"id": "w-42", "app_id": "chrome", "handle": 42}
+    snapshot = {"snapshot_id": "fresh", "active_window_id": "w-42", "active_app": "Google Chrome",
+                "targets": [{"id": "field", "name": "Message ChatGPT", "kind": "text"}]}
+    monkeypatch.setattr(windows_automation, "get_snapshot", lambda: snapshot)
+    monkeypatch.setattr(windows_automation, "_windows", lambda: [browser])
+    monkeypatch.setattr(windows_automation, "_foreground_handle", lambda: 42)
+    monkeypatch.setattr(windows_automation, "_cached_target", lambda *_: {
+        "kind": "text", "handle": 42, "wrapper": wrapper})
+    monkeypatch.setattr(windows_automation, "_read_browser_address", lambda _: "https://chatgpt.com/")
+    submitted = []
+
+    def hotkey(*keys):
+        if keys == ("ctrl", "a"):
+            stored["text"] = ""
+
+    monkeypatch.setattr(windows_automation.pyautogui, "hotkey", hotkey)
+    monkeypatch.setattr(windows_automation.pyautogui, "press", lambda key: submitted.append(key))
+
+    def type_char(char):
+        stored["text"] += char
+
+    result = windows_automation.execute_action(
+        {"action": "type_into_visible", "target_name": "Message ChatGPT", "text": "hello", "text_mode": "replace"},
+        type_text=type_char, cancel_check=lambda: None,
+        sequence_context={"browser_window_id": "w-42", "verified_url": "https://chatgpt.com/"})
+
+    assert result == {"ok": True, "action": "type_into_visible", "target": "Message ChatGPT",
+                     "typed_characters": 5, "verified": True, "submitted": False}
+    assert stored["text"] == "hello"
+    assert submitted == []
 
 
 @pytest.mark.parametrize("outcome", ["move", "edge", "click", "duplicate", "changed", "wrong_window", "obscured",

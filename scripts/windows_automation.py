@@ -124,6 +124,10 @@ def _windows() -> list[dict]:
 def _control_kind(control_type: str, app_id: str = "") -> str | None:
     if app_id == "notepad" and control_type in {"Document", "Edit"}:
         return "text"
+    if app_id in {"chrome", "edge"} and control_type == "Document":
+        # Chromium contenteditable composers are commonly exposed as UIA
+        # Document controls and provide TextPattern instead of ValuePattern.
+        return "text"
     return {"Button": "button", "Hyperlink": "link", "Edit": "text",
             "ComboBox": "search", "MenuItem": "button"}.get(control_type)
 
@@ -549,15 +553,37 @@ def execute_action(payload: dict, *, type_text, cancel_check, confirmed_close: b
                     cached = _cached_target(fresh["snapshot_id"], target["id"])
                     wrapper = cached["wrapper"]
                     try:
-                        value_pattern = wrapper.iface_value
-                        if (not wrapper.is_enabled() or wrapper.element_info.element.CurrentIsPassword
-                                or value_pattern.CurrentIsReadOnly):
+                        if not wrapper.is_enabled() or wrapper.element_info.element.CurrentIsPassword:
                             raise RuntimeError("The selected field is not editable.")
-                        old_value = value_pattern.CurrentValue or ""
                     except RuntimeError:
                         raise
                     except Exception:
                         raise RuntimeError("Windows could not verify that the selected field is editable.") from None
+                    # Chromium exposes some modern contenteditable fields through
+                    # TextPattern without ValuePattern. Keep keyboard entry and
+                    # exact post-entry verification; never fall back to clipboard
+                    # writes or an unverified blind type.
+                    try:
+                        value_pattern = wrapper.iface_value
+                    except Exception:
+                        value_pattern = None
+                    if value_pattern is not None:
+                        try:
+                            if value_pattern.CurrentIsReadOnly:
+                                raise RuntimeError("The selected field is not editable.")
+                            old_value = value_pattern.CurrentValue or ""
+                            read_value = lambda: value_pattern.CurrentValue or ""
+                        except RuntimeError:
+                            raise
+                        except Exception:
+                            raise RuntimeError("Windows could not verify that the selected field is editable.") from None
+                    else:
+                        try:
+                            text_pattern = wrapper.iface_text
+                            read_value = lambda: text_pattern.DocumentRange.GetText(1001) or ""
+                            old_value = read_value()
+                        except Exception:
+                            raise RuntimeError("Windows could not verify an editable field value pattern.") from None
                     mode = payload.get("text_mode", "replace")
                     if mode not in {"append", "replace"}:
                         raise RuntimeError("Choose append or replace text mode.")
@@ -582,7 +608,7 @@ def execute_action(payload: dict, *, type_text, cancel_check, confirmed_close: b
                         else:
                             type_text(char)
                     try:
-                        final_value = value_pattern.CurrentValue or ""
+                        final_value = read_value()
                     except Exception:
                         raise RuntimeError("Windows could not verify the text entry. Inspect the field before retrying.") from None
                     expected = text_value if mode == "replace" else old_value + text_value

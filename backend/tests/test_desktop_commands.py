@@ -81,6 +81,24 @@ def test_arbitrary_named_site_and_dictation_stay_in_one_exact_sequence(monkeypat
     assert "Hello" not in captured[0]
 
 
+def test_chatgpt_dictation_is_bound_to_its_message_composer_and_stays_local(monkeypatch):
+    captured = []
+
+    def fake(_instruction, history):
+        captured.append(history[0]["content"])
+        return ('{"action":"sequence","steps":[{"action":"open_website","url":"https://chatgpt.com/"},'
+                '{"action":"type_into_visible","target_name":"Message ChatGPT",'
+                '"text":"[LOCAL_DICTATION]"}]}')
+
+    monkeypatch.setattr(desktop_commands, "generate_tutor_reply", fake)
+    plan = desktop_commands.interpret_desktop_command("Open ChatGPT and type hello")
+    assert [step.action for step in plan.steps] == ["open_website", "type_into_visible"]
+    assert plan.steps[0].url == "https://chatgpt.com/"
+    assert plan.steps[1].target_name == "Message ChatGPT"
+    assert plan.steps[1].text == "hello"
+    assert "hello" not in captured[0]
+
+
 def test_named_site_must_resolve_to_one_validated_website_action(monkeypatch):
     monkeypatch.setattr(desktop_commands, "generate_tutor_reply",
                         lambda *_: '{"action":"open_website","url":"https://example.com"}')
