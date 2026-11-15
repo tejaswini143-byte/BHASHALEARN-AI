@@ -34,6 +34,7 @@ class Deadline(Base):
     student_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("students.id", ondelete="CASCADE"), index=True)
     title: Mapped[str] = mapped_column(String(240))
     kind: Mapped[str] = mapped_column(String(24), default="assignment")
+    delivery_mode: Mapped[str] = mapped_column(String(16), default="browser")
     due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     reminder_minutes_before: Mapped[int] = mapped_column(Integer, default=1440)
     timezone: Mapped[str] = mapped_column(String(64))

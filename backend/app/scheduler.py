@@ -60,6 +60,22 @@ def dispatch_browser_reminder(reminder_id: str) -> None:
         db.add(ReminderEvent(reminder_id=row.id, event="browser_notification_ready", detail="available to authenticated student session"))
 
 
+async def dispatch_due_reminder(reminder_id: str) -> None:
+    """Route the durable job to its selected channel; phone calls recheck consent/config at dispatch."""
+    from uuid import UUID
+    with SessionLocal() as db:
+        row = db.get(Reminder, UUID(reminder_id))
+        if row is None or row.status != "in_progress":
+            return
+        channel, student_id = row.channel, row.student_id
+    if channel == "call":
+        from .telephony import start_outbound_reminder_call
+        with SessionLocal() as db:
+            await start_outbound_reminder_call(db, student_id, UUID(reminder_id))
+    else:
+        await asyncio.to_thread(dispatch_browser_reminder, reminder_id)
+
+
 def record_dispatch_failure(reminder_id: str, error: Exception) -> None:
     """Retry transient dispatch failures with bounded exponential backoff."""
     from uuid import UUID
@@ -82,7 +98,7 @@ def record_dispatch_failure(reminder_id: str, error: Exception) -> None:
             db.add(ReminderEvent(reminder_id=row.id, event="retry", detail=detail))
 
 
-async def run_scheduler(stop: asyncio.Event, dispatch=dispatch_browser_reminder):
+async def run_scheduler(stop: asyncio.Event, dispatch=dispatch_due_reminder):
     while not stop.is_set():
         try:
             for reminder_id in await asyncio.to_thread(claim_due_batch):

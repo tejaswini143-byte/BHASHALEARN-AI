@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 class DeadlineIn(BaseModel):
     title: str = Field(min_length=1, max_length=240)
     kind: Literal["assignment", "exam"] = "assignment"
+    delivery_mode: Literal["browser", "call"] = "browser"
     due_at: datetime
     timezone: str = "Asia/Kolkata"
     reminder_minutes_before: int = Field(default=1440, ge=1, le=10080)

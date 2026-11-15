@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 
 from app.models import Reminder, ReminderEvent
-from app.scheduler import claim_due_batch, dispatch_browser_reminder, record_dispatch_failure, run_scheduler
+from app.scheduler import claim_due_batch, dispatch_browser_reminder, dispatch_due_reminder, record_dispatch_failure, run_scheduler
 
 
 def test_due_reminder_is_claimed_once_and_browser_delivery_is_persisted(scheduler_db):
@@ -68,3 +68,19 @@ def test_scheduler_uses_real_dispatch_and_stops_cleanly(monkeypatch):
     monkeypatch.setattr("app.scheduler.claim_due_batch", claim)
     asyncio.run(run_scheduler(stop, dispatch))
     assert dispatched == ["job-1"]
+
+
+def test_due_delivery_mode_routes_consent_gated_calls(scheduler_db, monkeypatch):
+    factory, _, ids = scheduler_db
+    with factory.begin() as db:
+        reminder = db.get(Reminder, ids["reminder_id"])
+        reminder.status = "in_progress"
+        reminder.channel = "call"
+    dispatched = []
+
+    async def fake_call(db, student_id, reminder_id):
+        dispatched.append((student_id, reminder_id))
+
+    monkeypatch.setattr("app.telephony.start_outbound_reminder_call", fake_call)
+    asyncio.run(dispatch_due_reminder(str(ids["reminder_id"])))
+    assert dispatched == [(ids["student_id"], ids["reminder_id"])]

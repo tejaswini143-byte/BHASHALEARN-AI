@@ -46,10 +46,15 @@ def owned_deadline(db: Session, did: uuid.UUID, sid: uuid.UUID) -> Deadline:
 
 
 def schedule(db: Session, deadline: Deadline, sid: uuid.UUID) -> Reminder:
+    if deadline.delivery_mode == "call":
+        prefs = db.get(ReminderPreference, sid)
+        if not prefs or not prefs.call_enabled or not prefs.call_consent_at or prefs.opted_out_at:
+            raise HTTPException(403, "Active call consent is required for phone reminders")
     when = deadline.due_at - timedelta(minutes=deadline.reminder_minutes_before)
     if when < datetime.now(timezone.utc):
         when = datetime.now(timezone.utc) + timedelta(seconds=5)
-    key = f"deadline:{deadline.id}:at:{when.isoformat()}:browser"
+    channel = deadline.delivery_mode
+    key = f"deadline:{deadline.id}:at:{when.isoformat()}:{channel}"
     existing = db.scalar(select(Reminder).where(Reminder.idempotency_key == key))
     if existing:
         if existing.status in {"cancelled", "failed"}:
@@ -58,7 +63,7 @@ def schedule(db: Session, deadline: Deadline, sid: uuid.UUID) -> Reminder:
             existing.attempts = 0
         return existing
     row = Reminder(deadline_id=deadline.id, student_id=sid, scheduled_at=when,
-                   channel="browser", status="scheduled", idempotency_key=key)
+                   channel=channel, status="scheduled", idempotency_key=key)
     db.add(row)
     db.flush()
     db.add(ReminderEvent(reminder_id=row.id, event="scheduled"))
