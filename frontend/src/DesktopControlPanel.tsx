@@ -39,6 +39,28 @@ type DesktopSnapshot = {
   targets: Array<{ id: string; role: string; name: string; kind: "window" | "button" | "link" | "text" | "search" | "other" }>;
 };
 
+type VerifiedChatGptDraft = {
+  text: string;
+  target_name: "Message ChatGPT";
+  url: string;
+  window_id: string;
+  verified_at: number;
+};
+
+function isSubmitMessageCommand(value: string): boolean {
+  return /^(?:submit(?: the message)?|send(?: it| the message)?|press send|enter)[.!?]*$/i.test(value.trim());
+}
+
+function pairedStep(action: Action, result: any, wanted: string): { action: Action; result: any } | null {
+  if (action.action === wanted) return { action, result };
+  if (action.action !== "sequence" || !Array.isArray(action.steps) || !Array.isArray(result?.steps)) return null;
+  for (let index = 0; index < action.steps.length; index += 1) {
+    const found = pairedStep(action.steps[index], result.steps[index], wanted);
+    if (found) return found;
+  }
+  return null;
+}
+
 function targetsForCommand(snapshot: DesktopSnapshot, transcript: string) {
   const text = transcript.toLocaleLowerCase();
   const namesField = /\b(search|message|address|url|text|input)\s*(bar|field|box)|\b(field|box|bar)\b/.test(text);
@@ -147,7 +169,9 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
   const executionInProgressRef = useRef(false);
   const autofillDispatchedRef = useRef(false);
   const desktopSnapshotRef = useRef<DesktopSnapshot | null>(null);
+  const verifiedChatGptDraftRef = useRef<VerifiedChatGptDraft | null>(null);
   const localAction = planLocalCommand(transcript.normalize("NFC").trim(), Boolean(getDesktopQaContext()));
+  const submitIntent = isSubmitMessageCommand(transcript.normalize("NFC").trim());
   const languageCode = language === "english" ? "en" : language === "telugu" ? "te" : "mixed";
 
   function cancelSpeech() {
@@ -198,6 +222,7 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
 
   async function connect() {
     cancelSpeech();
+    verifiedChatGptDraftRef.current = null;
     activeRef.current = false;
     executionGateRef.current.disable();
     currentPlanRef.current = null;
@@ -229,6 +254,7 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
     setBusy(true);
     if (activeRef.current) {
       cancelSpeech();
+      verifiedChatGptDraftRef.current = null;
       activeRef.current = false;
       executionGateRef.current.disable();
       currentPlanRef.current = null;
@@ -282,7 +308,7 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
       const needsExistingUi = /\b(click|focus|switch|close|minimize|maximize|scroll|copy|shortcut)\b/i.test(normalized)
         || (!/^open\s+/i.test(normalized) && !/\b(?:type|write|enter)\b/i.test(normalized));
       if (pointer || dictation !== null || (autofill && qaContext) || (!autofill && !qaContext && !localPlan && needsExistingUi)) {
-        const snapshot = await companion("/desktop/snapshot") as DesktopSnapshot;
+        const snapshot = desktopSnapshotRef.current || await companion("/desktop/snapshot") as DesktopSnapshot;
         desktopSnapshotRef.current = snapshot;
         targets = targetsForCommand(snapshot, normalized);
         approved_sites = {};
@@ -324,7 +350,24 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
             : "Name an exact visible button in the disposable desktop QA window." };
         }
       }
-      if (!proposed) {
+      if (submitIntent) {
+        const draft = verifiedChatGptDraftRef.current;
+        if (!draft || Date.now() - draft.verified_at > 300_000) {
+          verifiedChatGptDraftRef.current = null;
+          throw new Error("No fresh verified ChatGPT message is available. Type and verify it before preparing submission.");
+        }
+        const snapshot = await companion("/desktop/snapshot") as DesktopSnapshot;
+        if (snapshot.active_app !== "Google Chrome" && snapshot.active_app !== "Microsoft Edge") {
+          throw new Error("Bring the previously approved browser window to the foreground before preparing submission.");
+        }
+        if (snapshot.active_window_id !== draft.window_id) {
+          throw new Error("The browser window changed after typing. Return to the approved window and prepare submission again.");
+        }
+        desktopSnapshotRef.current = snapshot;
+        proposed = { action: "submit_visible", target_name: draft.target_name,
+          text: draft.text, url: draft.url };
+      }
+      if (!proposed && !submitIntent) {
         assertExecutionActive(requestEpoch);
         const response = await fetch("/api/v1/assistant/desktop/interpret", {
           method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
@@ -341,6 +384,7 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
         setStatus("Emergency Stop cancelled the pending command.");
         return;
       }
+      if (!proposed) throw new Error("No desktop action could be prepared.");
       setCloseConfirmed(false);
       setAction(proposed);
       if (proposed.action === "clarify") {
@@ -379,6 +423,7 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
     if (step.action === "open_website" || step.action === "open_named_link") return `open ${step.url || "the selected website"}`;
     if (step.action === "search_web" || step.action === "search_youtube") return `search ${step.action === "search_youtube" ? "YouTube" : "Google"} for “${step.text || "…"}”`;
     if (step.action === "type_into_visible") return `type ${step.text_mode || "replace"} into ${step.target_name || "the named visible control"}: ${JSON.stringify(step.text || "")} (do not submit)`;
+    if (step.action === "submit_visible") return `submit once to ${step.url || "the verified ChatGPT destination"} from ${step.target_name || "the verified composer"}: ${JSON.stringify(step.text || "")}`;
     if (["click_visible", "focus_visible"].includes(step.action)) return `${step.action.replaceAll("_", " ")} ${step.target_name || "the named visible control"}`;
     if (step.action === "keyboard_shortcut") return `press ${step.shortcut || "the selected shortcut"}`;
     return step.action.replaceAll("_", " ");
@@ -575,7 +620,12 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
             }))) {
             throw new Error("The approved demo form changed. Prepare the action again.");
           }
-          if (needsBoundTargets && currentSnapshot && snapshot && approvedAction.action !== "type_qa_text" && !fillsDemoForm && (currentSnapshot.active_window_id !== snapshot.active_window_id
+          if (approvedAction.action === "submit_visible" && currentSnapshot && snapshot
+            && currentSnapshot.active_window_id !== snapshot.active_window_id) {
+            throw new Error("The approved browser window changed after planning. Prepare submission again.");
+          }
+          if (needsBoundTargets && currentSnapshot && snapshot && approvedAction.action !== "type_qa_text"
+            && approvedAction.action !== "submit_visible" && !fillsDemoForm && (currentSnapshot.active_window_id !== snapshot.active_window_id
             || currentSnapshot.focused_target_id !== snapshot.focused_target_id
             || JSON.stringify(currentSnapshot.targets) !== JSON.stringify(snapshot.targets))) {
             throw new Error("The active window or its UI Automation targets changed after planning. Reinterpret the command.");
@@ -592,12 +642,14 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
         const confirmation = await companion("/desktop/confirm", executionPayload) as { confirmation_token?: string };
         if (!confirmation.confirmation_token) throw new Error("The companion did not issue a one-time action confirmation.");
         assertExecutionActive(executionEpoch);
+        if (approvedAction.action === "submit_visible") verifiedChatGptDraftRef.current = null;
         const executingLink = approvedAction.action === "open_named_link";
         const executingQaAction = ["move_qa_pointer", "click_qa_control", "type_qa_text", "fill_qa_demo_form"].includes(approvedAction.action);
+        const executingMessage = approvedAction.action === "submit_visible";
         autofillDispatched = fillsDemoForm;
         autofillDispatchedRef.current = fillsDemoForm;
         const response = await companion("/desktop/execute", { ...executionPayload, confirmation_token: confirmation.confirmation_token },
-          pairing, executingLink || executingQaAction ? AbortSignal.timeout(15_000) : undefined).catch(error => {
+          pairing, executingLink || executingQaAction || executingMessage ? AbortSignal.timeout(20_000) : undefined).catch(error => {
           if (executingLink && (error instanceof TypeError || error?.name === "TimeoutError")) {
             throw new Error("The companion did not respond. Check whether the link opened before retrying.");
           }
@@ -606,6 +658,9 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
           }
           if (executingQaAction && (error instanceof TypeError || error?.name === "TimeoutError")) {
             throw new Error("The companion did not respond. Check the QA window before preparing a fresh action.");
+          }
+          if (executingMessage && (error instanceof TypeError || error?.name === "TimeoutError")) {
+            throw new Error("The companion did not respond after the one-time Send action. Inspect ChatGPT before preparing anything else.");
           }
           throw error;
         });
@@ -623,7 +678,11 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
               && typeof result.verified_window === "string";
           }
           if (requested.action === "type_into_visible") return result.verified === true && result.submitted === false
-            && result.typed_characters === [...(requested.text || "")].length;
+            && result.typed_characters === [...(requested.text || "")].length
+            && typeof result.verified_window === "string" && typeof result.verified_url === "string";
+          if (requested.action === "submit_visible") return result.verified === true && result.submitted === true
+            && result.target === requested.target_name && result.url === requested.url
+            && result.verified_window === desktopSnapshotRef.current?.active_window_id;
           if (requested.action === "calculate") return result.verified === true
             && typeof result.verified_result === "string" && typeof result.verified_window === "string";
           if (requested.action === "open_app") return result.app_id === requested.app_id && typeof result.verified_window === "string";
@@ -640,9 +699,24 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
           || !verifiedStep(approvedAction, response)) {
           throw new Error("The companion did not confirm the approved action result.");
         }
+        const typedMessage = pairedStep(approvedAction, response, "type_into_visible");
+        if (typedMessage?.action.target_name === "Message ChatGPT"
+          && typeof typedMessage.action.text === "string"
+          && typeof typedMessage.result?.verified_url === "string"
+          && typeof typedMessage.result.verified_window === "string") {
+          const destination = new URL(typedMessage.result.verified_url);
+          if (destination.protocol === "https:" && destination.hostname === "chatgpt.com") {
+            verifiedChatGptDraftRef.current = { text: typedMessage.action.text,
+              target_name: "Message ChatGPT", url: destination.href,
+              window_id: typedMessage.result.verified_window, verified_at: Date.now() };
+          }
+        } else if (pairedStep(approvedAction, response, "open_website")) {
+          verifiedChatGptDraftRef.current = null;
+        }
         summary = fillsDemoForm ? "filled the demo Name and Email fields"
           : approvedAction.action === "type_qa_text"
           ? `entered ${response.typed_characters} characters in ${response.target}`
+          : approvedAction.action === "submit_visible" ? "submitted the verified ChatGPT message once"
           : approvedAction.action === "click_qa_control"
           ? `sent a click to ${approvedAction.target_name}`
           : approvedAction.action === "move_qa_pointer"
@@ -673,6 +747,7 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
 
   async function stop() {
     const autofillWasDispatched = autofillDispatchedRef.current;
+    verifiedChatGptDraftRef.current = null;
     const stopEpoch = ++controlRequestRef.current;
     cancelSpeech();
     executionGateRef.current.disable();
@@ -703,7 +778,7 @@ export function DesktopControlPanel({ transcript, language = "mixed" }: { transc
     </div>
     <p>Prisma transcript: {transcript || "Record a command first."}</p>
     {transcript.trim() && !STOP_WORDS.test(transcript.normalize("NFC").trim()) && <button type="button" disabled={!connected || !active || busy || reviewedTranscript === transcript.normalize("NFC").trim()} onClick={() => { executionGateRef.current.invalidatePlan(); currentPlanRef.current = null; setReviewedTranscript(transcript.normalize("NFC").trim()); setAction(null); setStatus("Transcript reviewed. You can prepare the action plan."); }}>I reviewed this transcript</button>}
-    <button type="button" disabled={!connected || !active || !transcript.trim() || busy || (!STOP_WORDS.test(transcript.normalize("NFC").trim()) && reviewedTranscript !== transcript.normalize("NFC").trim())} onClick={() => void interpret()}>{STOP_WORDS.test(transcript.normalize("NFC").trim()) ? "Voice Emergency Stop" : localAction?.action === "open_app" ? "Plan Notepad with Gemini" : localAction ? "Prepare link action" : pointerCommand(transcript.normalize("NFC").trim()) ? "Prepare pointer action" : FILL_DEMO_FORM.test(transcript.trim()) ? "Prepare demo autofill" : /^type(?:\s|$)/i.test(transcript.trim()) && getDesktopQaContext() ? "Prepare text entry" : "Interpret with Gemini"}</button>
+    <button type="button" disabled={!connected || !active || !transcript.trim() || busy || (!STOP_WORDS.test(transcript.normalize("NFC").trim()) && reviewedTranscript !== transcript.normalize("NFC").trim())} onClick={() => void interpret()}>{STOP_WORDS.test(transcript.normalize("NFC").trim()) ? "Voice Emergency Stop" : submitIntent ? "Prepare message submission" : localAction?.action === "open_app" ? "Plan Notepad with Gemini" : localAction ? "Prepare link action" : pointerCommand(transcript.normalize("NFC").trim()) ? "Prepare pointer action" : FILL_DEMO_FORM.test(transcript.trim()) ? "Prepare demo autofill" : /^type(?:\s|$)/i.test(transcript.trim()) && getDesktopQaContext() ? "Prepare text entry" : "Interpret with Gemini"}</button>
     {action && (clarification
       ? <div role="status" aria-label="Clarification needed"><p>{action.clarification}</p><button type="button" onClick={() => setAction(null)}>Clear clarification</button></div>
       : <div role="group" aria-label="Confirm desktop action"><p>Proposed: <b>{describe(action)}</b>{action.action === "sequence" && <ol>{(action.steps || []).map((step, index) => <li key={index}>{describe(step)}</li>)}</ol>}</p>

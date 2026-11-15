@@ -62,6 +62,7 @@ _VOICE_ACTIONS = {
     "open_app", "open_website", "open_named_link", "search_web", "search_youtube",
     "calculate",
     "open_approved_site", "type", "type_into", "type_into_visible", "search",
+    "submit_visible",
     "keyboard_shortcut", "click_visible", "focus_visible", "switch_window",
     "minimize_window", "maximize_window", "close_window", "scroll_up", "scroll_down",
     "move_qa_pointer", "click_qa_control", "type_qa_text", "fill_qa_demo_form",
@@ -77,6 +78,8 @@ def _validate_execution_action(action: dict, *, depth: int = 0) -> None:
         steps = action.get("steps")
         if not isinstance(steps, list) or not 1 <= len(steps) <= 5:
             raise ValueError("Only one to five approved desktop steps are supported.")
+        if any(isinstance(step, dict) and step.get("action") == "submit_visible" for step in steps):
+            raise ValueError("Message submission must be a separate browser and Windows-approved action.")
         for step in steps:
             _validate_execution_action(step, depth=depth + 1)
         if depth == 0 and len(_approval_description(action)) > 3000:
@@ -91,7 +94,15 @@ def _validate_execution_action(action: dict, *, depth: int = 0) -> None:
             action["url"] = windows_automation.normalize_public_http_url(action.get("url", ""))
         except Exception as exc:
             raise ValueError("A valid public HTTP(S) website is required.") from exc
-    if name in {"type", "type_into", "type_into_visible", "search", "search_web", "search_youtube", "calculate"}:
+    if name == "submit_visible":
+        try:
+            action["url"] = windows_automation.normalize_public_http_url(action.get("url", ""))
+        except Exception as exc:
+            raise ValueError("A verified ChatGPT destination is required.") from exc
+        if (action.get("target_name") != "Message ChatGPT"
+                or urlparse(action["url"]).hostname != "chatgpt.com"):
+            raise ValueError("Message submission is limited to the uniquely verified ChatGPT composer.")
+    if name in {"type", "type_into", "type_into_visible", "submit_visible", "search", "search_web", "search_youtube", "calculate"}:
         text = action.get("text")
         if not isinstance(text, str) or not 1 <= len(text) <= 1000 or any(ord(ch) < 32 and ch not in "\r\n\t" for ch in text):
             raise ValueError("Text entry must contain 1–1000 safe characters.")
@@ -102,7 +113,7 @@ def _validate_execution_action(action: dict, *, depth: int = 0) -> None:
             windows_automation.evaluate_expression(action.get("text", ""))
         except ValueError as exc:
             raise ValueError(str(exc)) from exc
-    if name in {"click_visible", "focus_visible", "type_into_visible"}:
+    if name in {"click_visible", "focus_visible", "type_into_visible", "submit_visible"}:
         target = action.get("target_name")
         if not isinstance(target, str) or not target.strip() or len(target) > 120:
             raise ValueError("A visible control name is required.")
@@ -127,6 +138,9 @@ def _approval_description(action: dict) -> str:
     if name == "type_into_visible":
         text = json.dumps(action.get("text", ""), ensure_ascii=False)
         return f"Type into {action.get('target_name', 'visible field')} (mode: {action.get('text_mode') or 'replace'}; do not submit):\n{text}"
+    if name == "submit_visible":
+        text = json.dumps(action.get("text", ""), ensure_ascii=False)
+        return f"Submit this previously verified message once to {action.get('url', '')} from {action.get('target_name', 'the verified composer')}:\n{text}"
     if name in {"type", "type_into", "search"}:
         return "Type the approved text (no submit):\n" + json.dumps(action.get("text", ""), ensure_ascii=False)
     return name.replace("_", " ")
@@ -726,17 +740,20 @@ class Handler(BaseHTTPRequestHandler):
             with lock:
                 active = False; stopped = True; desktop_stop.set()
                 _invalidate_desktop_approvals()
+            windows_automation.clear_verified_browser_drafts()
             last_action = "Emergency stop; desktop control disabled"
             return self._send(200, {"ok": True, "active": False, "last_action": last_action})
         if self.path == "/disable":
             with lock:
                 active = False; desktop_stop.set()
                 _invalidate_desktop_approvals()
+            windows_automation.clear_verified_browser_drafts()
             return self._send(200, {"ok": True, "active": False})
         if self.path == "/activate":
             with lock:
                 active = True; stopped = False; desktop_stop.clear()
                 _invalidate_desktop_approvals()
+            windows_automation.clear_verified_browser_drafts()
             return self._send(200, {"ok": True, "active": True})
         with lock:
             generation = desktop_generation

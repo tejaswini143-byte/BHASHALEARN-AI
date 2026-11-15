@@ -144,7 +144,7 @@ test("target-independent browser and app sequences avoid unrelated snapshots whi
   assert.match(panel, /const needsBoundTargets = requiresBoundTargets\(approvedAction\)/);
   assert.match(panel, /const currentSnapshot = needsBoundTargets \? await companion\("\/desktop\/snapshot"\)/);
   assert.match(panel, /\["open_app".*"type_into_visible"\]/);
-  assert.match(panel, /if \(needsBoundTargets && currentSnapshot && snapshot && approvedAction\.action !== "type_qa_text" && !fillsDemoForm && \(currentSnapshot\.active_window_id/);
+    assert.match(panel, /if \(needsBoundTargets && currentSnapshot && snapshot && approvedAction\.action !== "type_qa_text"\s+&& approvedAction\.action !== "submit_visible" && !fillsDemoForm && \(currentSnapshot\.active_window_id/);
 });
 
 test("disposable QA provides uniquely named, duplicate, search, typing, and sandbox targets", async () => {

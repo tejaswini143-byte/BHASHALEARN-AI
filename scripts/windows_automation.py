@@ -68,6 +68,7 @@ MAX_CONTROLS = 30
 SNAPSHOT_TTL = 90
 _cache_lock = threading.Lock()
 _snapshots: dict[str, dict] = {}
+_verified_browser_drafts: dict[int, dict] = {}
 
 
 def _process_image(pid: int) -> str | None:
@@ -247,6 +248,54 @@ def _cached_target(snapshot_id: str, target_id: str) -> dict:
 
 def _foreground_handle() -> int:
     return int(ctypes.windll.user32.GetForegroundWindow())
+
+
+def clear_verified_browser_drafts() -> None:
+    with _cache_lock:
+        _verified_browser_drafts.clear()
+
+
+def _control_value_reader(wrapper):
+    """Read an editable UIA value, falling back to TextPattern for Chromium editors."""
+    try:
+        value_pattern = wrapper.iface_value
+    except Exception:
+        value_pattern = None
+    if value_pattern is not None:
+        if value_pattern.CurrentIsReadOnly:
+            raise RuntimeError("The selected field is not editable.")
+        return lambda: value_pattern.CurrentValue or ""
+    try:
+        text_pattern = wrapper.iface_text
+        return lambda: text_pattern.DocumentRange.GetText(1001) or ""
+    except Exception:
+        raise RuntimeError("Windows could not verify an editable field value pattern.") from None
+
+
+def _chatgpt_message_is_visible(entry: dict, expected_text: str, composer_wrapper) -> bool:
+    """Confirm the exact message appeared in the rendered conversation, not just that input cleared."""
+    try:
+        controls = entry["wrapper"].descendants()
+    except Exception:
+        return False
+    for control in controls:
+        try:
+            if control is composer_wrapper or not control.is_visible():
+                continue
+            info = control.element_info
+            if str(info.control_type or "") not in {"Text", "Document", "ListItem", "Group"}:
+                continue
+            if str(info.name or "").strip() == expected_text:
+                return True
+            try:
+                value = control.iface_text.DocumentRange.GetText(1001)
+            except Exception:
+                continue
+            if isinstance(value, str) and value.strip() == expected_text:
+                return True
+        except Exception:
+            continue
+    return False
 
 
 _ADDRESS_AUTOMATION_IDS = {"omnibox", "addresseditbox", "addressandsearchbox"}
@@ -451,6 +500,142 @@ def _calculate_in_calculator(expression: str, *, type_text, cancel_check) -> dic
     raise RuntimeError("Calculator did not display the expected verified result. Inspect it before retrying.")
 
 
+def _submit_verified_chatgpt_draft(payload: dict, *, cancel_check, active_window_id: str | None) -> dict:
+    name = payload.get("target_name")
+    text = payload.get("text")
+    requested_url = payload.get("url")
+    if name != "Message ChatGPT" or not isinstance(text, str) or not text:
+        raise RuntimeError("Only a previously verified ChatGPT message can be submitted.")
+    try:
+        requested = normalize_public_http_url(requested_url or "")
+    except UnsafePublicURL as exc:
+        raise RuntimeError("The approved ChatGPT destination is invalid.") from exc
+    if urlsplit(requested).hostname != "chatgpt.com":
+        raise RuntimeError("Voice submission is limited to the verified ChatGPT composer.")
+
+    with _cache_lock:
+        known = next((dict(value) for value in _verified_browser_drafts.values()
+                      if value.get("window_id") == active_window_id and value.get("target_name") == name), None)
+    if (not known or known.get("text") != text or known.get("url") != requested
+            or time.monotonic() - known.get("created_at", 0) > 300):
+        raise RuntimeError("This message has no fresh verified typing record. Type and verify it again before submitting.")
+
+    entries = {item["id"]: item for item in _windows() if item["app_id"] in {"chrome", "edge"}}
+    entry = entries.get(active_window_id)
+    if not entry or active_window_id != known.get("window_id"):
+        raise RuntimeError("The approved browser window changed after the message was typed.")
+    if _foreground_handle() != entry["handle"]:
+        entry["wrapper"].set_focus()
+        if _foreground_handle() != entry["handle"]:
+            raise RuntimeError("The approved browser window could not be focused.")
+
+    try:
+        current_url = _read_browser_address(entry)
+    except RuntimeError:
+        current_url = ""
+    if not current_url or urlsplit(current_url).hostname != "chatgpt.com":
+        tabs = []
+        try:
+            tabs = [control for control in entry["wrapper"].descendants()
+                    if str(control.element_info.control_type or "") == "TabItem"
+                    and "chatgpt" in str(control.element_info.name or "").casefold()
+                    and control.is_visible() and control.is_enabled()]
+        except Exception:
+            tabs = []
+        if len(tabs) != 1:
+            raise RuntimeError("Could not uniquely identify the previously verified ChatGPT tab. Select it and retry.")
+        try:
+            tabs[0].iface_selection_item.Select()
+        except Exception:
+            raise RuntimeError("Windows could not safely activate the identified ChatGPT tab.") from None
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
+            cancel_check()
+            if _foreground_handle() != entry["handle"]:
+                raise RuntimeError("The approved browser window lost foreground focus while selecting ChatGPT.")
+            try:
+                current_url = _read_browser_address(entry)
+            except RuntimeError:
+                current_url = ""
+            if current_url and urlsplit(current_url).hostname == "chatgpt.com":
+                break
+            time.sleep(0.2)
+    if not current_url or urlsplit(current_url).hostname != "chatgpt.com":
+        raise RuntimeError("The selected tab is not ChatGPT.")
+    try:
+        verified_url = verify_public_redirect(requested, current_url)
+    except UnsafePublicURL as exc:
+        raise RuntimeError("ChatGPT navigated to a different destination after the message was typed.") from exc
+    if verified_url != requested:
+        raise RuntimeError("The ChatGPT conversation changed after the message was typed. Prepare it again.")
+
+    snapshot = get_snapshot()
+    if snapshot["active_window_id"] != active_window_id or snapshot["active_app"] not in {"Google Chrome", "Microsoft Edge"}:
+        raise RuntimeError("The verified ChatGPT browser window is no longer active.")
+    composers = [item for item in snapshot["targets"]
+                 if item["kind"] == "text" and item["name"] == name]
+    if len(composers) != 1:
+        raise RuntimeError("The ChatGPT message composer is missing or ambiguous. Sign in and expose one composer before retrying.")
+    composer = _cached_target(snapshot["snapshot_id"], composers[0]["id"])
+    current_value = _control_value_reader(composer["wrapper"])()
+    if current_value != text:
+        raise RuntimeError("The ChatGPT composer no longer contains the exact previously verified message.")
+    composer_rect = composer["wrapper"].rectangle()
+
+    send_names = {"send", "send message", "send prompt"}
+    sends = []
+    try:
+        sends = [control for control in entry["wrapper"].descendants()
+                 if str(control.element_info.control_type or "") == "Button"
+                 and str(control.element_info.name or "").strip().casefold() in send_names
+                 and control.is_visible() and control.is_enabled()]
+    except Exception:
+        sends = []
+    nearby = []
+    for control in sends:
+        try:
+            rect = control.rectangle()
+            if (rect.left >= composer_rect.left - 48 and rect.right <= composer_rect.right + 48
+                    and rect.top >= composer_rect.top - 48 and rect.bottom <= composer_rect.bottom + 48):
+                nearby.append(control)
+        except Exception:
+            continue
+    if len(nearby) != 1:
+        raise RuntimeError("Could not uniquely identify the Send button adjacent to the verified ChatGPT composer.")
+
+    cancel_check()
+    composer["wrapper"].set_focus()
+    if (_foreground_handle() != entry["handle"] or not composer["wrapper"].has_keyboard_focus()
+            or _control_value_reader(composer["wrapper"])() != text):
+        raise RuntimeError("The approved ChatGPT composer lost focus or changed before submission.")
+    # Consume the in-process verification record before the one and only click.
+    with _cache_lock:
+        stored = _verified_browser_drafts.get(entry["handle"])
+        if (not stored or stored.get("text") != text or stored.get("url") != requested
+                or stored.get("created_at") != known.get("created_at")):
+            raise RuntimeError("The verified message changed before submission. Prepare a fresh action.")
+        _verified_browser_drafts.pop(entry["handle"], None)
+    try:
+        nearby[0].iface_invoke.Invoke()
+    except Exception:
+        raise RuntimeError("Windows could not confirm the Send button click. Inspect ChatGPT before retrying; the message was not retried.") from None
+
+    deadline = time.monotonic() + 12
+    while time.monotonic() < deadline:
+        cancel_check()
+        if _foreground_handle() != entry["handle"]:
+            raise RuntimeError("The browser changed during submission. Inspect ChatGPT before retrying.")
+        try:
+            if (_control_value_reader(composer["wrapper"])() == ""
+                    and _chatgpt_message_is_visible(entry, text, composer["wrapper"])):
+                return {"ok": True, "action": "submit_visible", "submitted": True, "verified": True,
+                        "target": name, "verified_window": active_window_id, "url": verified_url}
+        except Exception:
+            pass
+        time.sleep(0.25)
+    raise RuntimeError("ChatGPT did not clear the composer after one Send click. Inspect the conversation before retrying.")
+
+
 def execute_action(payload: dict, *, type_text, cancel_check, confirmed_close: bool = False,
                    sequence_context: dict | None = None, snapshot_id: str | None = None,
                    active_window_id: str | None = None, focus_target_id: str | None = None) -> dict:
@@ -479,12 +664,17 @@ def execute_action(payload: dict, *, type_text, cancel_check, confirmed_close: b
         return result
     if action == "calculate":
         return _calculate_in_calculator(payload.get("text", ""), type_text=type_text, cancel_check=cancel_check)
+    if action == "submit_visible":
+        return _submit_verified_chatgpt_draft(payload, cancel_check=cancel_check,
+                                               active_window_id=active_window_id)
     if action == "open_named_link":
         url = payload.get("url")
         if not isinstance(url, str):
             raise RuntimeError("A public website URL is required.")
         result = _navigate_and_verify(url, cancel_check=cancel_check)
         context.update(browser_window_id=result["verified_window"], verified_url=result["verified_url"])
+        with _cache_lock:
+            _verified_browser_drafts.pop(int(result["verified_window"].removeprefix("w-"), 16), None)
         return {"ok": True, "action": action, **result}
     if action == "open_website":
         url = payload.get("url")
@@ -492,6 +682,8 @@ def execute_action(payload: dict, *, type_text, cancel_check, confirmed_close: b
             raise RuntimeError("A public website URL is required.")
         result = _navigate_and_verify(url, cancel_check=cancel_check)
         context.update(browser_window_id=result["verified_window"], verified_url=result["verified_url"])
+        with _cache_lock:
+            _verified_browser_drafts.pop(int(result["verified_window"].removeprefix("w-"), 16), None)
         return {"ok": True, "action": action, **result}
     if action == "search_web":
         query = payload.get("text")
@@ -552,6 +744,8 @@ def execute_action(payload: dict, *, type_text, cancel_check, confirmed_close: b
                         raise RuntimeError("Text entry must be 1–1000 safe characters.")
                     cached = _cached_target(fresh["snapshot_id"], target["id"])
                     wrapper = cached["wrapper"]
+                    with _cache_lock:
+                        _verified_browser_drafts.pop(cached["handle"], None)
                     try:
                         if not wrapper.is_enabled() or wrapper.element_info.element.CurrentIsPassword:
                             raise RuntimeError("The selected field is not editable.")
@@ -564,26 +758,12 @@ def execute_action(payload: dict, *, type_text, cancel_check, confirmed_close: b
                     # exact post-entry verification; never fall back to clipboard
                     # writes or an unverified blind type.
                     try:
-                        value_pattern = wrapper.iface_value
+                        read_value = _control_value_reader(wrapper)
+                        old_value = read_value()
+                    except RuntimeError:
+                        raise
                     except Exception:
-                        value_pattern = None
-                    if value_pattern is not None:
-                        try:
-                            if value_pattern.CurrentIsReadOnly:
-                                raise RuntimeError("The selected field is not editable.")
-                            old_value = value_pattern.CurrentValue or ""
-                            read_value = lambda: value_pattern.CurrentValue or ""
-                        except RuntimeError:
-                            raise
-                        except Exception:
-                            raise RuntimeError("Windows could not verify that the selected field is editable.") from None
-                    else:
-                        try:
-                            text_pattern = wrapper.iface_text
-                            read_value = lambda: text_pattern.DocumentRange.GetText(1001) or ""
-                            old_value = read_value()
-                        except Exception:
-                            raise RuntimeError("Windows could not verify an editable field value pattern.") from None
+                        raise RuntimeError("Windows could not verify that the selected field is editable.") from None
                     mode = payload.get("text_mode", "replace")
                     if mode not in {"append", "replace"}:
                         raise RuntimeError("Choose append or replace text mode.")
@@ -614,8 +794,20 @@ def execute_action(payload: dict, *, type_text, cancel_check, confirmed_close: b
                     expected = text_value if mode == "replace" else old_value + text_value
                     if final_value != expected:
                         raise RuntimeError("Windows did not verify the exact text entry. Inspect the field before retrying.")
+                    verified_window = context.get("browser_window_id") or cached.get("id")
+                    verified_url = context.get("verified_url")
+                    if (verified_url and requested == "Message ChatGPT"
+                            and urlsplit(verified_url).hostname == "chatgpt.com"):
+                        with _cache_lock:
+                            _verified_browser_drafts[cached["handle"]] = {
+                                "text": text_value, "target_name": requested,
+                                "url": verified_url, "window_id": verified_window,
+                                "created_at": time.monotonic(),
+                            }
                     return {"ok": True, "action": action, "target": target["name"],
-                            "typed_characters": len(text_value), "verified": True, "submitted": False}
+                            "typed_characters": len(text_value), "verified": True, "submitted": False,
+                            **({"verified_window": verified_window, "verified_url": verified_url}
+                               if verified_url else {})}
                 mapped = {"click_visible": "click_target", "focus_visible": "focus_target",
                           "type_into_visible": "type_into"}[action]
                 result = execute_action({"action": mapped, "target_id": target["id"],

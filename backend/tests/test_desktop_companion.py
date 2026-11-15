@@ -24,6 +24,31 @@ def test_companion_validates_public_website_sequences_and_exact_approval_details
     assert "do not submit" in description
 
 
+def test_chatgpt_message_submission_is_exactly_described_and_must_be_a_separate_action():
+    action = {"action": "submit_visible", "target_name": "Message ChatGPT",
+              "url": "https://chatgpt.com/", "text": "Hello, explain artificial intelligence"}
+    companion._validate_execution_action(action)
+    description = companion._approval_description(action)
+    assert "Submit this previously verified message once" in description
+    assert "https://chatgpt.com/" in description
+    assert "Message ChatGPT" in description
+    assert "Hello, explain artificial intelligence" in description
+    with pytest.raises(ValueError, match="separate browser and Windows-approved"):
+        companion._validate_execution_action({"action": "sequence", "steps": [
+            {"action": "type_into_visible", "target_name": "Message ChatGPT", "text": "Hello"},
+            action,
+        ]})
+
+
+@pytest.mark.parametrize("bad", [
+    {"action": "submit_visible", "target_name": "Search", "url": "https://chatgpt.com/", "text": "Hello"},
+    {"action": "submit_visible", "target_name": "Message ChatGPT", "url": "https://example.com/", "text": "Hello"},
+])
+def test_companion_rejects_submission_for_wrong_target_or_destination(bad):
+    with pytest.raises(ValueError):
+        companion._validate_execution_action(bad)
+
+
 @pytest.mark.parametrize("url", ["file:///C:/Windows/win.ini", "http://127.0.0.1/", "https://example.com/?access_token=x"])
 def test_companion_rejects_nonpublic_or_secret_urls_before_native_approval(url):
     with pytest.raises(ValueError):

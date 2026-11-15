@@ -137,6 +137,82 @@ test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
     await expect(panel.getByRole("button", { name: "Plan Notepad with Gemini" })).toBeDisabled();
   });
 
+  test("desktop action controls remain reachable by wheel and keyboard on desktop and mobile", async ({ page }) => {
+    const origin = "http://127.0.0.1:18765";
+    const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Authorization, Content-Type" };
+    let active = false;
+    await page.route(`${origin}/**`, async route => {
+      const request = route.request();
+      if (request.method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
+      switch (new URL(request.url()).pathname) {
+        case "/pair": return route.fulfill({ headers: cors, json: { token: "mock-pairing" } });
+        case "/health": return route.fulfill({ headers: cors, json: { active } });
+        case "/activate": active = true; return route.fulfill({ headers: cors, json: { active } });
+        case "/disable": active = false; return route.fulfill({ headers: cors, json: { active } });
+        case "/stop": active = false; return route.fulfill({ headers: cors, json: { active } });
+        default: return route.fulfill({ headers: cors, status: 503, json: { error: "No desktop action is executed in this layout test." } });
+      }
+    });
+    await page.route("**/api/v1/assistant/desktop/interpret", route => route.fulfill({ json: {
+      action: { action: "open_app", app_id: "notepad" },
+    } }));
+    await page.route("**/api/v1/assistant/voice/speech", route => route.fulfill({ status: 204 }));
+    await mockVoiceBrowser(page, { savedTranscript: "Open Notepad." });
+    const panel = page.getByRole("region", { name: "Windows desktop control" });
+    await panel.getByRole("button", { name: "Connect to local companion" }).click();
+    await panel.getByRole("button", { name: "Enable control" }).click();
+    await panel.getByRole("button", { name: "I reviewed this transcript" }).click();
+    await panel.getByRole("button", { name: "Plan Notepad with Gemini" }).click();
+    const confirm = panel.getByRole("button", { name: "Confirm and execute" });
+    const cancel = panel.getByRole("button", { name: "Cancel" });
+    const emergencyStop = panel.getByRole("button", { name: "Emergency Stop" });
+    await expect(confirm).toBeVisible();
+    await expect(cancel).toBeVisible();
+    await expect(emergencyStop).toBeVisible();
+
+    const compose = page.locator(".vt-compose");
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await compose.focus();
+    const desktopBefore = await compose.evaluate(element => ({ top: element.scrollTop,
+      overflow: getComputedStyle(element).overflowY, height: element.clientHeight, content: element.scrollHeight }));
+    expect(desktopBefore.overflow).toBe("auto");
+    expect(desktopBefore.content).toBeGreaterThan(desktopBefore.height);
+    await compose.hover();
+    await page.mouse.wheel(0, 700);
+    await expect.poll(() => compose.evaluate(element => element.scrollTop)).toBeGreaterThan(desktopBefore.top);
+    await compose.press("PageDown");
+    await expect.poll(() => compose.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
+    for (const button of [confirm, cancel]) {
+      await button.focus();
+      const inCompose = await button.evaluate(element => {
+        const parent = element.closest(".vt-compose")!;
+        const a = element.getBoundingClientRect(); const b = parent.getBoundingClientRect();
+        return a.top >= b.top && a.bottom <= b.bottom;
+      });
+      expect(inCompose).toBe(true);
+    }
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    const mobileBefore = await page.evaluate(() => ({ y: window.scrollY, height: document.documentElement.clientHeight,
+      content: document.documentElement.scrollHeight }));
+    expect(mobileBefore.content).toBeGreaterThan(mobileBefore.height);
+    await page.mouse.move(350, 700);
+    await page.mouse.wheel(0, 800);
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(mobileBefore.y);
+    await compose.focus();
+    const mobileKeyBefore = await page.evaluate(() => window.scrollY);
+    await compose.press("PageDown");
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThanOrEqual(mobileKeyBefore);
+    for (const button of [confirm, cancel, emergencyStop]) {
+      await button.focus();
+      await expect.poll(() => button.evaluate(element => {
+        const rect = element.getBoundingClientRect();
+        return rect.top >= 0 && rect.bottom <= window.innerHeight;
+      })).toBe(true);
+    }
+  });
+
   test("dismissing consent preserves the local preview without reopening the microphone or uploading", async ({ page }) => {
     await mockVoiceBrowser(page);
     const micCalls = () => page.evaluate(() => (window as Window & { voiceTest: { micCalls: number } }).voiceTest.micCalls);
@@ -353,7 +429,7 @@ test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
     expect(requests).toEqual(["gemini", "/desktop/confirm", "/desktop/execute"]);
   });
 
-  test("website typing preview binds exact text and verifies without submitting", async ({ page }) => {
+  test("ChatGPT typing is verified before a separate one-time Send approval", async ({ page }) => {
     const origin = "http://127.0.0.1:18765";
     const text = "feature one safe query";
     const action = { action: "sequence", steps: [
@@ -361,6 +437,7 @@ test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
       { action: "type_into_visible", target_name: "Message ChatGPT", text, text_mode: "replace" },
     ] };
     const requests: string[] = [];
+    let snapshots = 0;
     const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
       "Access-Control-Allow-Headers": "Authorization, Content-Type" };
     await page.route(`${origin}/**`, async route => {
@@ -371,14 +448,32 @@ test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
       if (path === "/health") return route.fulfill({ headers: cors, json: { active: false } });
       if (path === "/activate") return route.fulfill({ headers: cors, json: { active: true } });
       requests.push(path);
+      if (path === "/desktop/snapshot") return route.fulfill({ headers: cors, json: {
+        snapshot_id: `browser-${++snapshots}`, active_window_id: "browser-window", focused_target_id: "composer",
+        active_app: "Google Chrome", targets: [{ id: "composer", role: "document", name: "Message ChatGPT", kind: "text" }],
+      } });
       if (path === "/desktop/confirm") {
-        expect(request.postDataJSON().action).toEqual(action);
-        return route.fulfill({ headers: cors, json: { confirmation_token: "mock-sequence-ticket" } });
+        const approved = request.postDataJSON().action;
+        if (requests.filter(item => item === "/desktop/confirm").length === 1) {
+          expect(approved).toEqual(action);
+          return route.fulfill({ headers: cors, json: { confirmation_token: "mock-sequence-ticket" } });
+        }
+        expect(approved).toEqual({ action: "submit_visible", target_name: "Message ChatGPT",
+          text, url: "https://chatgpt.com/" });
+        return route.fulfill({ headers: cors, json: { confirmation_token: "mock-send-ticket" } });
       }
-      if (path === "/desktop/execute") return route.fulfill({ headers: cors, json: { ok: true, action: "sequence", steps: [
-        { ok: true, action: "open_website", requested_url: "https://chatgpt.com/", verified_url: "https://chatgpt.com/", verified_window: "browser-window", redirected: false },
-        { ok: true, action: "type_into_visible", target: "Message ChatGPT", typed_characters: [...text].length, verified: true, submitted: false },
-      ] } });
+      if (path === "/desktop/execute") {
+        const approved = request.postDataJSON().action;
+        if (approved.action === "submit_visible") return route.fulfill({ headers: cors, json: {
+          ok: true, action: "submit_visible", submitted: true, verified: true,
+          target: "Message ChatGPT", verified_window: "browser-window", url: "https://chatgpt.com/",
+        } });
+        return route.fulfill({ headers: cors, json: { ok: true, action: "sequence", steps: [
+          { ok: true, action: "open_website", requested_url: "https://chatgpt.com/", verified_url: "https://chatgpt.com/", verified_window: "browser-window", redirected: false },
+          { ok: true, action: "type_into_visible", target: "Message ChatGPT", typed_characters: [...text].length,
+            verified: true, submitted: false, verified_window: "browser-window", verified_url: "https://chatgpt.com/" },
+        ] } });
+      }
       return route.abort();
     });
     await page.route("**/api/v1/assistant/voice/speech", route => route.fulfill({ status: 204 }));
@@ -398,7 +493,14 @@ test.describe("Mocked Gnani voice classroom (no live provider calls)", () => {
     await expect(panel.getByText(`type replace into Message ChatGPT: ${JSON.stringify(text)} (do not submit)`, { exact: true })).toBeVisible();
     await panel.getByRole("button", { name: "Confirm and execute" }).click();
     await expect(panel.getByRole("status")).toContainText("Completed: completed 2 approved desktop steps");
-    expect(requests).toEqual(["gemini", "/desktop/confirm", "/desktop/execute"]);
+    await page.getByRole("textbox", { name: "Prisma transcript or typed message" }).fill("Submit the message");
+    await panel.getByRole("button", { name: "I reviewed this transcript" }).click();
+    await panel.getByRole("button", { name: "Prepare message submission" }).click();
+    await expect(panel.getByText(`submit once to https://chatgpt.com/ from Message ChatGPT: ${JSON.stringify(text)}`, { exact: true })).toBeVisible();
+    await panel.getByRole("button", { name: "Confirm and execute" }).click();
+    await expect(panel.getByRole("status")).toContainText("submitted the verified ChatGPT message once");
+    expect(requests).toEqual(["gemini", "/desktop/confirm", "/desktop/execute",
+      "/desktop/snapshot", "/desktop/snapshot", "/desktop/snapshot", "/desktop/confirm", "/desktop/execute"]);
   });
 
   test("pointer plans reject duplicate names and a switched QA tab before native approval", async ({ page }) => {

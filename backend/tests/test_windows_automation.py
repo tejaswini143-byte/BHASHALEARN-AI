@@ -230,7 +230,8 @@ def test_browser_text_entry_requires_exact_ui_value_and_never_submits(write_veri
             type_text=type_char, cancel_check=lambda: None,
             sequence_context={"browser_window_id": "w-42", "verified_url": "https://chatgpt.com/"})
         assert result == {"ok": True, "action": "type_into_visible", "target": "Search",
-                         "typed_characters": 10, "verified": True, "submitted": False}
+                         "typed_characters": 10, "verified": True, "submitted": False,
+                         "verified_window": "w-42", "verified_url": "https://chatgpt.com/"}
         assert shortcut_calls == [("ctrl", "a")]
         assert pressed == []
     else:
@@ -291,9 +292,92 @@ def test_browser_contenteditable_uses_text_pattern_when_value_pattern_is_unavail
         sequence_context={"browser_window_id": "w-42", "verified_url": "https://chatgpt.com/"})
 
     assert result == {"ok": True, "action": "type_into_visible", "target": "Message ChatGPT",
-                     "typed_characters": 5, "verified": True, "submitted": False}
+                     "typed_characters": 5, "verified": True, "submitted": False,
+                     "verified_window": "w-42", "verified_url": "https://chatgpt.com/"}
     assert stored["text"] == "hello"
     assert submitted == []
+
+
+def test_chatgpt_submit_clicks_one_adjacent_send_button_once_and_consumes_verified_draft(monkeypatch):
+    from scripts.public_urls import socket
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *args, **kwargs: [
+        (2, 1, 6, "", ("104.18.32.47", 443)),
+    ])
+    value = {"text": "Hello, explain artificial intelligence"}
+    focused = {"value": False}
+    calls = []
+    rect = SimpleNamespace(left=100, top=100, right=600, bottom=170)
+    class FieldValue:
+        CurrentIsReadOnly = False
+
+        @property
+        def CurrentValue(self):
+            return value["text"]
+
+    field_value = FieldValue()
+    info = SimpleNamespace(element=SimpleNamespace(CurrentIsPassword=False))
+    composer = SimpleNamespace(
+        iface_value=field_value, element_info=info, rectangle=lambda: rect,
+        set_focus=lambda: focused.update(value=True), has_keyboard_focus=lambda: focused["value"],
+    )
+    button_rect = SimpleNamespace(left=540, top=125, right=585, bottom=160)
+    submitted = {"value": False}
+    invoke = SimpleNamespace(Invoke=lambda: (calls.append("send"), value.update(text=""), submitted.update(value=True)))
+    send = SimpleNamespace(
+        element_info=SimpleNamespace(control_type="Button", name="Send", automation_id="send-button"),
+        rectangle=lambda: button_rect, is_visible=lambda: True, is_enabled=lambda: True,
+        iface_invoke=invoke,
+    )
+    message = SimpleNamespace(
+        element_info=SimpleNamespace(control_type="Text", name=value["text"]),
+        is_visible=lambda: submitted["value"],
+    )
+    window = SimpleNamespace(set_focus=lambda: None, descendants=lambda: [send, message])
+    entry = {"id": "w-2a", "handle": 42, "app_id": "chrome", "wrapper": window}
+    snapshot = {"snapshot_id": "fresh", "active_window_id": "w-2a", "active_app": "Google Chrome",
+                "targets": [{"id": "composer", "name": "Message ChatGPT", "kind": "text"}]}
+    monkeypatch.setattr(windows_automation, "_windows", lambda: [entry])
+    monkeypatch.setattr(windows_automation, "_foreground_handle", lambda: 42)
+    monkeypatch.setattr(windows_automation, "_read_browser_address", lambda _: "https://chatgpt.com/")
+    monkeypatch.setattr(windows_automation, "get_snapshot", lambda: snapshot)
+    monkeypatch.setattr(windows_automation, "_cached_target", lambda *_: {
+        "kind": "text", "handle": 42, "wrapper": composer})
+    windows_automation.clear_verified_browser_drafts()
+    with windows_automation._cache_lock:
+        windows_automation._verified_browser_drafts[42] = {
+            "text": value["text"], "target_name": "Message ChatGPT",
+            "url": "https://chatgpt.com/", "window_id": "w-2a",
+            "created_at": windows_automation.time.monotonic(),
+        }
+
+    result = windows_automation.execute_action(
+        {"action": "submit_visible", "target_name": "Message ChatGPT",
+         "text": value["text"], "url": "https://chatgpt.com/"},
+        active_window_id="w-2a", type_text=lambda _: None, cancel_check=lambda: None)
+
+    assert result == {"ok": True, "action": "submit_visible", "submitted": True,
+                      "verified": True, "target": "Message ChatGPT",
+                      "verified_window": "w-2a", "url": "https://chatgpt.com/"}
+    assert calls == ["send"]
+    assert value["text"] == ""
+    with windows_automation._cache_lock:
+        assert windows_automation._verified_browser_drafts == {}
+
+
+def test_chatgpt_submit_rejects_changed_composer_without_clicking(monkeypatch):
+    windows_automation.clear_verified_browser_drafts()
+    with windows_automation._cache_lock:
+        windows_automation._verified_browser_drafts[42] = {
+            "text": "old verified text", "target_name": "Message ChatGPT",
+            "url": "https://chatgpt.com/", "window_id": "w-2a",
+            "created_at": windows_automation.time.monotonic(),
+        }
+    with pytest.raises(RuntimeError, match="no fresh verified typing record"):
+        windows_automation.execute_action(
+            {"action": "submit_visible", "target_name": "Message ChatGPT",
+             "text": "different text", "url": "https://chatgpt.com/"},
+            active_window_id="w-2a", type_text=lambda _: None, cancel_check=lambda: None)
+    windows_automation.clear_verified_browser_drafts()
 
 
 @pytest.mark.parametrize("outcome", ["move", "edge", "click", "duplicate", "changed", "wrong_window", "obscured",
