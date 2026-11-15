@@ -10,3 +10,16 @@ __pycache__/
 *.mp3
 *.m4a
 .DS_Store
+.venv/
+venv/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+node_modules/
+dist/
+*.db
+*.tsbuildinfo
+frontend/test-results/
+frontend/playwright-report/
+tools/python313/
+tools/python-*.exe
