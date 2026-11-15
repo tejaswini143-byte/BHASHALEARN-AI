@@ -2,7 +2,27 @@
 from __future__ import annotations
 
 import ast
+import re
 from decimal import Decimal, InvalidOperation
+
+
+def normalize_spoken_expression(expression: str) -> str:
+    """Convert a small set of spoken arithmetic operators into safe math syntax."""
+    if not isinstance(expression, str) or not 1 <= len(expression) <= 80:
+        raise ValueError("Calculation must contain 1–80 characters.")
+    normalized = expression.casefold().strip()
+    for pattern, operator in (
+        (r"\b(?:multiplied\s+by|times)\b", "*"),
+        (r"\bdivided\s+by\b", "/"),
+        (r"\bplus\b", "+"),
+        (r"\bminus\b", "-"),
+        (r"\bx\b", "*"),
+    ):
+        normalized = re.sub(pattern, operator, normalized)
+    normalized = normalized.replace("×", "*").replace("÷", "/")
+    if not re.fullmatch(r"[\d\s().+*/-]+", normalized):
+        raise ValueError("Only numbers, parentheses, and spoken +, -, ×, ÷, or * / operators are allowed.")
+    return re.sub(r"\s+", "", normalized)
 
 
 def evaluate_expression(expression: str) -> Decimal:

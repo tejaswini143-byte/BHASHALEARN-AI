@@ -10,7 +10,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from scripts.public_urls import UnsafePublicURL, normalize_public_http_url
-from scripts.calculator_math import evaluate_expression
+from scripts.calculator_math import evaluate_expression, normalize_spoken_expression
 from backend.app.services.tutor import generate_tutor_reply
 
 
@@ -123,7 +123,7 @@ SENSITIVE = re.compile(
     r"social security|passport|government id|ssn)\b", re.I,
 )
 LOCAL_TYPE_TEXT = re.compile(r"^(?:type|enter text|టైప్ చేయి|టైప్)\s+([\s\S]+)$", re.I)
-CALCULATION = re.compile(r"^\s*(?:calculate|compute)\s+(?P<expression>[\d\s().+*/×÷\-]+?)\s*[.!?]*\s*$", re.I)
+CALCULATION = re.compile(r"^\s*(?:calculate|compute)\s+(?P<expression>.+?)\s*[.!?]*\s*$", re.I)
 DICTATION = re.compile(
     r"\b(?:type|enter|write)\s+(?:the following\s+)?[\"'](?P<quoted>[^\"']{1,120})[\"']\s+"
     r"(?:in|into|to)\s+(?:the\s+)?(?P<target>.+?)\s+(?:field|box)\b", re.I,
@@ -258,16 +258,21 @@ def _validate_action(action: DesktopAction, targets: list[DesktopTarget], sites:
         calculation = CALCULATION.fullmatch(command_text)
         if not calculation:
             raise HTTPException(422, "Speak a calculation such as 'calculate 250 * 18'")
-        expected = re.sub(r"\s+", "", calculation.group("expression")).replace("×", "*").replace("÷", "/")
-        supplied = re.sub(r"\s+", "", action.text or "").replace("×", "*").replace("÷", "/")
         try:
+            expected = normalize_spoken_expression(calculation.group("expression").rstrip(".!? "))
+            supplied = normalize_spoken_expression(action.text or "")
             evaluate_expression(expected)
             evaluate_expression(supplied)
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
         if supplied != expected:
             raise HTTPException(422, "Gemini changed the arithmetic expression you requested")
-        return action
+        try:
+            evaluate_expression(action.text or "")
+            executable_expression = action.text
+        except ValueError:
+            executable_expression = supplied
+        return action.model_copy(update={"text": executable_expression})
     if action.action == "open_website":
         if not requested_url:
             raise HTTPException(422, "Name a public website or full URL before opening it")
@@ -396,7 +401,7 @@ def interpret_desktop_command(
         "Open Notepad with app_id notepad; open Chrome with app_id chrome; open Edge with app_id edge. "
         "For ChatGPT use https://chatgpt.com; for YouTube use https://www.youtube.com; for Google use https://www.google.com. "
         "For a spoken destination, use the exact URL in the request (domain-only defaults to HTTPS) and return open_website. "
-        "For an explicit calculate/compute request, return calculate with text equal to the exact arithmetic expression; do not change it. "
+        "For an explicit calculate/compute request, return calculate with text equal to the exact arithmetic expression; do not change numbers or operations. Convert spoken 'times'/'multiplied by' to *, 'divided by' to /, 'plus' to +, and 'minus' to -. "
         "Common unambiguous spoken names are Google, YouTube, ChatGPT, GitHub, Wikipedia, Stack Overflow, and Mozilla Developer. "
         "For a website not named by the user, clarify; never invent or substitute a destination. "
         "For 'open a website and type [DICTATED TEXT REDACTED]', return a sequence with open_website first and type_into_visible second. "

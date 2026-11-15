@@ -71,6 +71,19 @@ def test_calculator_plan_preserves_and_validates_the_exact_arithmetic(monkeypatc
         desktop_commands.interpret_desktop_command("Calculate 250 * 18")
 
 
+def test_calculator_plan_normalizes_spoken_times_without_changing_the_expression(monkeypatch):
+    monkeypatch.setattr(desktop_commands, "generate_tutor_reply",
+                        lambda *_: '{"action":"calculate","text":"250 * 18"}')
+    plan = desktop_commands.interpret_desktop_command("Calculate 250 times 18")
+    assert plan.action == "calculate"
+    assert plan.text == "250 * 18"
+
+    monkeypatch.setattr(desktop_commands, "generate_tutor_reply",
+                        lambda *_: '{"action":"calculate","text":"4500"}')
+    with pytest.raises(HTTPException, match="changed the arithmetic expression"):
+        desktop_commands.interpret_desktop_command("Calculate 250 times 18")
+
+
 def test_compound_notepad_dictation_stays_local_and_is_planned_as_sequence(monkeypatch):
     captured = []
     def fake(_instruction, history):
