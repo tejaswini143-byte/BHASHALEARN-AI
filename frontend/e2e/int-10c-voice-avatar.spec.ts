@@ -103,6 +103,10 @@ test("immersive tutor speech follows playback, pause, resume, replay, interrupti
   await audio.evaluate(element => { void element.play(); });
   await expect(page.getByTestId("immersive-voice-state")).toHaveText("Speaking");
 
+  // The state changes on the play event before the simulated media clock's
+  // next 40 ms tick. Wait for real clock movement so the replay assertion has
+  // a positive baseline and cannot race against a still-zero currentTime.
+  await expect.poll(() => audio.evaluate(element => element.currentTime)).toBeGreaterThan(0.2);
   const beforeReplay = await audio.evaluate(element => element.currentTime);
   const previousAudio = await audio.elementHandle();
   await page.getByRole("button", { name: "Generate or replay tutor speech" }).click();

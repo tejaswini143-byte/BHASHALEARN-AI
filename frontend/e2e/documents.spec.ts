@@ -14,8 +14,8 @@ test("student uploads, views extracted pages after refresh, and deletes only the
   await openDocuments(page);
   const filename = uniquePdfName();
   const uploaded = page.waitForResponse(response => response.url().includes("/api/v1/documents") && response.request().method() === "POST");
-  await page.getByLabel("Choose PDF file").setInputFiles({ name: filename, mimeType: "application/pdf", buffer: validPdf() });
-  await page.getByRole("button", { name: "Upload PDF" }).click();
+  await page.getByLabel("Choose PDF or DOCX file").setInputFiles({ name: filename, mimeType: "application/pdf", buffer: validPdf() });
+  await page.getByRole("button", { name: "Upload document" }).click();
   const uploadResponse = await uploaded;
   expect(uploadResponse.status()).toBe(201);
   const uploadedDocument = await uploadResponse.json() as { id: string };
@@ -44,10 +44,10 @@ test("unsupported file and oversized file are rejected in the browser before upl
   test.skip(!allowAuthenticatedTests || !requireDocumentMutations(), "Requires an explicitly authorized disposable E2E account.");
   await signIn(page, testEmail, testPassword);
   await openDocuments(page);
-  await page.getByLabel("Choose PDF file").setInputFiles({ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("not pdf") });
-  await expect(page.getByRole("alert")).toContainText("Choose a PDF file");
+  await page.getByLabel("Choose PDF or DOCX file").setInputFiles({ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("not pdf") });
+  await expect(page.getByRole("alert")).toContainText("Choose a PDF or DOCX file");
   const tooLarge = Buffer.alloc(10 * 1024 * 1024 + 1, 65);
-  await page.getByLabel("Choose PDF file").setInputFiles({ name: "large.pdf", mimeType: "application/pdf", buffer: tooLarge });
+  await page.getByLabel("Choose PDF or DOCX file").setInputFiles({ name: "large.pdf", mimeType: "application/pdf", buffer: tooLarge });
   await expect(page.getByRole("alert")).toContainText("10 MB");
 });
 
@@ -55,11 +55,11 @@ test("corrupt PDF is rejected and a textless PDF is clearly labeled", async ({ p
   test.skip(!allowAuthenticatedTests || !requireDocumentMutations(), "Requires an explicitly authorized disposable E2E account.");
   await signIn(page, testEmail, testPassword);
   await openDocuments(page);
-  await page.getByLabel("Choose PDF file").setInputFiles({ name: "corrupt-e2e.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.7\ncorrupt body") });
-  await page.getByRole("button", { name: "Upload PDF" }).click();
+  await page.getByLabel("Choose PDF or DOCX file").setInputFiles({ name: "corrupt-e2e.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.7\ncorrupt body") });
+  await page.getByRole("button", { name: "Upload document" }).click();
   await expect(page.getByRole("alert")).toContainText(/corrupted|invalid/i);
-  await page.getByLabel("Choose PDF file").setInputFiles({ name: uniquePdfName("textless"), mimeType: "application/pdf", buffer: makeTwoPagePdf("", "") });
-  await page.getByRole("button", { name: "Upload PDF" }).click();
+  await page.getByLabel("Choose PDF or DOCX file").setInputFiles({ name: uniquePdfName("textless"), mimeType: "application/pdf", buffer: makeTwoPagePdf("", "") });
+  await page.getByRole("button", { name: "Upload document" }).click();
   await expect(page.getByRole("status")).toContainText(/no selectable text|scanned PDF OCR is not supported/i);
   await expect(page.getByText("No selectable text", { exact: true })).toBeVisible();
   const textlessRow = page.locator(".document-row").filter({ hasText: "No selectable text" });
@@ -73,8 +73,8 @@ test("password-protected PDF is rejected when a disposable encrypted fixture is 
   test.skip(!allowAuthenticatedTests || !requireDocumentMutations() || !encryptedFixture, "Set BHASHALEARN_E2E_ENCRYPTED_PDF to a non-sensitive password-protected test fixture and enable disposable test mutations.");
   await signIn(page, testEmail, testPassword);
   await openDocuments(page);
-  await page.getByLabel("Choose PDF file").setInputFiles(encryptedFixture!);
-  await page.getByRole("button", { name: "Upload PDF" }).click();
+  await page.getByLabel("Choose PDF or DOCX file").setInputFiles(encryptedFixture!);
+  await page.getByRole("button", { name: "Upload document" }).click();
   await expect(page.getByRole("alert")).toContainText(/password-protected PDFs are not supported/i);
 });
 
@@ -85,9 +85,9 @@ test("student document data stays isolated between two dedicated test accounts",
   await signIn(owner, testEmail, testPassword);
   await openDocuments(owner);
   const filename = uniquePdfName("bhashalearn-adv01-isolation");
-  await owner.getByLabel("Choose PDF file").setInputFiles({ name: filename, mimeType: "application/pdf", buffer: validPdf() });
+  await owner.getByLabel("Choose PDF or DOCX file").setInputFiles({ name: filename, mimeType: "application/pdf", buffer: validPdf() });
   const uploadPromise = owner.waitForResponse(response => response.url().includes("/api/v1/documents") && response.request().method() === "POST");
-  await owner.getByRole("button", { name: "Upload PDF" }).click();
+  await owner.getByRole("button", { name: "Upload document" }).click();
   const uploadResponse = await uploadPromise;
   expect(uploadResponse.status()).toBe(201);
   const documentId = (await uploadResponse.json()).id as string;

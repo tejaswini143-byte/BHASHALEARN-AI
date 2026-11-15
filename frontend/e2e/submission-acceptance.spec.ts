@@ -23,7 +23,8 @@ test("registration validates input, registers, signs in, and reaches the protect
   await expect(page.getByLabel("Your name")).toHaveAttribute("required", "");
   await page.getByLabel("Your name").fill(student.display_name);
   await page.getByLabel("Email address").fill(student.email);
-  await page.locator('input[autocomplete="new-password"]').fill("synthetic-submission-password");
+  await page.getByLabel(/^Password/).fill("synthetic-submission-password");
+  await page.getByLabel("Confirm password").fill("synthetic-submission-password");
   await page.getByRole("button", { name: /create account/i }).click();
   await expect(page).toHaveURL(/\/dashboard$/);
   expect(calls).toContain("POST /api/v1/auth/register");

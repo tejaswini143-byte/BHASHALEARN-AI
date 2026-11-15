@@ -24,15 +24,13 @@ Reference source: [approved contact sheet](./bhashalearn-15-screens.png) and [in
 
 ## Functional checks
 
-- Playwright browser tests: **5 passed, 0 failed**. They cover the house lesson stages/vocabulary/quiz/language switch, the existing reminder creation contract, the accessible local incoming-call dialog and snooze behavior, safe social-login demo state, and desktop/mobile rendering of all 15 routes with no uncaught browser errors.
-- Preserved regression suites retested after the new disclosures/selectors: assistant **1 passed**, visual lesson engine **5 passed**, Feature 4 lesson integration **2 passed**.
-- Mobile dashboard navigation regression: **1 passed**; Immersive Classroom, Future Me, and Learning Memories are available in the collapsed “Explore all features” section.
-- Full 95-test browser run in frontend-only mode: **74 passed, 13 failed, 8 skipped**. This was not a complete backend acceptance run: FastAPI on dedicated E2E port `8012` was unavailable, so HTTP/auth/register cases failed, and the first run included stale UI selectors. Those assistant, visual lesson, and Feature 4 UI cases were updated and their targeted suites subsequently passed; the full suite was not rerun after those updates.
-- Screenshots: **30** generated in `captures/`.
-- Frontend unit tests: **154 passed, 0 failed**.
-- Production build: passed. Vite still reports the existing Three.js and main bundle chunks over 500 kB.
+- Full Playwright browser suite against an isolated disposable PostgreSQL database and dedicated FastAPI/Vite services: **95 passed, 0 failed, 0 skipped**. The final run used the real application and API for local auth, registration, documents, and student flows; external AI/provider responses and desktop execution are explicitly mocked in the relevant browser tests.
+- The browser suite covers the house lesson navigation/vocabulary/quiz/language switch; scheduler deadline creation and incoming-call demo; dashboard/courses/progress/PDF flows; auth; Features 1–5 browser contracts; approval-gated desktop command previews; and desktop/mobile rendering of all 15 routes. It regenerated all **30** screenshots in `captures/` at 1440×1000 and 390×844.
+- The reference-screen capture test also checks mobile document width and overflowing top-level elements; all **15 mobile routes** fit the 390px viewport.
+- Frontend unit tests: **154 passed, 0 failed** (`npm test`).
+- TypeScript and Vite production build: **passed** (`npm run build`). Vite reports the existing Three.js and main bundle chunks over 500 kB; this is a performance warning, not a build failure.
 - `git diff --check`: passed.
 
 ## Visual differences and limits
 
-This is not a pixel-exact reproduction. The existing React route structure and feature APIs were preserved; some screens still use their established component layouts and differ from the contact sheet in artwork, text density, typography, card proportions, and exact spacing. The house SVG is a code-native approximation, not a copy of the reference picture. The scheduler uses existing account deadlines and browser/LiveKit call contracts; unavailable provider states remain visible inside expanded controls. OAuth buttons are labeled demos and do not authenticate. Browser captures use test fixtures and prove rendering/interaction only, not live Gemini, Gnani, LiveKit, telephony, or Windows desktop operation.
+This is not a pixel-exact reproduction. The existing React route structure and feature APIs were preserved; some screens still differ from the contact sheet in artwork, text density, typography, card proportions, and exact spacing. The house SVG is a code-native approximation, not a copy of the reference picture. The scheduler uses the existing account deadline and browser/LiveKit call contracts; unavailable provider states remain visible inside expanded controls. OAuth buttons are labeled demos and do not authenticate. Browser captures use test fixtures and do not prove live Gemini, Gnani, LiveKit, telephony, or Windows desktop operation. The isolated full browser suite, unit suite, and production build all pass, so the frontend is ready for a browser-based hackathon demonstration of the tested local flows; live-provider and native Windows demonstrations remain separate prerequisites.

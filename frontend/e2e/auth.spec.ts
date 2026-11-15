@@ -60,9 +60,9 @@ test("protected dashboard redirects unauthenticated visitors to login", async ({
 test("dedicated student can log in, retain the session after refresh, and sign out", async ({ page }) => {
   test.skip(!allowAuthenticatedTests || !requireDedicatedLogin(), "Set explicit dedicated E2E student credentials and allow authenticated reads.");
   await signIn(page, testEmail, testPassword);
-  await expect(page.getByRole("heading", { name: /welcome back/i })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /good to see you/i })).toBeVisible();
   await page.reload();
-  await expect(page.getByRole("heading", { name: /welcome back/i })).toBeVisible();
-  await page.getByRole("button", { name: /sign out/i }).click();
+  await expect(page.getByRole("heading", { name: /good to see you/i })).toBeVisible();
+  await page.getByRole("button", { name: /logout/i }).click();
   await expect(page).toHaveURL(/\/login$/);
 });

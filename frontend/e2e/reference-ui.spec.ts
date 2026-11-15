@@ -103,6 +103,7 @@ test("social sign-in controls clearly identify the safe demo state", async ({ pa
 });
 
 test("capture all 15 reference screens at desktop and mobile sizes", async ({ page }, testInfo) => {
+  test.setTimeout(90_000);
   await installApi(page);
   const output = resolve("..", "docs", "design-reference", "captures"); mkdirSync(output, { recursive: true });
   const screens = [
@@ -116,13 +117,26 @@ test("capture all 15 reference screens at desktop and mobile sizes", async ({ pa
   page.on("pageerror", error => errors.push(`${new URL(page.url()).pathname}: ${error.message}`));
   for (const [name, path, authenticated] of screens) {
     await page.setViewportSize({ width: 1440, height: 1000 });
-    await page.goto("/");
+    await page.goto("/", { waitUntil: "domcontentloaded" });
     await page.evaluate(value => value ? sessionStorage.setItem("bhashalearn_access_token", "screen-fixture-token") : sessionStorage.removeItem("bhashalearn_access_token"), authenticated);
-    await page.goto(path);
+    await page.goto(path, { waitUntil: "domcontentloaded" });
     if (name === "13-visual-lesson-studio") await expect(page.getByRole("heading", { name: "Learn words around the house" })).toBeVisible();
     if (name === "15-call-scheduler") await expect(page.getByRole("heading", { name: "Schedule a Practice Call", exact: true })).toBeVisible();
     await page.screenshot({ path: resolve(output, `${name}-desktop.png`), fullPage: true });
     await page.setViewportSize({ width: 390, height: 844 });
+    // Responsive sidebars animate out when the viewport crosses their breakpoint.
+    // Wait for that transition before capturing so the mobile evidence reflects
+    // the closed-menu default instead of a transient frame from the animation.
+    await page.waitForTimeout(300);
+    const mobileWidth = await page.evaluate(() => ({
+      viewport: window.innerWidth,
+      document: document.documentElement.scrollWidth,
+      overflowing: [...document.querySelectorAll<HTMLElement>("body *")]
+        .map(element => ({ name: element.tagName.toLowerCase() + (element.className ? `.${String(element.className).trim().replace(/\s+/g, ".")}` : ""), right: Math.round(element.getBoundingClientRect().right) }))
+        .filter(element => element.right > window.innerWidth + 2)
+        .slice(0, 5),
+    }));
+    expect(mobileWidth.document, `${name} mobile horizontal overflow: ${JSON.stringify(mobileWidth.overflowing)}`).toBeLessThanOrEqual(mobileWidth.viewport);
     await page.screenshot({ path: resolve(output, `${name}-mobile.png`), fullPage: true });
   }
   expect(errors, `${testInfo.title} browser errors`).toEqual([]);

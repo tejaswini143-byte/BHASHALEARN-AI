@@ -24,7 +24,7 @@ test("dedicated student dashboard, navigation, documents route, and refresh work
   const failedApiRequests: string[] = [];
   page.on("requestfailed", request => { if (request.url().includes("/api/")) failedApiRequests.push(new URL(request.url()).pathname); });
   await signIn(page, testEmail, testPassword);
-  await expect(page.getByRole("heading", { name: /welcome back/i })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /good to see you/i })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Dashboard navigation" })).toBeVisible();
   await page.getByRole("link", { name: /documents/i }).first().click();
   await expect(page.getByRole("heading", { name: "Documents", exact: true })).toBeVisible();

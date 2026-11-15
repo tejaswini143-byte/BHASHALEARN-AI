@@ -27,13 +27,15 @@ try {
     activePage = page;
     await page.goto(`${frontendUrl}/register`);
     stage = "checking registration form";
-    await expect(page.getByRole("heading", { name: "Create your account." })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Create Account", exact: true })).toBeVisible();
     stage = "filling synthetic student name";
     await page.getByLabel("Your name").fill(student.name);
     stage = "filling synthetic student email";
     await page.getByLabel("Email address").fill(student.email);
     stage = "filling synthetic student password";
     await page.getByLabel(/Password/).fill(student.password);
+    stage = "confirming synthetic student password";
+    await page.getByLabel("Confirm password").fill(student.password);
     stage = "submitting synthetic student registration form";
     await page.getByRole("button", { name: /create account/i }).click();
 
@@ -60,7 +62,7 @@ try {
     stage = "verifying synthetic student dashboard URL";
     await expect(page).toHaveURL(/\/dashboard(?:$|\?)/);
     stage = "verifying synthetic student dashboard heading";
-    await expect(page.getByRole("heading", { name: /welcome back/i })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /good to see you/i })).toBeVisible();
     await context.close();
   }
   process.stdout.write("Two synthetic E2E students registered and authenticated through the app UI.\n");

@@ -40,12 +40,13 @@ test("real HTTP student journey preserves the session when Gemini is unavailable
   await page.goto("/register");
   await page.getByLabel("Your name").fill("RC Synthetic Student");
   await page.getByLabel("Email address").fill(studentEmail);
-  await page.locator('input[autocomplete="new-password"]').fill(password);
+  await page.getByLabel(/^Password/).fill(password);
+  await page.getByLabel("Confirm password").fill(password);
   await page.getByRole("button", { name: /Create account/ }).click();
   await expect(page).toHaveURL(/\/dashboard$/);
   await expect(page.getByRole("heading", { name: /Good to see you/ })).toBeVisible();
 
-  await page.getByRole("button", { name: /Sign out/ }).click();
+  await page.getByRole("button", { name: /Logout/ }).click();
   await expect(page).toHaveURL(/\/login$/);
   await page.getByLabel("Email address").fill(studentEmail);
   await page.locator('input[autocomplete="current-password"]').fill(password);
