@@ -26,3 +26,17 @@
 - `git diff --check`: passed.
 - Local backend and migration tests could not run because this Windows environment has no Python executable.
 - Mocked Playwright E2E was attempted but Vite failed to start after dependency installation withheld the `esbuild` install script; the browser could not connect. No real Gemini call was made.
+
+## Additional reference file and license audit
+
+- `Advitya07/edupath`: the repository root does not include a license grant. Its `backend/` and `frontend/` source files are therefore not copied or adapted. Resume parsing, skill diagnosis, phase planning, and mentor context are independently implemented against BHASHALEARN APIs and models.
+- `prithvifr/SkillBridge`: the repository includes an MIT license. Files such as `components/StepAnalysis.tsx`, `types.ts`, and `services/geminiService.ts` may legally be reused with the MIT notice preserved. They depend on SkillBridge's Firebase configuration, app-specific service layer, and chart/data types, so no source files from it are included. Its readiness explanation and personalized gap flow are reimplemented with BHASHALEARN's PostgreSQL profile, evidence model, and Gemini service.
+- `nilbuild/developer-roadmap`: the repository license reserves commercial and redistribution rights to its owners. No roadmap text, diagrams, data, or assets are copied. Only the general prerequisite graph interaction is used as design reference.
+- The `@xyflow/react` MIT-licensed package is a new third-party dependency; it is not copied from any of the reference repositories.
+
+## Additional integration work
+
+- Added private-library PDF/DOCX resume upload, format-specific extraction, explicit consent before Gemini analysis, a skill suggestion review step, and persistence of confirmed skills and experience to the existing student skill profile and career goal. Migration `0022_feature3_resume_profile` stores the reviewed/extracted profile status alongside the existing goal.
+- Added a React Flow graph over persisted roadmap phases with skill nodes, prerequisite arrows, completion styling, and node-to-phase navigation.
+- Existing contextual mentor data includes the reviewed resume profile in addition to skills, goal, assessment/readiness, roadmap, and progress. Existing objective assessment and weekly adaptation continue to use the same student-owned profile and roadmap data.
+- This phase still needs Gnani voice contextual routing, browser acceptance coverage for resume review and the graph, and backend/migration verification. Live provider tests require configured Gemini/Gnani credentials.

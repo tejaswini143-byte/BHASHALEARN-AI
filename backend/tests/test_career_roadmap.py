@@ -1,6 +1,8 @@
 """Career planner ownership, skill evidence, and deterministic dependency tests."""
 from datetime import date, timedelta
+from io import BytesIO
 import pytest
+import fitz
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -235,6 +237,33 @@ def test_experience_profile_persists_and_readiness_explains_its_evidence(client)
     assert "not job readiness" in plan["readiness"]["basis"]
     assert plan["readiness"]["scored_skills"]
     assert client.get(f"/api/v1/career/goals", headers=headers).json()[0]["experience_summary"] == "Built two Python class projects"
+
+
+def test_resume_gemini_extraction_requires_review_and_persists_only_owner_profile(client, monkeypatch):
+    headers = auth(client, "career-resume@example.com")
+    goal = create_goal(client, headers).json()
+    pdf = fitz.open(); page = pdf.new_page(); page.insert_text((72, 72), "Python and machine learning projects")
+    content = pdf.tobytes(); pdf.close()
+    uploaded = client.post("/api/v1/documents", headers=headers,
+        files={"file": ("resume.pdf", BytesIO(content), "application/pdf")})
+    assert uploaded.status_code == 201
+    other = auth(client, "career-resume-other@example.com")
+    path = f"/api/v1/career/goals/{goal['id']}/resume/extract"
+    assert client.post(path, headers=other, json={"document_id": uploaded.json()["id"]}).status_code == 404
+    monkeypatch.setattr("backend.app.api.career.analyze_resume", lambda _text: {
+        "is_resume": True, "experience_summary": "Built two Python projects", "field_of_study": "Computer Science",
+        "skills": [{"skill_key": "python", "proficiency": "beginner", "evidence": "Python projects"}],
+    })
+    extracted = client.post(path, headers=headers, json={"document_id": uploaded.json()["id"]})
+    assert extracted.status_code == 200
+    assert extracted.json()["status"] == "awaiting_review"
+    review_path = f"/api/v1/career/goals/{goal['id']}/resume/profile"
+    saved = client.put(review_path, headers=headers, json={"skills": [{"skill_key": "python", "proficiency": "beginner"}]})
+    assert saved.status_code == 200
+    assert saved.json()["profile"]["status"] == "reviewed"
+    assert saved.json()["skills"] == [{"skill_key": "python", "proficiency": "beginner"}]
+    assert client.get("/api/v1/career/goals", headers=headers).json()[0]["experience_summary"] == "Built two Python projects"
+    assert client.put(review_path, headers=other, json={"skills": []}).status_code == 404
 
 
 def test_skill_gap_states_separate_reported_from_assessed():

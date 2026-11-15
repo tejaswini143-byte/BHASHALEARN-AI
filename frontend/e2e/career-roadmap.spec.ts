@@ -23,6 +23,7 @@ const roadmap = (completed = false, lessonCompleted = false) => ({
 test("student builds a roadmap and completes a milestone", async ({ page }) => {
   await page.addInitScript(() => sessionStorage.setItem("bhashalearn_access_token", "playwright-token"));
   let currentPlan = roadmap();
+  await page.route("**/api/v1/documents", route => route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ id: "resume-1" }) }));
   await page.route("**/api/v1/courses/**", route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ title: "Getting started", content: "A short catalog lesson." }) }));
   await page.route("**/api/v1/career/**", async route => {
     const url = new URL(route.request().url());
@@ -38,6 +39,8 @@ test("student builds a roadmap and completes a milestone", async ({ page }) => {
     else if (url.pathname.endsWith("/goals") && method === "GET") body = [];
     else if (url.pathname.endsWith("/goals") && method === "POST") body = { id: "goal-1", career_key: "software-developer", career_title: "Software developer", education_level: "beginner", interests: ["apps"], weekly_minutes: 300, preferred_language: "mixed" };
     else if (url.pathname.endsWith("/mentor") && method === "POST") body = { answer: "Your first milestone is complete. Use the next recommended lesson and record 45 minutes this week.", provider: "gemini", roadmap_version: 1, disclaimer: "Learning guidance only." };
+    else if (url.pathname.endsWith("/resume/extract")) body = { document_id: "resume-1", filename: "resume.pdf", skills: [{ skill_key: "digital-literacy", proficiency: "intermediate", evidence: "Used office software in a class project." }], experience_summary: "Class project", field_of_study: "Computer science", status: "awaiting_review" };
+    else if (url.pathname.endsWith("/resume/profile")) body = { skills: [{ skill_key: "digital-literacy", proficiency: "intermediate" }], experience_summary: "Class project" };
     else if (url.pathname.endsWith("/saved-resources") && method === "GET") body = [];
     else if (url.pathname.endsWith("/saved-resources") && method === "POST") body = { id: "saved-1", resource_url: route.request().postDataJSON().resource_url, title: "Getting started", kind: "official documentation", free: true, created_at: "2026-11-13T00:00:00Z" };
     else if (url.pathname.endsWith("/versions") && method === "GET") body = [{ version_number: 1, change_reason: "generated", created_at: "2026-11-13T00:00:00Z" }];
@@ -58,6 +61,13 @@ test("student builds a roadmap and completes a milestone", async ({ page }) => {
   await page.getByRole("button", { name: "Create my roadmap" }).click();
   await expect(page.getByRole("heading", { name: "Software developer" })).toBeVisible();
   await expect(page.getByText(/VERSION 1/)).toBeVisible();
+  await page.getByLabel("Resume file").setInputFiles({ name: "resume.pdf", mimeType: "application/pdf", buffer: Buffer.from("fake-pdf") });
+  await page.getByLabel(/I consent to sending extracted resume text/).check();
+  await page.getByRole("button", { name: "Upload and analyze resume" }).click();
+  await expect(page.getByText("Used office software in a class project.")).toBeVisible();
+  await page.getByRole("button", { name: "Save reviewed profile and update roadmap" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Resume skills reviewed" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Interactive career roadmap" })).toBeVisible();
   await page.getByRole("button", { name: "Save resource" }).click();
   await expect(page.getByRole("region", { name: "Saved learning resources" })).toContainText("Getting started");
   await page.getByRole("button", { name: "Analyze skill gaps with Gemini" }).click();

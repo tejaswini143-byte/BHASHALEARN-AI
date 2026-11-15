@@ -9,12 +9,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend.app.api.auth import current_student
-from backend.app.db.models import (CareerGoal, CareerLessonCompletion, CareerMilestoneCompletion,
+from backend.app.db.models import (CareerGoal, CareerLessonCompletion, CareerMilestoneCompletion, Document, DocumentPage,
     CareerRoadmapVersion, CareerSavedResource, CareerStudyWeek, Course, Lesson, LearningAssessmentAttempt,
     LearningProgress, Student, StudentSkillProfile)
 from backend.app.db.session import get_db
 from backend.app.services.career_roadmap import CAREERS, CAREER_TELUGU, LANGUAGES, LEVELS, SKILLS, CatalogItem, build_plan, skill_gaps
-from backend.app.services.career_ai import analyze_skill_gaps, mentor_reply
+from backend.app.services.career_ai import analyze_resume, analyze_skill_gaps, mentor_reply
 
 router = APIRouter(prefix="/career", tags=["career roadmap"])
 
@@ -149,6 +149,42 @@ class MentorQuestion(BaseModel):
             raise ValueError("Language must be English, Telugu, or mixed")
         return value
 
+
+class ResumeExtractInput(BaseModel):
+    document_id: str = Field(min_length=36, max_length=36)
+
+
+class ResumeSkillReview(BaseModel):
+    skill_key: str
+    proficiency: str
+
+    @field_validator("skill_key")
+    @classmethod
+    def known_resume_skill(cls, value: str) -> str:
+        if value not in SKILLS:
+            raise ValueError("Unknown skill")
+        return value
+
+    @field_validator("proficiency")
+    @classmethod
+    def valid_resume_level(cls, value: str) -> str:
+        if value not in {"unknown", "beginner", "intermediate", "advanced"}:
+            raise ValueError("Proficiency must be unknown, beginner, intermediate, or advanced")
+        return value
+
+
+class ResumeProfileReview(BaseModel):
+    skills: list[ResumeSkillReview] = Field(max_length=32)
+    experience_summary: str | None = Field(default=None, max_length=1200)
+    field_of_study: str | None = Field(default=None, max_length=120)
+
+    @model_validator(mode="after")
+    def unique_skills(self):
+        keys = [item.skill_key for item in self.skills]
+        if len(keys) != len(set(keys)):
+            raise ValueError("Resume skills must be unique")
+        return self
+
     @field_validator("question")
     @classmethod
     def clean_question(cls, value: str) -> str:
@@ -170,6 +206,7 @@ def _goal_json(goal: CareerGoal) -> dict:
             "custom_goal": goal.custom_goal,
             "education_level": goal.education_level, "field_of_study": goal.field_of_study,
             "experience_summary": goal.experience_summary,
+            "resume_profile": json.loads(goal.resume_profile_json) if goal.resume_profile_json else None,
             "interests": json.loads(goal.interests_json), "constraints": json.loads(goal.constraints_json or "[]"),
             "weekly_minutes": goal.weekly_minutes, "daily_minutes": goal.daily_minutes,
             "study_days_per_week": goal.study_days_per_week, "learning_format": goal.learning_format,
@@ -483,6 +520,64 @@ def analyze_goal(goal_id: str, student: Student = Depends(current_student), db: 
 def get_goal_analysis(goal_id: str, student: Student = Depends(current_student), db: Session = Depends(get_db)):
     goal = _owned_goal(goal_id, student, db)
     return json.loads(goal.analysis_json) if goal.analysis_json else None
+
+
+@router.post("/goals/{goal_id}/resume/extract")
+def extract_resume_profile(goal_id: str, payload: ResumeExtractInput,
+                           student: Student = Depends(current_student), db: Session = Depends(get_db)):
+    goal = _owned_goal(goal_id, student, db)
+    document = db.scalar(select(Document).where(Document.id == payload.document_id,
+                                                Document.student_id == student.id))
+    if document is None:
+        raise HTTPException(status_code=404, detail="Resume document not found")
+    if document.processing_status != "processed":
+        raise HTTPException(status_code=422, detail="Resume document has no extractable text")
+    pages = db.scalars(select(DocumentPage).where(DocumentPage.document_id == document.id)
+                       .order_by(DocumentPage.page_number)).all()
+    text = "\n".join(item.extracted_text for item in pages)
+    extraction = analyze_resume(text)
+    if not extraction["is_resume"]:
+        raise HTTPException(status_code=422, detail="This document does not look like a resume or CV")
+    profile = {"document_id": document.id, "filename": document.original_filename,
+               "skills": extraction["skills"], "experience_summary": extraction["experience_summary"],
+               "field_of_study": extraction["field_of_study"], "status": "awaiting_review"}
+    goal.resume_profile_json = json.dumps(profile, ensure_ascii=False)
+    db.commit()
+    return profile
+
+
+@router.put("/goals/{goal_id}/resume/profile")
+def review_resume_profile(goal_id: str, payload: ResumeProfileReview,
+                          student: Student = Depends(current_student), db: Session = Depends(get_db)):
+    goal = _owned_goal(goal_id, student, db)
+    if not goal.resume_profile_json:
+        raise HTTPException(status_code=404, detail="No resume extraction is waiting for review")
+    profile = json.loads(goal.resume_profile_json)
+    suggested = {item["skill_key"] for item in profile["skills"]}
+    if any(item.skill_key not in suggested for item in payload.skills):
+        raise HTTPException(status_code=422, detail="Review may only confirm skills suggested from this resume")
+    for item in payload.skills:
+        current = db.scalar(select(StudentSkillProfile).where(
+            StudentSkillProfile.student_id == student.id, StudentSkillProfile.skill_key == item.skill_key))
+        if current is None:
+            db.add(StudentSkillProfile(student_id=student.id, skill_key=item.skill_key,
+                                       proficiency=item.proficiency))
+        else:
+            current.proficiency = item.proficiency
+    if payload.experience_summary is not None:
+        goal.experience_summary = payload.experience_summary.strip() or None
+    elif profile.get("experience_summary"):
+        goal.experience_summary = profile["experience_summary"]
+    if payload.field_of_study is not None:
+        goal.field_of_study = payload.field_of_study.strip() or None
+    elif profile.get("field_of_study"):
+        goal.field_of_study = profile["field_of_study"]
+    profile["reviewed_skill_keys"] = [item.skill_key for item in payload.skills]
+    profile["status"] = "reviewed"
+    goal.resume_profile_json = json.dumps(profile, ensure_ascii=False)
+    db.commit()
+    return {"status": "reviewed", "profile": profile,
+            "skills": _profile(student.id, db), "experience_summary": goal.experience_summary}
 
 
 @router.post("/goals/{goal_id}/mentor")
