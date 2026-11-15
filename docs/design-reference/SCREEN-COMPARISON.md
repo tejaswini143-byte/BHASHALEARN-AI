@@ -1,35 +1,37 @@
-# Approved 15-screen reference: implementation and visual evidence
+# BHASHALEARN 15-screen visual verification
 
-Reference source: [`bhashalearn-15-screens.png`](./bhashalearn-15-screens.png), with the individual panel crops under [`screens/`](./screens/).
+Reference source: [approved contact sheet](./bhashalearn-15-screens.png) and [individual panel crops](./screens/). Captures below were generated from the React/Vite routes in this worktree with Playwright at 1440×1000 and 390×844. Authenticated routes use isolated fixture responses; they are screenshots of the real frontend, not production student data.
 
-The React/Vite frontend is served from `frontend/` at `http://127.0.0.1:5211` in the isolated local acceptance setup. The refreshed browser captures are in the ignored local folder `.test-tmp/design-evidence/`; they show the real React routes, with fixture data for authenticated flows. They are evidence of rendered layout and navigation, not live provider or desktop acceptance.
+## Capture set
 
-| # | Reference screen | Current route/state | Current match and remaining difference |
-|---:|---|---|---|
-| 1 | Login | `/login` | Split lavender/navy auth panel with form and hand-drawn student illustration. Social sign-in in the reference is not connected to an OAuth provider. |
-| 2 | Registration | `/register` | Same auth system, account creation, required password confirmation, and mismatch feedback. Illustration is an original SVG approximation. |
-| 3 | Forgot password | `/forgot-password` | Reset request form is implemented; backend uses a non-disclosing reset response. |
-| 4 | Student dashboard | `/dashboard` | Violet sidebar, light cards, real account-backed progress/session content, quick links, and timeline. The reference’s exact typography and illustrated course artwork are not reproduced. |
-| 5 | AI classroom / voice | `/voice` and `/classroom` | Existing voice-learning flow retained and recolored to the violet/light palette. The original teacher artwork and live provider workflow were not part of this frontend-only acceptance run. |
-| 6 | AI chatbot | `/chat` | Existing authenticated chat UI retained and restyled. No live Gemini request was made. |
-| 7 | PDF Learning Studio | `/documents` and `/knowledge-studio` | Existing upload/library and knowledge workflows retained and moved to a light card palette. No upload/provider request was made. |
-| 8 | My Courses | `/courses` | Existing course catalog and progress UI retained with light styling. |
-| 9 | Learning Timeline | `/timeline` | Dedicated authenticated timeline route. Dashboard activity rows now use a two-line, timestamp-aligned layout. |
-| 10 | Progress Analytics | `/progress-analytics` | Existing authenticated analytics retained with light cards and violet accents. |
-| 11 | Settings | `/settings` | Dedicated profile/preferences settings route. |
-| 12 | Mobile dashboard | Responsive `/dashboard` | Mobile layout was captured at 390 px; the page fits the viewport and has a fixed five-item bottom navigation. |
-| 13 | Visual Lesson Studio | `/visual-lessons` | Existing interactive lesson controls retained. Its dark interactive smartboard and current lesson content differ from the reference’s illustrated house lesson. |
-| 14 | Certificate | `/certificate` | Certificate is conditional on actual account/course completion; no fabricated completion state is shown. |
-| 15 | Practice call scheduler | `/assistant` | Current route is the existing assistant/reminder surface. It does not match the reference’s LiveKit practice-call scheduler; LiveKit/SIP work was explicitly paused. |
+| # | Screen | Route | Desktop | Mobile | Visual note |
+|---:|---|---|---|---|---|
+| 1 | Login | `/login` | [desktop](./captures/01-login-desktop.png) | [mobile](./captures/01-login-mobile.png) | Split navy/lavender sign-in; social controls clearly say Demo because OAuth is not configured. |
+| 2 | Registration | `/register` | [desktop](./captures/02-register-desktop.png) | [mobile](./captures/02-register-mobile.png) | Shared auth illustration and form system; existing SVG art is an approximation. |
+| 3 | Forgot password | `/forgot-password` | [desktop](./captures/03-forgot-password-desktop.png) | [mobile](./captures/03-forgot-password-mobile.png) | Reset request form and privacy-preserving response. |
+| 4 | Dashboard | `/dashboard` | [desktop](./captures/04-dashboard-desktop.png) | [mobile](./captures/04-dashboard-mobile.png) | Violet navigation and responsive account-backed cards. |
+| 5 | AI Classroom | `/voice` | [desktop](./captures/05-ai-classroom-desktop.png) | [mobile](./captures/05-ai-classroom-mobile.png) | Existing voice lesson flow; provider calls were not part of this frontend test. |
+| 6 | AI Chatbot | `/chat` | [desktop](./captures/06-ai-chatbot-desktop.png) | [mobile](./captures/06-ai-chatbot-mobile.png) | Existing session-backed chat; no Gemini request was made. |
+| 7 | PDF Learning Studio | `/documents` | [desktop](./captures/07-pdf-learning-studio-desktop.png) | [mobile](./captures/07-pdf-learning-studio-mobile.png) | Existing upload/library controls; no file was uploaded. |
+| 8 | My Courses | `/courses` | [desktop](./captures/08-my-courses-desktop.png) | [mobile](./captures/08-my-courses-mobile.png) | Existing course catalog and progress actions. |
+| 9 | Learning Timeline | `/timeline` | [desktop](./captures/09-learning-timeline-desktop.png) | [mobile](./captures/09-learning-timeline-mobile.png) | Timeline layout reads recorded analytics data. |
+| 10 | Progress Analytics | `/progress-analytics` | [desktop](./captures/10-progress-analytics-desktop.png) | [mobile](./captures/10-progress-analytics-mobile.png) | Existing evidence-based analytics and empty states. |
+| 11 | Settings | `/settings` | [desktop](./captures/11-settings-desktop.png) | [mobile](./captures/11-settings-mobile.png) | Account preferences and responsive form. |
+| 12 | Mobile Dashboard | `/dashboard` at 390 px | [desktop](./captures/12-mobile-dashboard-desktop.png) | [mobile](./captures/12-mobile-dashboard-mobile.png) | Same route captured at both viewports; mobile has bottom navigation. |
+| 13 | Visual Lesson Studio | `/visual-lessons` | [desktop](./captures/13-visual-lesson-studio-desktop.png) | [mobile](./captures/13-visual-lesson-studio-mobile.png) | New interactive house-and-garden SVG lesson, bilingual vocabulary, steps, and quiz. It follows the reference composition but uses original geometric artwork rather than the reference’s exact illustration. |
+| 14 | Certificate | `/certificate` | [desktop](./captures/14-certificate-desktop.png) | [mobile](./captures/14-certificate-mobile.png) | Certificate is only issued for completed course data; capture shows honest empty state. |
+| 15 | Practice call scheduler | `/assistant` | [desktop](./captures/15-call-scheduler-desktop.png) | [mobile](./captures/15-call-scheduler-mobile.png) | Practice reminders, tutor character, upcoming sessions, and call history. Incoming-call controls and deeper Feature 2 settings are expandable to keep the reference page concise. |
 
-## Browser evidence
+## Functional checks
 
-- Captures: `.test-tmp/design-evidence/01-login.png` through `15-call-scheduler.png`; `04-dashboard.png`, `05-ai-classroom.png`, and `12-mobile-dashboard.png` were refreshed after the final layout adjustments.
-- Frontend unit suite: **154 passed, 0 failed**.
-- Targeted Playwright auth, dashboard navigation, settings, timeline, certificate, and password recovery suites: **15 passed, 1 skipped**. The skipped test requires configured dedicated account credentials. A separate Voice Studio wheel/keyboard scrolling check passed (**1 passed**).
-- Production TypeScript/Vite build succeeded. Vite reports the existing large Three.js/vendor chunks (>500 kB after minification).
-- No live Gemini, Prisma, LiveKit/SIP, Windows desktop, or outbound call acceptance is claimed in this frontend-only run.
+- Playwright browser tests: **5 passed, 0 failed**. They cover the house lesson stages/vocabulary/quiz/language switch, the existing reminder creation contract, the accessible local incoming-call dialog and snooze behavior, safe social-login demo state, and desktop/mobile rendering of all 15 routes with no uncaught browser errors.
+- Preserved regression suites retested after the new disclosures/selectors: assistant **1 passed**, visual lesson engine **5 passed**, Feature 4 lesson integration **2 passed**.
+- Full 95-test browser run in frontend-only mode: **74 passed, 13 failed, 8 skipped**. This was not a complete backend acceptance run: FastAPI on dedicated E2E port `8012` was unavailable, so HTTP/auth/register cases failed, and the first run included stale UI selectors. Those assistant, visual lesson, and Feature 4 UI cases were updated and their targeted suites subsequently passed; the full suite was not rerun after those updates.
+- Screenshots: **30** generated in `captures/`.
+- Frontend unit tests: **154 passed, 0 failed**.
+- Production build: passed. Vite still reports the existing Three.js and main bundle chunks over 500 kB.
+- `git diff --check`: passed.
 
-## Remaining visual differences
+## Visual differences and limits
 
-The implementation applies the shared navy, lavender, and violet visual system to the existing functional React routes. Several routes remain approximations rather than pixel-level reproductions. In particular, the visual lesson illustration and call scheduler do not match the reference content, and OAuth sign-in buttons are not connected to providers. The reference image is not used as a page background; controls remain real React components.
+This is not a pixel-exact reproduction. The existing React route structure and feature APIs were preserved; some screens still use their established component layouts and differ from the contact sheet in artwork, text density, typography, card proportions, and exact spacing. The house SVG is a code-native approximation, not a copy of the reference picture. The scheduler uses existing account deadlines and browser/LiveKit call contracts; unavailable provider states remain visible inside expanded controls. OAuth buttons are labeled demos and do not authenticate. Browser captures use test fixtures and prove rendering/interaction only, not live Gemini, Gnani, LiveKit, telephony, or Windows desktop operation.

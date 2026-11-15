@@ -86,6 +86,11 @@
 .auth-error,.auth-success { border-radius: 8px; font-size: 12px; }
 .auth-error { color: #9c2549; border-color: #efbed0; background: #fff3f7; }
 .auth-success { color: #256b53; border-color: #bfe9d9; background: #f0fff8; }
+.auth-social-demo { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.auth-social-demo button { min-height:39px; border:1px solid #e4e1ee; border-radius:8px; color:#393967; background:#fff; font:inherit; font-size:11px; font-weight:750; cursor:pointer; }
+.auth-social-demo button:hover { border-color:#c8bafa; background:#faf9ff; }
+.auth-social-demo button small { margin-left:5px; color:#77749b; font-size:8px; text-transform:uppercase; }
+.auth-social-message { margin:8px 0; padding:8px 10px; border:1px solid #e6e1f5; border-radius:7px; color:#615d86; background:#faf9ff; font-size:10px; line-height:1.5; }
 
 /* Student dashboard, shared sidebar, real-data cards */
 .cc-app {
@@ -325,3 +330,135 @@
 
 .desktop-control-panel { margin:12px 0; padding:14px; border:1px solid #e4e1f0; border-radius:12px; color:#292653; background:#fff; box-shadow:0 4px 16px #29226a08; }
 .desktop-control-panel button,.desktop-control-panel input,.desktop-control-panel select,.desktop-control-panel textarea { color:#292653; }
+
+/* Reference-aligned illustrated lesson with a working four-step practice flow. */
+.vl-page .vl-shell { max-width:1240px; gap:16px; }
+.vl-page .vl-title { align-items:center; margin-bottom:0; }
+.house-lesson { overflow:hidden; border:1px solid #ded9f3; border-radius:14px; background:#fff; box-shadow:0 7px 24px #26205e0b; }
+.house-lesson-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; padding:18px 21px 13px; }
+.house-lesson-heading .vl-eyebrow { color:#6245cf; }
+.house-lesson-heading h2 { margin:5px 0; color:#191852; font-size:20px; }
+.house-lesson-heading p { margin:0; color:#777a99; font-size:11px; line-height:1.5; }
+.house-lesson-badge { flex:0 0 auto; color:#6241d7; font-size:11px; font-weight:800; }
+.house-lesson-layout { display:grid; grid-template-columns:minmax(0,1fr) 210px; gap:16px; padding:0 17px 13px; }
+.house-scene-wrap { min-width:0; }
+.house-scene { display:block; width:100%; max-height:360px; border:1px solid #e2def4; border-radius:12px; background:#d8f5ff; }
+.house-hotspot { cursor:pointer; outline:none; }
+.house-hotspot:focus-visible { filter:drop-shadow(0 0 5px #603ee8); }
+.house-word-chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+.house-word-chips button { padding:6px 10px; border:1px solid #e1dcf3; border-radius:999px; color:#514b78; background:#faf9ff; font-size:10px; cursor:pointer; }
+.house-word-chips button[aria-pressed=true] { border-color:#7760e6; color:#fff; background:#6945e2; }
+.house-scene-caption { margin:7px 1px 0; color:#777a99; font-size:10px; line-height:1.5; }
+.house-lesson-steps { min-width:0; padding:8px 0; }
+.house-lesson-steps h3 { margin:0 0 8px; color:#29245f; font-size:13px; }
+.house-lesson-steps ol { display:grid; gap:7px; margin:0; padding:0; list-style:none; }
+.house-lesson-steps li { display:flex; align-items:center; gap:8px; min-height:35px; padding:6px 8px; border:1px solid #efedf7; border-radius:9px; color:#55577b; background:#fff; font-size:10px; }
+.house-lesson-steps li>span { display:grid; width:19px; height:19px; flex:0 0 auto; place-items:center; border:1px solid #cfc9eb; border-radius:50%; color:#737295; font-size:9px; }
+.house-lesson-steps li.active { border-color:#d8cff8; color:#382780; background:#f4f0ff; font-weight:750; }
+.house-lesson-steps li.active>span,.house-lesson-steps li.complete>span { border-color:#6444df; color:#fff; background:#6444df; }
+.house-lesson-footer { display:flex; justify-content:space-between; gap:12px; padding:0 18px 12px; }
+.house-lesson-footer button,.house-quiz button { min-width:86px; min-height:33px; padding:7px 12px; border:1px solid #d7d0f0; border-radius:8px; color:#513bb4; background:#fff; font-size:10px; font-weight:750; cursor:pointer; }
+.house-lesson-footer button:disabled { opacity:.45; cursor:not-allowed; }
+.house-lesson-footer .house-next,.house-quiz button { border-color:transparent; color:#fff; background:linear-gradient(105deg,#5737ef,#764de7); }
+.house-lesson-demo { margin:0; padding:9px 18px; border-top:1px solid #f0edf8; color:#8585a0; font-size:9px; }
+.house-quiz { margin-top:10px; }
+.house-quiz fieldset { display:grid; gap:6px; margin:0 0 8px; padding:9px; border:1px solid #ebe8f6; border-radius:9px; }
+.house-quiz legend { padding:0 4px; color:#393467; font-size:10px; font-weight:750; }
+.house-quiz label { display:flex; align-items:center; gap:6px; color:#55577b; font-size:10px; }
+.house-quiz input { accent-color:#6544df; }
+.house-quiz button { width:100%; }
+.house-quiz button:disabled { opacity:.5; cursor:not-allowed; }
+.house-quiz p { color:#2f765a; font-size:10px; line-height:1.45; }
+.vl-more-lessons { margin-top:2px; border:1px solid #e1dcf2; border-radius:11px; background:#fff; }
+.vl-more-lessons>summary { padding:13px 16px; color:#4d4384; font-size:11px; font-weight:750; cursor:pointer; }
+.vl-more-lessons[open] { padding:0 14px 14px; }
+.vl-more-lessons[open]>summary { margin:0 -14px 14px; border-bottom:1px solid #efedf7; }
+.vl-more-lessons .vl-meta { color:#70749b; }
+
+@media(max-width:760px) {
+  .house-lesson-heading { padding:15px 14px 11px; }
+  .house-lesson-heading h2 { font-size:17px; }
+  .house-lesson-layout { grid-template-columns:1fr; gap:8px; padding:0 10px 10px; }
+  .house-scene { max-height:none; }
+  .house-lesson-steps { padding:4px 2px; }
+  .house-lesson-steps ol { grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; }
+  .house-lesson-steps li { min-width:0; font-size:9px; }
+  .house-quiz { grid-column:1/-1; }
+}
+
+/* Student-facing practice call scheduler, backed by Feature 2 deadline and call APIs. */
+.as-scheduler-page { padding:20px max(16px,calc((100vw - 1120px)/2)) 70px; color:var(--ref-ink); background:#f7f6fc; font-family:"DM Sans",Inter,"Segoe UI",sans-serif; }
+.as-scheduler-page .as-header { position:sticky; top:0; z-index:12; padding:0 0 12px; border-color:#e7e3f1; color:#65678d; background:#f7f6fc; }
+.as-scheduler-page .as-header>a { color:#6041d6; text-decoration:none; font-weight:750; }
+.as-scheduler-page .as-header>span { color:#403b77; font-size:10px; letter-spacing:.11em; }
+.as-scheduler-page .as-header button { border:1px solid #dedaf0; color:#514a7b; background:#fff; }
+.as-scheduler-hero { display:grid; grid-template-columns:1.05fr .95fr; gap:18px; margin:17px 0; padding:22px; border:1px solid #e1dcf4; border-radius:15px; background:linear-gradient(110deg,#fff,#f0edff); }
+.as-scheduler-intro { display:flex; flex-direction:column; align-items:flex-start; justify-content:center; padding:8px 12px; }
+.as-scheduler-kicker { color:#6d56cb; font-size:9px; font-weight:850; letter-spacing:.13em; }
+.as-scheduler-intro h1 { margin:8px 0 6px; color:#191852; font-size:clamp(23px,3vw,32px); line-height:1.2; letter-spacing:-.025em; }
+.as-scheduler-intro p { max-width:430px; margin:0 0 15px; color:#737698; font-size:12px; line-height:1.55; }
+.as-call-now { display:inline-flex; align-items:center; gap:12px; min-width:145px; justify-content:center; padding:11px 15px; border-radius:8px; color:#fff; background:linear-gradient(105deg,#6738ed,#8052ef); font-size:11px; font-weight:800; text-decoration:none; }
+.as-companion-card { display:flex; align-items:center; gap:14px; min-width:0; padding:14px; border:1px solid #e7e2f5; border-radius:12px; background:#fff; }
+.as-companion-avatar { width:88px; height:88px; flex:0 0 auto; }
+.as-companion-avatar svg { display:block; width:100%; height:100%; }
+.as-companion-card h2 { margin:6px 0 3px; color:#27225e; font-size:16px; }
+.as-companion-card p { margin:0 0 7px; color:#777997; font-size:10px; }
+.as-companion-status { display:inline-flex; align-items:center; gap:6px; color:#2f795c; font-size:9px; font-weight:750; }
+.as-companion-status i { width:7px; height:7px; border-radius:50%; background:#4bb889; }
+.as-language-pills { color:#6350b6; font-size:9px; font-weight:750; }
+.as-pause-light { width:fit-content; margin:8px 0 0; padding:5px 8px; border:1px solid #e8e3f4; border-radius:7px; color:#656486; background:#faf9ff; font-size:9px; }
+.as-scheduler-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin:14px 0; }
+.as-scheduler-page .as-card { border:1px solid #e2def0; border-radius:12px; color:#292653; background:#fff; box-shadow:0 5px 18px #29226a08; }
+.as-scheduler-page .as-heading>span { color:#7468b9; }
+.as-scheduler-page .as-heading h2,.as-scheduler-page h3 { color:#27245f; }
+.as-scheduler-page .as-muted { color:#777a99; }
+.as-scheduler-page .as-field { color:#4a4772; }
+.as-scheduler-page .as-field input,.as-scheduler-page .as-field select { border-color:#dedaf0; color:#292653; background:#fff; }
+.as-scheduler-page .as-field small { color:#8585a0; }
+.as-schedule-form { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:3px 12px; align-items:end; }
+.as-schedule-form .as-primary { grid-column:1/-1; justify-self:start; min-height:37px; background:linear-gradient(105deg,#6738ed,#8052ef); }
+.as-scheduler-page .as-primary:disabled { opacity:.5; cursor:not-allowed; }
+.as-scheduler-page .as-next-call,.as-scheduler-page .as-history-row { display:flex; align-items:center; gap:10px; padding:12px 0; border-bottom:1px solid #f0edf7; }
+.as-next-call>div,.as-history-row>div { min-width:0; flex:1; }
+.as-next-call strong,.as-history-row strong { display:block; overflow-wrap:anywhere; color:#2d295f; font-size:11px; }
+.as-next-call small,.as-history-row small { display:block; margin-top:4px; color:#777a99; font-size:9px; line-height:1.4; }
+.as-next-icon,.as-history-icon { display:grid; width:31px; height:31px; flex:0 0 auto; place-items:center; border-radius:9px; color:#6847da; background:#f0ebff; }
+.as-upcoming-tag,.as-history-status { flex:0 0 auto; padding:4px 7px; border-radius:999px; color:#3a765e; background:#eaf8f1; font-size:8px; font-weight:800; text-transform:capitalize; }
+.as-scheduler-page .as-next-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+.as-scheduler-page .as-next-actions button,.as-more-call>button { border:1px solid #dcd6f1; border-radius:7px; padding:7px 9px; color:#513bb4; background:#f8f6ff; font-size:9px; font-weight:700; cursor:pointer; }
+.as-call-feature { scroll-margin-top:75px; }
+.as-scheduler-page .dc-card { border:1px solid #e2def0; border-radius:12px; color:#292653; background:#fff; box-shadow:0 5px 18px #29226a08; }
+.as-scheduler-page .dc-heading span { color:#7468b9; }
+.as-scheduler-page .dc-heading h2,.as-scheduler-page .dc-call h3 { color:#27245f; }
+.as-scheduler-page .dc-copy,.as-scheduler-page .dc-privacy,.as-scheduler-page .dc-call blockquote,.as-scheduler-page .dc-history { color:#666887; }
+.as-scheduler-page .dc-state { color:#5d51aa; background:#f4f1ff; border-color:#e6e1f5; }
+.as-scheduler-page .dc-optin { color:#4e4b74; }
+.as-scheduler-page .dc-actions button,.as-scheduler-page .dc-primary,.as-scheduler-page .dc-confirm button,.as-scheduler-page .dc-reply button { border-radius:8px; background:linear-gradient(105deg,#6738ed,#8052ef); }
+.as-scheduler-page .dc-actions button:nth-child(2),.as-scheduler-page .dc-actions button:nth-child(3),.as-scheduler-page .dc-confirm button:last-child { color:#4e4780; background:#f0edff; }
+.as-scheduler-page .dc-call { border:1px solid #dedaf0; background:#faf9ff; }
+.as-scheduler-page .dc-call blockquote,.as-scheduler-page .dc-confirm { border-color:#ddd7f4; background:#f1effa; }
+.as-scheduler-page .dc-reply input { border-color:#dedaf0; color:#292653; background:#fff; }
+.as-scheduler-page .dc-transcript { color:#33305e; }
+.as-scheduler-page .dc-history p { color:#70749b; }
+.as-call-history { margin:14px 0; }
+.as-settings-details { margin-top:20px; border:1px solid #e2def0; border-radius:12px; background:#fff; }
+.as-settings-details>summary { padding:14px 17px; color:#51458d; font-size:11px; font-weight:800; cursor:pointer; }
+.as-settings-details[open] { padding:0 14px 14px; }
+.as-settings-details[open]>summary { margin:0 -14px 12px; border-bottom:1px solid #efedf7; }
+.as-settings-details .as-grid { margin:14px 0; }
+.as-scheduler-page :is(button,a,input,select,summary):focus-visible { outline:2px solid #7655e8; outline-offset:2px; }
+
+@media(max-width:760px) {
+  .as-scheduler-hero,.as-scheduler-grid { grid-template-columns:1fr; }
+  .as-scheduler-hero { padding:14px; }
+  .as-scheduler-intro { padding:7px 4px 12px; }
+  .as-companion-card { align-items:flex-start; }
+  .as-companion-avatar { width:70px; height:70px; }
+}
+@media(max-width:500px) {
+  .as-scheduler-page { padding:12px 12px 48px; }
+  .as-schedule-form { grid-template-columns:1fr; }
+  .as-schedule-form .as-primary { grid-column:1; width:100%; }
+  .as-scheduler-page .dc-card { padding:16px; }
+  .as-scheduler-page .dc-reply { align-items:stretch; flex-direction:column; }
+}

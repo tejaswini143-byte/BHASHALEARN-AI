@@ -56,9 +56,9 @@ async function configureClassroom(page, generated = false) {
 test("React Flow steps explain in context through the shared tutor session", async ({ page }) => {
   const messages = await configureClassroom(page);
   await page.goto("/visual-lessons");
+  await page.locator(".vl-more-lessons > summary").click();
   await expect(page.getByRole("heading", { name: "A solar system lesson" })).toBeVisible();
-  const secondStep = page.locator(".react-flow__node").filter({ hasText: "2. Select a planet" });
-  await secondStep.click();
+  await page.getByRole("button", { name: "2. Select a planet", exact: true }).click();
   await expect(page.locator(".vl-flow-explanation")).toContainText("Compare the planet's orbit and year.");
   await page.getByLabel("Ask about this lesson").fill("Why do planets stay in orbit?");
   await page.getByRole("button", { name: "Ask teacher" }).click();
@@ -71,6 +71,7 @@ test("React Flow steps explain in context through the shared tutor session", asy
 test("validated Gemini lesson renders Telugu content and interactive question", async ({ page }) => {
   await configureClassroom(page, true);
   await page.goto("/visual-lessons");
+  await page.locator(".vl-more-lessons > summary").click();
   await page.getByLabel("Create a bilingual lesson with Gemini").fill("Cube properties");
   await page.getByRole("button", { name: "Generate lesson" }).click();
   await expect(page.getByRole("heading", { name: "Cube properties" })).toBeVisible();

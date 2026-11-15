@@ -20,12 +20,13 @@ async function mockAssistant(page: Page) {
 test("assistant dashboard explains disconnected providers and schedules a manual deadline", async ({ page }) => {
   await mockAssistant(page);
   await page.goto("/assistant");
-  await expect(page.getByRole("heading", { name: "Your personal assistant" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Schedule a Practice Call", exact: true })).toBeVisible();
+  await page.locator(".as-settings-details:not(.as-call-controls) > summary").click();
   await expect(page.getByText(/Each provider requires separate OAuth consent/)).toBeVisible();
   await page.getByLabel("Title", { exact: true }).fill("Chemistry assignment");
   await page.getByLabel("Due date and time").fill("2032-04-05T14:30");
   await page.getByRole("button", { name: "Add deadline" }).click();
-  await expect(page.getByRole("region", { name: "Deadline reminders" }).getByText("Chemistry assignment")).toBeVisible();
+  await expect(page.locator(".as-list > li").filter({ hasText: "Chemistry assignment" }).last()).toBeVisible();
   await expect(page.getByText("Deadline saved; reminders were scheduled.", { exact: true })).toBeVisible();
   await expect(page.getByText(/Otherwise reminders are mock/)).toBeVisible();
 });

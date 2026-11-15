@@ -11,6 +11,7 @@ export function AuthPage({ mode }: { mode: "login" | "register" }) {
   const [visible, setVisible] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [socialDemo, setSocialDemo] = useState("");
   const [checking, setChecking] = useState(Boolean(getToken()));
   const [authenticated, setAuthenticated] = useState(false);
   useEffect(() => {
@@ -66,7 +67,7 @@ export function AuthPage({ mode }: { mode: "login" | "register" }) {
           {error && <div className="auth-error" role="alert">{error}</div>}
           <button type="submit" className="auth-submit" disabled={busy}>{busy ? "Please wait…" : mode === "login" ? "Sign in →" : "Create account →"}</button>
         </form>
-        <div className="auth-divider"><span>or continue with</span></div>
+        {mode === "login" && <><div className="auth-divider"><span>or continue with</span></div><div className="auth-social-demo"><button type="button" onClick={() => setSocialDemo("Google OAuth is not configured in this build. This is a demo control and did not sign you in.")}>Google <small>Demo</small></button><button type="button" onClick={() => setSocialDemo("Microsoft OAuth is not configured in this build. This is a demo control and did not sign you in.")}>Microsoft <small>Demo</small></button></div>{socialDemo && <p className="auth-social-message" role="status">{socialDemo}</p>}</>}
         <p className="auth-switch">{mode === "login" ? "Don’t have an account?" : "Already have an account?"} <Link to={mode === "login" ? "/register" : "/login"}>{mode === "login" ? "Register" : "Sign in"}</Link></p>
         <Link to="/" className="auth-back">← Back to home</Link>
       </section>

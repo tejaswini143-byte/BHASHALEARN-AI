@@ -4,6 +4,9 @@ async function authenticate(page: import("@playwright/test").Page) {
   await page.addInitScript(() => sessionStorage.setItem("bhashalearn_access_token", "int15-mock-token"));
   await page.route("**/api/v1/auth/me", route => route.fulfill({ json: { id: "int15-student", email: "student@example.test", display_name: "A Student" } }));
 }
+async function openLessonEngine(page: import("@playwright/test").Page) {
+  await page.locator(".vl-more-lessons > summary").click();
+}
 
 test("visual lessons route requires an authenticated student", async ({ page }) => {
   await page.goto("/visual-lessons");
@@ -14,6 +17,7 @@ test("visual lessons route requires an authenticated student", async ({ page }) 
 test("student selects subject and topic and explores solar system controls", async ({ page }) => {
   await authenticate(page);
   await page.goto("/visual-lessons");
+  await openLessonEngine(page);
   await expect(page.getByRole("heading", { name: "A tour of the solar system" })).toBeVisible();
   await expect(page.getByText("Educational model: planet sizes, orbit spacing, and distances are not proportional to real scale.")).toBeVisible();
   await page.getByRole("button", { name: "Mars", exact: true }).click();
@@ -30,6 +34,7 @@ test("student selects subject and topic and explores solar system controls", asy
 test("geometry controls expose shape facts and computed dimensions", async ({ page }) => {
   await authenticate(page);
   await page.goto("/visual-lessons");
+  await openLessonEngine(page);
   await page.getByLabel("Choose subject").selectOption("Mathematics");
   await page.getByLabel("Choose topic").selectOption("geometry");
   await page.getByLabel("Choose shape").selectOption("sphere");
@@ -43,6 +48,7 @@ test("geometry controls expose shape facts and computed dimensions", async ({ pa
 test("pendulum controls calculate period and support pause, resume, reset and guided steps", async ({ page }) => {
   await authenticate(page);
   await page.goto("/visual-lessons");
+  await openLessonEngine(page);
   await page.getByLabel("Choose subject").selectOption("Physics");
   await page.getByLabel("Choose topic").selectOption("pendulum");
   await expect(page.getByText("T ≈ 2.01 s")).toBeVisible();
@@ -68,6 +74,7 @@ test("WebGL failure keeps text explanations and controls available", async ({ pa
     };
   });
   await page.goto("/visual-lessons");
+  await openLessonEngine(page);
   await expect(page.getByRole("alert").filter({ hasText: "3D simulation unavailable" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Next lesson step" })).toBeVisible();
   await expect(page.getByText("LEARNING OBJECTIVES")).toBeVisible();
@@ -77,6 +84,7 @@ test("mobile visual lessons fit the viewport and keyboard reset works", async ({
   await authenticate(page);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/visual-lessons");
+  await openLessonEngine(page);
   await expect(page.getByRole("heading", { name: "A tour of the solar system" })).toBeVisible();
   await page.keyboard.press("ArrowRight");
   await expect(page.getByRole("heading", { name: "Meet the Sun" })).toBeVisible();

@@ -28,6 +28,7 @@ export function DeadlineCallAssistant() {
   const capture = useRef<{ stream: MediaStream; context: AudioContext; source: MediaStreamAudioSourceNode; processor: ScriptProcessorNode; mute: GainNode } | null>(null);
   const microphoneAuthorization = useRef<string | null>(null);
   const player = useRef<HTMLAudioElement | null>(null);
+  const answerButton = useRef<HTMLButtonElement | null>(null);
   const objectUrl = useRef<string | null>(null);
 
   const refreshPending = useCallback(async () => {
@@ -37,6 +38,10 @@ export function DeadlineCallAssistant() {
       setIncoming(old => old?.status === "ringing" ? old : calls[0] || null);
     } catch (cause) { setError(message(cause)); }
   }, []);
+
+  useEffect(() => {
+    if (incoming?.status === "ringing") answerButton.current?.focus();
+  }, [incoming?.id, incoming?.status]);
 
   useEffect(() => {
     let live = true;
@@ -279,9 +284,9 @@ export function DeadlineCallAssistant() {
     <p className="dc-state">Windows companion: {companionStatus}. It must remain running for browser-closed ringing.</p>
     <button className="dc-primary" type="button" onClick={() => void startTestCall()} disabled={busy}>Start local Test Call</button>
     {settings?.paused && <p className="dc-state">Automation is paused; scheduled calls are disabled.</p>}
-    {incoming && <div className={ringing ? "dc-call dc-ringing" : "dc-call"} role="region" aria-live="polite" aria-label="Deadline call">
-      <p className="dc-state">{busy ? "THINKING" : state.toUpperCase()}</p><h3>BHASHALEARN AI — Deadline Call</h3><p>{incoming.title}</p>
-      {ringing && <div className="dc-actions"><button onClick={event => { if (event.nativeEvent.isTrusted) void answer(); }} disabled={busy}>Answer</button><button onClick={() => void finish("snooze")} disabled={busy}>Snooze 10 min</button><button onClick={() => void finish("dismiss")} disabled={busy}>Dismiss</button></div>}
+    {incoming && <div className={ringing ? "dc-call dc-ringing" : "dc-call"} role={ringing ? "dialog" : "region"} aria-live="polite" aria-label={ringing ? "Incoming BHASHALEARN practice call" : "Deadline call"}>
+      <p className="dc-state">{busy ? "THINKING" : state.toUpperCase()}</p><h3 id="dc-title">{ringing ? "Incoming practice call" : "BHASHALEARN AI — Deadline Call"}</h3><p>{incoming.title}</p>
+      {ringing && <div className="dc-actions"><button ref={answerButton} onClick={event => { if (event.nativeEvent.isTrusted) void answer(); }} disabled={busy}>Answer</button><button onClick={() => void finish("snooze")} disabled={busy}>Snooze 10 min</button><button onClick={() => void finish("dismiss")} disabled={busy}>Dismiss</button></div>}
       {answered && <><blockquote>{reply}</blockquote>{draft && <p><strong>Prisma transcript:</strong> {draft}</p>}
         <p className="dc-state">Maximum call duration: {incoming.max_duration_minutes} minutes.</p>
         <div className="dc-actions"><button onClick={event => { if (event.nativeEvent.isTrusted) void (recording ? stopListening() : startListening()); }} disabled={busy}>{recording ? "Stop and send speech" : "Speak to BHASHALEARN"}</button><button onClick={() => void extendCall()} disabled={busy}>Extend +10 min</button><button onClick={() => void finish("end")} disabled={busy}>End Call</button></div>

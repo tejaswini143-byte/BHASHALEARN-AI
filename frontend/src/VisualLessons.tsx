@@ -9,6 +9,7 @@ import { fetchVisualLessonCatalog, generateVisualLesson, visualLessonApiError } 
 import { createVisualLessonEnvelope, validateGeneratedVisualLessonEnvelope, validateVisualLessonEnvelope, type GeneratedVisualLessonEnvelope } from "./visualLessonContract";
 import type { VisualLesson } from "./visualLessonsModel";
 import { VisualFlowBoard } from "./VisualFlowBoard";
+import { HouseLessonScene } from "./HouseLessonScene";
 import "./visual-lessons.css";
 
 class SimulationBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
@@ -263,7 +264,9 @@ function LessonWorkspace({ student }: { student: Student }) {
   return <main className="vl-page" aria-label="Interactive visual lessons">
     <header className="vl-header"><Link to="/dashboard" className="vl-brand" aria-label="BHASHALEARN AI dashboard"><span>✦</span> BHASHA<span>LEARN</span><small> AI</small></Link><div className="vl-student"><i aria-hidden="true"/>{student.display_name || "Student"}</div><Link to="/dashboard" className="vl-exit">Exit lessons ↗</Link></header>
     <div className="vl-shell">
-      <section className="vl-title"><div><span className="vl-eyebrow">INTERACTIVE VISUAL LESSONS</span><h1>Ideas you can <span>explore.</span></h1><p>Choose a subject and topic, then learn by interacting with the model.</p></div><label className="vl-language">Explanation language<select aria-label="Explanation language" value={language} onChange={event => setLanguage(event.target.value as "en" | "te")}><option value="en">English</option><option value="te">తెలుగు</option></select></label></section>
+      <section className="vl-title"><div><span className="vl-eyebrow">VISUAL LESSON STUDIO</span><h1>{language === "en" ? <>Learn by <span>seeing.</span></> : <>చూస్తూ <span>నేర్చుకోండి.</span></>}</h1><p>{language === "en" ? "Learn everyday English and Telugu with an interactive picture lesson." : "ఇంటరాక్టివ్ చిత్ర పాఠంతో రోజువారీ ఇంగ్లీష్ మరియు తెలుగు నేర్చుకోండి."}</p></div><label className="vl-language">Explanation language<select aria-label="Explanation language" value={language} onChange={event => setLanguage(event.target.value as "en" | "te")}><option value="en">English</option><option value="te">తెలుగు</option></select></label></section>
+      <HouseLesson language={language}/>
+      <details className="vl-more-lessons"><summary>{language === "en" ? "Explore interactive science and AI-generated lessons" : "ఇంటరాక్టివ్ సైన్స్ మరియు AI పాఠాలను చూడండి"}</summary>
       <p role="status" aria-live="polite" className="vl-meta">{catalogStatus}</p>
       <p role="status" aria-live="polite" className="vl-meta">{sessionStatus}</p>
       <form className="vl-ai-generate" onSubmit={event => void createAiLesson(event)}>
@@ -302,8 +305,33 @@ function LessonWorkspace({ student }: { student: Student }) {
         </aside>
       </section>
       <p className="vl-motion"><label><input type="checkbox" checked={reduced} onChange={event => setReduced(event.target.checked)}/>{language === "en" ? "Reduce motion" : "చలనాన్ని తగ్గించు"}</label><span>{language === "en" ? "Keyboard: ← → lesson steps · R reset" : "కీబోర్డ్: ← → పాఠ దశలు · R మళ్లీ ప్రారంభించు"}</span></p>
+      </details>
     </div>
   </main>;
+}
+
+function HouseLesson({ language }: { language: "en" | "te" }) {
+  const [step, setStep] = useState(0);
+  const [answer, setAnswer] = useState("");
+  const [checked, setChecked] = useState(false);
+  const copy = language === "en"
+    ? { eyebrow: "VISUAL LESSON · ENGLISH + TELUGU", title: "Learn words around the house", description: "Explore the picture, repeat each word, then try a short practice question.", steps: ["Learn words", "Repeat", "Practice", "A quick quiz"], previous: "Previous", next: "Next", quiz: "Which room do we sleep in?", choices: ["Bedroom", "Kitchen", "Garden"], check: "Check answer", correct: "Correct! We sleep in a bedroom.", tryAgain: "Try again. A bedroom is where we sleep.", demo: "Practice lesson · Your choices stay in this lesson and are not sent to your account." }
+    : { eyebrow: "చిత్ర పాఠం · ఇంగ్లీష్ + తెలుగు", title: "ఇంటి చుట్టూ పదాలు నేర్చుకోండి", description: "చిత్రాన్ని చూడండి, ప్రతి పదాన్ని పలకండి, తర్వాత చిన్న ప్రశ్నకు సమాధానం ఇవ్వండి.", steps: ["పదాలు నేర్చుకోండి", "పలకండి", "అభ్యసించండి", "చిన్న క్విజ్"], previous: "మునుపటి", next: "తదుపరి", quiz: "మనం ఏ గదిలో నిద్రిస్తాము?", choices: ["పడకగది", "వంటగది", "తోట"], check: "సమాధానం చూడండి", correct: "సరైనది! మనం పడకగదిలో నిద్రిస్తాము.", tryAgain: "మళ్లీ ప్రయత్నించండి. మనం పడకగదిలో నిద్రిస్తాము.", demo: "అభ్యాస పాఠం · మీ ఎంపికలు ఈ పాఠంలోనే ఉంటాయి; ఖాతాకు పంపబడవు." };
+  const quiz = step === 3;
+  function advance(delta: number) { setStep(current => Math.max(0, Math.min(3, current + delta))); setChecked(false); }
+  return <section className="house-lesson" aria-labelledby="house-lesson-title">
+    <div className="house-lesson-heading"><div><span className="vl-eyebrow">{copy.eyebrow}</span><h2 id="house-lesson-title">{copy.title}</h2><p>{copy.description}</p></div><span className="house-lesson-badge">{step + 1} / 4</span></div>
+    <div className="house-lesson-layout">
+      <HouseLessonScene language={language} step={step}/>
+      <aside className="house-lesson-steps" aria-label={language === "en" ? "Lesson steps" : "పాఠం దశలు"}>
+        <h3>{language === "en" ? "Lesson Steps" : "పాఠం దశలు"}</h3>
+        <ol>{copy.steps.map((label, index) => <li key={label} className={index === step ? "active" : index < step ? "complete" : ""}><span aria-hidden="true">{index < step ? "✓" : index + 1}</span>{label}</li>)}</ol>
+        {quiz && <form className="house-quiz" onSubmit={event => { event.preventDefault(); setChecked(true); }}><fieldset><legend>{copy.quiz}</legend>{copy.choices.map((choice, index) => <label key={choice}><input type="radio" name="house-room-answer" value={index === 0 ? "bedroom" : choice} checked={answer === (index === 0 ? "bedroom" : choice)} onChange={event => { setAnswer(event.target.value); setChecked(false); }}/>{choice}</label>)}</fieldset><button type="submit" disabled={!answer}>{copy.check}</button>{checked && <p role="status">{answer === "bedroom" ? copy.correct : copy.tryAgain}</p>}</form>}
+      </aside>
+    </div>
+    <div className="house-lesson-footer"><button type="button" onClick={() => advance(-1)} disabled={step === 0}>{copy.previous}</button><button type="button" className="house-next" onClick={() => advance(1)} disabled={step === 3}>{copy.next}</button></div>
+    <p className="house-lesson-demo">{copy.demo}</p>
+  </section>;
 }
 
 export function VisualLessons() { return <AuthGate>{student => <LessonWorkspace student={student}/>}</AuthGate>; }
